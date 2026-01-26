@@ -1,0 +1,33 @@
+import uuid
+from sqlalchemy import Index
+from sqlalchemy.dialects.postgresql import UUID
+from ..extensions import db
+from ..utils import utc_now
+
+class Site(db.Model):
+    __tablename__ = 'sites'
+
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_name = db.Column(db.Text, unique=True, nullable=False)
+    site_code = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+class Employee(db.Model):
+    __tablename__ = 'employees'
+
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_id = db.Column(UUID(as_uuid=True), db.ForeignKey('sites.id'), nullable=False)
+    full_name = db.Column(db.Text, nullable=False)
+    passport_id = db.Column(db.Text, nullable=True)
+    external_employee_id = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Indexes
+    __table_args__ = (
+        Index('ix_employees_site_id', 'site_id'),
+        Index('ix_employees_passport_id', 'passport_id', unique=True, postgresql_where=(passport_id.isnot(None))),
+    )
