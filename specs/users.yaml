@@ -1,0 +1,226 @@
+openapi: 3.1.0
+info:
+  title: Users API
+  version: 1.0.0
+  description: API for managing users.
+paths:
+  /api/users:
+    get:
+      summary: Get all users
+      description: Get all users, optionally filtered by role or active status.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role
+          in: query
+          description: Filter by role (ADMIN, EMPLOYEE, RESPONSIBLE_EMPLOYEE)
+          schema:
+            type: string
+        - name: active
+          in: query
+          description: Filter by active status
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+    post:
+      summary: Create a new user
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - full_name
+                - role
+              properties:
+                full_name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                phone_number:
+                  type: string
+                role:
+                  type: string
+                  enum: [ADMIN, EMPLOYEE, RESPONSIBLE_EMPLOYEE]
+                password:
+                  type: string
+                  format: password
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/User'
+        '409':
+          description: User with email or phone already exists
+  /api/users/{user_id}:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get a user by ID
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+    put:
+      summary: Update a user
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                phone_number:
+                  type: string
+                role:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+        '409':
+          description: Conflict (e.g. email/phone already exists)
+    delete:
+      summary: Delete a user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User deleted
+        '404':
+          description: User not found
+  /api/users/{user_id}/deactivate:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Deactivate a user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User deactivated
+        '404':
+          description: User not found
+  /api/users/{user_id}/activate:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Activate a user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User activated
+        '404':
+          description: User not found
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        email:
+          type: string
+        phone_number:
+          type: string
+        role:
+          type: string
+          enum: [ADMIN, EMPLOYEE, RESPONSIBLE_EMPLOYEE]
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /api/auth/login endpoint

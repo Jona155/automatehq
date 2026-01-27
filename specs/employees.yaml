@@ -1,0 +1,225 @@
+openapi: 3.1.0
+info:
+  title: Employees API
+  version: 1.0.0
+  description: API for managing employees.
+paths:
+  /api/employees:
+    get:
+      summary: Get all employees
+      description: Get all employees, optionally filtered by site, name, or active status.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: site_id
+          in: query
+          description: Filter by site ID
+          schema:
+            type: string
+            format: uuid
+        - name: name
+          in: query
+          description: Search by name (partial match)
+          schema:
+            type: string
+        - name: active
+          in: query
+          description: Filter by active status
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: List of employees
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Employee'
+    post:
+      summary: Create a new employee
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - site_id
+                - full_name
+              properties:
+                site_id:
+                  type: string
+                  format: uuid
+                full_name:
+                  type: string
+                passport_id:
+                  type: string
+                external_employee_id:
+                  type: string
+      responses:
+        '201':
+          description: Employee created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Employee'
+        '409':
+          description: Employee with passport ID already exists
+  /api/employees/{employee_id}:
+    parameters:
+      - name: employee_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get an employee by ID
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Employee details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Employee'
+        '404':
+          description: Employee not found
+    put:
+      summary: Update an employee
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                passport_id:
+                  type: string
+                external_employee_id:
+                  type: string
+                site_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Employee updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Employee'
+        '404':
+          description: Employee not found
+        '409':
+          description: Conflict (e.g. passport ID already exists)
+    delete:
+      summary: Delete an employee
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Employee deleted
+        '404':
+          description: Employee not found
+  /api/employees/{employee_id}/deactivate:
+    parameters:
+      - name: employee_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Deactivate an employee
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Employee deactivated
+        '404':
+          description: Employee not found
+  /api/employees/{employee_id}/activate:
+    parameters:
+      - name: employee_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Activate an employee
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Employee activated
+        '404':
+          description: Employee not found
+components:
+  schemas:
+    Employee:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        passport_id:
+          type: string
+        external_employee_id:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /api/auth/login endpoint

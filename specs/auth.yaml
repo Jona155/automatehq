@@ -1,0 +1,176 @@
+openapi: 3.1.0
+info:
+  title: Authentication API
+  version: 1.0.0
+  description: API for user authentication using JWT tokens.
+paths:
+  /api/auth/login:
+    post:
+      summary: User login
+      description: Authenticate a user with email and password. Returns a JWT token and user information.
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: admin@example.com
+                password:
+                  type: string
+                  format: password
+                  example: password123
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Login successful
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                        description: JWT access token to be used in Authorization header
+                        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                      user:
+                        $ref: '#/components/schemas/User'
+        '400':
+          description: Missing email or password
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Missing email or password
+                  error:
+                    type: string
+                    example: Bad Request
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Invalid credentials
+                  error:
+                    type: string
+                    example: Unauthorized
+        '403':
+          description: Account is deactivated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Account is deactivated
+                  error:
+                    type: string
+                    example: Forbidden
+        '500':
+          description: Server error
+  /api/auth/me:
+    get:
+      summary: Get current user
+      description: Get the currently authenticated user's details. Requires a valid JWT token.
+      tags:
+        - Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Success
+                  data:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized - Missing or invalid token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Token is missing
+                  error:
+                    type: string
+                    example: Unauthorized
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone_number:
+          type: string
+          nullable: true
+        role:
+          type: string
+          enum: [ADMIN, EMPLOYEE, RESPONSIBLE_EMPLOYEE]
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /api/auth/login endpoint

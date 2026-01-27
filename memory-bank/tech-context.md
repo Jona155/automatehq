@@ -5,7 +5,8 @@
 | Layer | Tech |
 |-------|------|
 | Frontend | React 18, Vite |
-| Backend | Flask |
+| Backend | Flask, SQLAlchemy, Alembic |
+| Data Access | Repository Pattern (Generic Base + Domain Repos) |
 | DB | PostgreSQL (Heroku) |
 | Queue | Postgres table + Python polling worker |
 | Extraction | OpenCV, OpenAI Vision |

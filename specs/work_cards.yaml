@@ -1,0 +1,247 @@
+openapi: 3.1.0
+info:
+  title: Work Cards API
+  version: 1.0.0
+  description: API for managing work cards.
+paths:
+  /api/work_cards:
+    get:
+      summary: Get work cards
+      description: Get work cards filtered by site+month or status.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: site_id
+          in: query
+          description: Filter by site ID (requires month)
+          schema:
+            type: string
+            format: uuid
+        - name: month
+          in: query
+          description: Filter by month (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: status
+          in: query
+          description: Filter by review status (NEEDS_REVIEW, APPROVED, etc.)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of work cards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkCard'
+        '400':
+          description: Bad Request (e.g. invalid date format)
+  /api/work_cards/{card_id}:
+    parameters:
+      - name: card_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get a work card by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: details
+          in: query
+          description: Include nested details (extraction, day_entries, files)
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Work card details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/WorkCard'
+                      - type: object
+                        properties:
+                          extraction:
+                            type: object
+                            description: Present if details=true
+                          day_entries:
+                            type: array
+                            items:
+                              type: object
+                            description: Present if details=true
+                          files:
+                            type: array
+                            items:
+                              type: object
+                            description: Present if details=true
+        '404':
+          description: Work card not found
+    put:
+      summary: Update a work card
+      description: Update work card fields (e.g. assign employee)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                employee_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Work card updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/WorkCard'
+        '404':
+          description: Work card not found
+  /api/work_cards/{card_id}/status:
+    parameters:
+      - name: card_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      summary: Update review status
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/WorkCard'
+        '404':
+          description: Work card not found
+  /api/work_cards/{card_id}/approve:
+    parameters:
+      - name: card_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Approve a work card
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Work card approved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/WorkCard'
+        '404':
+          description: Work card not found
+components:
+  schemas:
+    WorkCard:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        employee_id:
+          type: string
+          format: uuid
+          nullable: true
+        processing_month:
+          type: string
+          format: date
+        review_status:
+          type: string
+          enum: [NEEDS_REVIEW, APPROVED, REJECTED, NEEDS_ASSIGNMENT]
+        notes:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /api/auth/login endpoint
