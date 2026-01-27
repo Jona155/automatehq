@@ -1,30 +1,18 @@
 openapi: 3.1.0
 info:
-  title: Users API
+  title: Businesses API
   version: 1.0.0
-  description: API for managing users.
+  description: API for managing businesses (multi-tenancy entities).
 paths:
-  /api/users:
+  /api/businesses:
     get:
-      summary: Get all users
-      description: Get all users in the current business, optionally filtered by role or active status.
+      summary: Get all businesses
+      description: Get all businesses. For regular users, only returns their own business.
       security:
         - bearerAuth: []
-      parameters:
-        - name: role
-          in: query
-          description: Filter by role (ADMIN, EMPLOYEE, RESPONSIBLE_EMPLOYEE)
-          schema:
-            type: string
-        - name: active
-          in: query
-          description: Filter by active status
-          schema:
-            type: boolean
-            default: false
       responses:
         '200':
-          description: List of users
+          description: List of businesses
           content:
             application/json:
               schema:
@@ -37,10 +25,12 @@ paths:
                   data:
                     type: array
                     items:
-                      $ref: '#/components/schemas/User'
+                      $ref: '#/components/schemas/Business'
+        '404':
+          description: Business not found
     post:
-      summary: Create a new user
-      description: Create a new user in the current business.
+      summary: Create a new business
+      description: Create a new business. In production, this should be restricted to super admins.
       security:
         - bearerAuth: []
       requestBody:
@@ -50,25 +40,15 @@ paths:
             schema:
               type: object
               required:
-                - full_name
-                - role
+                - business_name
               properties:
-                full_name:
+                business_name:
                   type: string
-                email:
+                business_code:
                   type: string
-                  format: email
-                phone_number:
-                  type: string
-                role:
-                  type: string
-                  enum: [ADMIN, EMPLOYEE, RESPONSIBLE_EMPLOYEE]
-                password:
-                  type: string
-                  format: password
       responses:
         '201':
-          description: User created
+          description: Business created
           content:
             application/json:
               schema:
@@ -79,25 +59,25 @@ paths:
                   message:
                     type: string
                   data:
-                    $ref: '#/components/schemas/User'
+                    $ref: '#/components/schemas/Business'
         '409':
-          description: User with email or phone already exists
-  /api/users/{user_id}:
+          description: Business with this name or code already exists
+  /api/businesses/{business_id}:
     parameters:
-      - name: user_id
+      - name: business_id
         in: path
         required: true
         schema:
           type: string
           format: uuid
     get:
-      summary: Get a user by ID
-      description: Get a specific user by ID. The user must belong to the current business.
+      summary: Get a business by ID
+      description: Get a specific business by ID. Users can only access their own business.
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: User details
+          description: Business details
           content:
             application/json:
               schema:
@@ -108,12 +88,14 @@ paths:
                   message:
                     type: string
                   data:
-                    $ref: '#/components/schemas/User'
+                    $ref: '#/components/schemas/Business'
+        '403':
+          description: Access denied
         '404':
-          description: User not found
+          description: Business not found
     put:
-      summary: Update a user
-      description: Update a user. The user must belong to the current business.
+      summary: Update a business
+      description: Update a business. Users can only update their own business.
       security:
         - bearerAuth: []
       requestBody:
@@ -123,21 +105,15 @@ paths:
             schema:
               type: object
               properties:
-                full_name:
+                business_name:
                   type: string
-                email:
+                business_code:
                   type: string
-                  format: email
-                phone_number:
-                  type: string
-                role:
-                  type: string
-                password:
-                  type: string
-                  format: password
+                is_active:
+                  type: boolean
       responses:
         '200':
-          description: User updated
+          description: Business updated
           content:
             application/json:
               schema:
@@ -148,77 +124,72 @@ paths:
                   message:
                     type: string
                   data:
-                    $ref: '#/components/schemas/User'
+                    $ref: '#/components/schemas/Business'
+        '403':
+          description: Access denied
         '404':
-          description: User not found
+          description: Business not found
         '409':
-          description: Conflict (e.g. email/phone already exists)
+          description: Conflict (e.g. name or code already exists)
     delete:
-      summary: Delete a user
-      description: Delete a user. The user must belong to the current business.
+      summary: Delete (deactivate) a business
+      description: Soft delete a business by deactivating it.
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: User deleted
+          description: Business deactivated
+        '403':
+          description: Access denied
         '404':
-          description: User not found
-  /api/users/{user_id}/deactivate:
+          description: Business not found
+  /api/businesses/{business_id}/activate:
     parameters:
-      - name: user_id
+      - name: business_id
         in: path
         required: true
         schema:
           type: string
           format: uuid
     post:
-      summary: Deactivate a user
-      description: Deactivate a user. The user must belong to the current business.
+      summary: Activate a business
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: User deactivated
+          description: Business activated
         '404':
-          description: User not found
-  /api/users/{user_id}/activate:
+          description: Business not found
+  /api/businesses/{business_id}/deactivate:
     parameters:
-      - name: user_id
+      - name: business_id
         in: path
         required: true
         schema:
           type: string
           format: uuid
     post:
-      summary: Activate a user
-      description: Activate a user. The user must belong to the current business.
+      summary: Deactivate a business
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: User activated
+          description: Business deactivated
         '404':
-          description: User not found
+          description: Business not found
 components:
   schemas:
-    User:
+    Business:
       type: object
       properties:
         id:
           type: string
           format: uuid
-        business_id:
+        business_name:
           type: string
-          format: uuid
-        full_name:
+        business_code:
           type: string
-        email:
-          type: string
-        phone_number:
-          type: string
-        role:
-          type: string
-          enum: [ADMIN, EMPLOYEE, RESPONSIBLE_EMPLOYEE]
+          nullable: true
         is_active:
           type: boolean
         created_at:

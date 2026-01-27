@@ -149,6 +149,9 @@ components:
         id:
           type: string
           format: uuid
+        business_id:
+          type: string
+          format: uuid
         full_name:
           type: string
         email:

@@ -8,6 +8,7 @@ class WorkCard(db.Model):
     __tablename__ = 'work_cards'
 
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    business_id = db.Column(UUID(as_uuid=True), db.ForeignKey('businesses.id'), nullable=False)
     site_id = db.Column(UUID(as_uuid=True), db.ForeignKey('sites.id'), nullable=False)
     employee_id = db.Column(UUID(as_uuid=True), db.ForeignKey('employees.id'), nullable=True)
     processing_month = db.Column(db.Date, nullable=False)
@@ -30,8 +31,9 @@ class WorkCard(db.Model):
     day_entries = db.relationship('WorkCardDayEntry', backref='work_card', cascade="all, delete-orphan")
 
     __table_args__ = (
-        Index('ix_work_cards_site_month', 'site_id', 'processing_month'),
-        Index('ix_work_cards_employee_month', 'employee_id', 'processing_month'),
+        Index('ix_work_cards_business_id', 'business_id'),
+        Index('ix_work_cards_business_site_month', 'business_id', 'site_id', 'processing_month'),
+        Index('ix_work_cards_business_employee_month', 'business_id', 'employee_id', 'processing_month'),
         Index('ix_work_cards_review_status', 'review_status'),
     )
 
