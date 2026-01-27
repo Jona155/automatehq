@@ -15,6 +15,7 @@ class AuditEventRepository(BaseRepository[AuditEvent]):
         event_type: str,
         entity_type: str,
         entity_id: UUID,
+        business_id: UUID,
         actor_id: Optional[UUID] = None,
         metadata: Optional[Dict[str, Any]] = None,
         site_id: Optional[UUID] = None,
@@ -28,6 +29,7 @@ class AuditEventRepository(BaseRepository[AuditEvent]):
             event_type: Type of event (CREATE, UPDATE, DELETE, APPROVE, etc.)
             entity_type: Type of entity affected (WORK_CARD, EMPLOYEE, etc.)
             entity_id: UUID of the affected entity
+            business_id: The business UUID
             actor_id: UUID of the user performing the action
             metadata: Additional event metadata
             site_id: Optional site ID for filtering
@@ -41,6 +43,7 @@ class AuditEventRepository(BaseRepository[AuditEvent]):
             event_type=event_type,
             entity_type=entity_type,
             entity_id=entity_id,
+            business_id=business_id,
             actor_user_id=actor_id,
             event_metadata=metadata,
             site_id=site_id,

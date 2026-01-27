@@ -16,6 +16,7 @@ Usage:
 """
 
 from .base import BaseRepository
+from .business_repository import BusinessRepository
 from .user_repository import UserRepository
 from .site_repository import SiteRepository
 from .employee_repository import EmployeeRepository
@@ -28,6 +29,7 @@ from .audit_event_repository import AuditEventRepository
 
 __all__ = [
     'BaseRepository',
+    'BusinessRepository',
     'UserRepository',
     'SiteRepository',
     'EmployeeRepository',

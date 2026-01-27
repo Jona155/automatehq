@@ -18,6 +18,7 @@ class Employee(db.Model):
     __tablename__ = 'employees'
 
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    business_id = db.Column(UUID(as_uuid=True), db.ForeignKey('businesses.id'), nullable=False)
     site_id = db.Column(UUID(as_uuid=True), db.ForeignKey('sites.id'), nullable=False)
     full_name = db.Column(db.Text, nullable=False)
     passport_id = db.Column(db.Text, nullable=True)
@@ -30,4 +31,6 @@ class Employee(db.Model):
     __table_args__ = (
         Index('ix_employees_site_id', 'site_id'),
         Index('ix_employees_passport_id', 'passport_id', unique=True, postgresql_where=(passport_id.isnot(None))),
+        Index('ix_employees_business_site', 'business_id', 'site_id'),
+        Index('ix_employees_business_passport', 'business_id', 'passport_id', postgresql_where=(passport_id.isnot(None))),
     )

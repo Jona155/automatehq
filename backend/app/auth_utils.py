@@ -70,13 +70,10 @@ def token_required(f):
         except Exception:
              return jsonify({'message': 'Token is invalid', 'success': False, 'error': 'Unauthorized'}), 401
 
-        # Pass current_user to the route if it accepts it? 
-        # Or just store in g? Flask's g is better.
-        # But for now, the plan says "sets current_user in context (or passes it to the route)".
-        # I'll just rely on `g` or passing it? 
-        # Standard flask pattern often uses `current_user` from flask_login, but here I can use `g`.
+        # Store user and business context in Flask's g object
         from flask import g
         g.current_user = current_user
+        g.business_id = current_user.business_id
         
         return f(*args, **kwargs)
 

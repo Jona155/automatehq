@@ -1,4 +1,4 @@
-from flask import Blueprint, request
+from flask import Blueprint, request, g
 from werkzeug.security import generate_password_hash
 from ..repositories.user_repository import UserRepository
 from .utils import api_response, model_to_dict, models_to_list
@@ -10,19 +10,19 @@ repo = UserRepository()
 @users_bp.route('', methods=['GET'])
 @token_required
 def get_users():
-    """Get all users, optionally filtered by role or active status."""
+    """Get all users in the current business, optionally filtered by role or active status."""
     role = request.args.get('role')
     only_active = request.args.get('active', 'false').lower() == 'true'
     
     if role:
-        results = repo.get_by_role(role)
+        results = repo.get_by_role(role, business_id=g.business_id)
         if only_active:
             results = [u for u in results if u.is_active]
     else:
         if only_active:
-            results = repo.get_active_users()
+            results = repo.get_active_users(business_id=g.business_id)
         else:
-            results = repo.get_all()
+            results = repo.get_all_for_business(business_id=g.business_id)
             
     # Remove password_hash from response
     data = []
@@ -36,23 +36,26 @@ def get_users():
 @users_bp.route('', methods=['POST'])
 @token_required
 def create_user():
-    """Create a new user."""
+    """Create a new user in the current business."""
     data = request.get_json()
     if not data:
         return api_response(status_code=400, message="No data provided", error="Bad Request")
         
     try:
-        # Check email uniqueness if provided
+        # Check email uniqueness if provided (globally unique)
         if data.get('email') and repo.get_by_email(data['email']):
              return api_response(status_code=409, message="User with this email already exists", error="Conflict")
 
-        # Check phone uniqueness if provided
+        # Check phone uniqueness if provided (globally unique)
         if data.get('phone_number') and repo.get_by_phone(data['phone_number']):
              return api_response(status_code=409, message="User with this phone number already exists", error="Conflict")
 
         # Hash password if provided
         if 'password' in data:
             data['password_hash'] = generate_password_hash(data.pop('password'))
+        
+        # Inject business_id from context
+        data['business_id'] = g.business_id
             
         user = repo.create(**data)
         
@@ -66,9 +69,9 @@ def create_user():
 @users_bp.route('/<uuid:user_id>', methods=['GET'])
 @token_required
 def get_user(user_id):
-    """Get a specific user by ID."""
+    """Get a specific user by ID (must belong to current business)."""
     user = repo.get_by_id(user_id)
-    if not user:
+    if not user or user.business_id != g.business_id:
         return api_response(status_code=404, message="User not found", error="Not Found")
         
     user_dict = model_to_dict(user)
@@ -79,7 +82,12 @@ def get_user(user_id):
 @users_bp.route('/<uuid:user_id>', methods=['PUT'])
 @token_required
 def update_user(user_id):
-    """Update a user."""
+    """Update a user (must belong to current business)."""
+    # Verify ownership
+    user = repo.get_by_id(user_id)
+    if not user or user.business_id != g.business_id:
+        return api_response(status_code=404, message="User not found", error="Not Found")
+    
     data = request.get_json()
     if not data:
         return api_response(status_code=400, message="No data provided", error="Bad Request")
@@ -95,6 +103,10 @@ def update_user(user_id):
             existing = repo.get_by_phone(data['phone_number'])
             if existing and str(existing.id) != str(user_id):
                 return api_response(status_code=409, message="User with this phone number already exists", error="Conflict")
+
+        # Prevent changing business_id
+        if 'business_id' in data:
+            del data['business_id']
 
         # Handle password update
         if 'password' in data:
@@ -114,7 +126,12 @@ def update_user(user_id):
 @users_bp.route('/<uuid:user_id>', methods=['DELETE'])
 @token_required
 def delete_user(user_id):
-    """Delete a user."""
+    """Delete a user (must belong to current business)."""
+    # Verify ownership
+    user = repo.get_by_id(user_id)
+    if not user or user.business_id != g.business_id:
+        return api_response(status_code=404, message="User not found", error="Not Found")
+    
     try:
         success = repo.delete(user_id)
         if not success:
@@ -127,9 +144,9 @@ def delete_user(user_id):
 @users_bp.route('/<uuid:user_id>/deactivate', methods=['POST'])
 @token_required
 def deactivate_user(user_id):
-    """Deactivate a user."""
+    """Deactivate a user (must belong to current business)."""
     try:
-        success = repo.deactivate(user_id)
+        success = repo.deactivate(user_id, business_id=g.business_id)
         if not success:
             return api_response(status_code=404, message="User not found", error="Not Found")
             
@@ -140,9 +157,9 @@ def deactivate_user(user_id):
 @users_bp.route('/<uuid:user_id>/activate', methods=['POST'])
 @token_required
 def activate_user(user_id):
-    """Activate a user."""
+    """Activate a user (must belong to current business)."""
     try:
-        success = repo.activate(user_id)
+        success = repo.activate(user_id, business_id=g.business_id)
         if not success:
             return api_response(status_code=404, message="User not found", error="Not Found")
             
