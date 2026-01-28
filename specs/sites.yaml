@@ -7,7 +7,7 @@ paths:
   /api/sites:
     get:
       summary: Get all sites
-      description: Get all sites, optionally with employee counts and filtered by active status.
+      description: Get all sites, optionally with employee counts and filtered by active status. Sites are shared across all businesses.
       security:
         - bearerAuth: []
       parameters:

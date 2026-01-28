@@ -1,4 +1,4 @@
-from flask import Blueprint, request
+from flask import Blueprint, request, g
 from datetime import datetime
 from ..repositories.work_card_repository import WorkCardRepository
 from .utils import api_response, model_to_dict, models_to_list
@@ -10,7 +10,7 @@ repo = WorkCardRepository()
 @work_cards_bp.route('', methods=['GET'])
 @token_required
 def get_work_cards():
-    """Get work cards filtered by site+month or status."""
+    """Get work cards in the current business, filtered by site+month or status."""
     site_id = request.args.get('site_id')
     month_str = request.args.get('month') # YYYY-MM-DD
     status = request.args.get('status')
@@ -18,28 +18,28 @@ def get_work_cards():
     if site_id and month_str:
         try:
             month = datetime.strptime(month_str, '%Y-%m-%d').date()
-            results = repo.get_by_site_month(site_id, month)
+            results = repo.get_by_site_month(site_id, month, business_id=g.business_id)
         except ValueError:
             return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
     elif status:
-        results = repo.get_by_review_status(status)
+        results = repo.get_by_review_status(status, business_id=g.business_id)
     else:
-        results = repo.get_all()
+        results = repo.get_all_for_business(business_id=g.business_id)
         
     return api_response(data=models_to_list(results))
 
 @work_cards_bp.route('/<uuid:card_id>', methods=['GET'])
 @token_required
 def get_work_card(card_id):
-    """Get a specific work card, optionally with details."""
+    """Get a specific work card (must belong to current business), optionally with details."""
     include_details = request.args.get('details', 'false').lower() == 'true'
     
     if include_details:
         card = repo.get_with_all_relations(card_id)
     else:
         card = repo.get_by_id(card_id)
-        
-    if not card:
+    
+    if not card or card.business_id != g.business_id:
         return api_response(status_code=404, message="Work card not found", error="Not Found")
     
     data = model_to_dict(card)
@@ -58,10 +58,19 @@ def get_work_card(card_id):
 @work_cards_bp.route('/<uuid:card_id>', methods=['PUT'])
 @token_required
 def update_work_card(card_id):
-    """Update a work card (e.g. assign employee)."""
+    """Update a work card (must belong to current business, e.g. assign employee)."""
+    # Verify ownership
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+    
     data = request.get_json()
     if not data:
         return api_response(status_code=400, message="No data provided", error="Bad Request")
+    
+    # Prevent changing business_id
+    if 'business_id' in data:
+        del data['business_id']
         
     try:
         updated_card = repo.update(card_id, **data)
@@ -75,7 +84,12 @@ def update_work_card(card_id):
 @work_cards_bp.route('/<uuid:card_id>/status', methods=['PUT'])
 @token_required
 def update_status(card_id):
-    """Update review status."""
+    """Update review status (must belong to current business)."""
+    # Verify ownership
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+    
     data = request.get_json()
     status = data.get('status')
     
@@ -94,7 +108,12 @@ def update_status(card_id):
 @work_cards_bp.route('/<uuid:card_id>/approve', methods=['POST'])
 @token_required
 def approve_work_card(card_id):
-    """Approve a work card."""
+    """Approve a work card (must belong to current business)."""
+    # Verify ownership
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+    
     data = request.get_json()
     user_id = data.get('user_id')
     

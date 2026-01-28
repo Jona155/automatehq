@@ -7,7 +7,7 @@ paths:
   /api/employees:
     get:
       summary: Get all employees
-      description: Get all employees, optionally filtered by site, name, or active status.
+      description: Get all employees in the current business, optionally filtered by site, name, or active status.
       security:
         - bearerAuth: []
       parameters:
@@ -46,6 +46,7 @@ paths:
                       $ref: '#/components/schemas/Employee'
     post:
       summary: Create a new employee
+      description: Create a new employee in the current business.
       security:
         - bearerAuth: []
       requestBody:
@@ -93,6 +94,7 @@ paths:
           format: uuid
     get:
       summary: Get an employee by ID
+      description: Get a specific employee by ID. The employee must belong to the current business.
       security:
         - bearerAuth: []
       responses:
@@ -113,6 +115,7 @@ paths:
           description: Employee not found
     put:
       summary: Update an employee
+      description: Update an employee. The employee must belong to the current business.
       security:
         - bearerAuth: []
       requestBody:
@@ -151,6 +154,7 @@ paths:
           description: Conflict (e.g. passport ID already exists)
     delete:
       summary: Delete an employee
+      description: Delete an employee. The employee must belong to the current business.
       security:
         - bearerAuth: []
       responses:
@@ -168,6 +172,7 @@ paths:
           format: uuid
     post:
       summary: Deactivate an employee
+      description: Deactivate an employee. The employee must belong to the current business.
       security:
         - bearerAuth: []
       responses:
@@ -185,6 +190,7 @@ paths:
           format: uuid
     post:
       summary: Activate an employee
+      description: Activate an employee. The employee must belong to the current business.
       security:
         - bearerAuth: []
       responses:
@@ -198,6 +204,9 @@ components:
       type: object
       properties:
         id:
+          type: string
+          format: uuid
+        business_id:
           type: string
           format: uuid
         site_id:

@@ -4,6 +4,7 @@ from werkzeug.security import generate_password_hash
 from app import create_app
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.user_repository import UserRepository
+from app.repositories.business_repository import BusinessRepository
 
 load_dotenv()
 
@@ -59,7 +60,8 @@ def seed_admin():
                 'role': 'ADMIN',
                 'business_id': business.id,
                 'password_hash': generate_password_hash(password),
-                'is_active': True
+                'is_active': True,
+                'business_id': business.id
             }
             
             user_repo.create(**user_data)
