@@ -10,17 +10,32 @@ repo = UserRepository()
 @users_bp.route('', methods=['GET'])
 @token_required
 def get_users():
+<<<<<<< HEAD
     """Get all users, optionally filtered by role or active status, scoped to tenant."""
+=======
+    """Get all users in the current business, optionally filtered by role or active status."""
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
     role = request.args.get('role')
     only_active = request.args.get('active', 'false').lower() == 'true'
     
     filters = {'business_id': g.current_user.business_id}
     if role:
+<<<<<<< HEAD
         filters['role'] = role
     if only_active:
         filters['is_active'] = True
         
     results = repo.get_all(filters=filters)
+=======
+        results = repo.get_by_role(role, business_id=g.business_id)
+        if only_active:
+            results = [u for u in results if u.is_active]
+    else:
+        if only_active:
+            results = repo.get_active_users(business_id=g.business_id)
+        else:
+            results = repo.get_all_for_business(business_id=g.business_id)
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
             
     # Remove password_hash from response
     data = []
@@ -34,12 +49,13 @@ def get_users():
 @users_bp.route('', methods=['POST'])
 @token_required
 def create_user():
-    """Create a new user."""
+    """Create a new user in the current business."""
     data = request.get_json()
     if not data:
         return api_response(status_code=400, message="No data provided", error="Bad Request")
         
     try:
+<<<<<<< HEAD
         # Enforce scoping and defaults
         data['business_id'] = g.current_user.business_id
         data['role'] = 'ADMIN' # Force Admin role for MVP
@@ -65,6 +81,22 @@ def create_user():
 
         # Hash password
         data['password_hash'] = generate_password_hash(data.pop('password'))
+=======
+        # Check email uniqueness if provided (globally unique)
+        if data.get('email') and repo.get_by_email(data['email']):
+             return api_response(status_code=409, message="User with this email already exists", error="Conflict")
+
+        # Check phone uniqueness if provided (globally unique)
+        if data.get('phone_number') and repo.get_by_phone(data['phone_number']):
+             return api_response(status_code=409, message="User with this phone number already exists", error="Conflict")
+
+        # Hash password if provided
+        if 'password' in data:
+            data['password_hash'] = generate_password_hash(data.pop('password'))
+        
+        # Inject business_id from context
+        data['business_id'] = g.business_id
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
             
         user = repo.create(**data)
         
@@ -78,11 +110,15 @@ def create_user():
 @users_bp.route('/<uuid:user_id>', methods=['GET'])
 @token_required
 def get_user(user_id):
-    """Get a specific user by ID."""
+    """Get a specific user by ID (must belong to current business)."""
     user = repo.get_by_id(user_id)
+<<<<<<< HEAD
     
     # Scoping check
     if not user or user.business_id != g.current_user.business_id:
+=======
+    if not user or user.business_id != g.business_id:
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
         return api_response(status_code=404, message="User not found", error="Not Found")
         
     user_dict = model_to_dict(user)
@@ -93,7 +129,12 @@ def get_user(user_id):
 @users_bp.route('/<uuid:user_id>', methods=['PUT'])
 @token_required
 def update_user(user_id):
-    """Update a user."""
+    """Update a user (must belong to current business)."""
+    # Verify ownership
+    user = repo.get_by_id(user_id)
+    if not user or user.business_id != g.business_id:
+        return api_response(status_code=404, message="User not found", error="Not Found")
+    
     data = request.get_json()
     if not data:
         return api_response(status_code=400, message="No data provided", error="Bad Request")
@@ -119,6 +160,17 @@ def update_user(user_id):
             if existing and str(existing.id) != str(user_id):
                 return api_response(status_code=409, message="User with this phone number already exists", error="Conflict")
 
+<<<<<<< HEAD
+=======
+        # Prevent changing business_id
+        if 'business_id' in data:
+            del data['business_id']
+
+        # Handle password update
+        if 'password' in data:
+            data['password_hash'] = generate_password_hash(data.pop('password'))
+
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
         updated_user = repo.update(user_id, **data)
             
         user_dict = model_to_dict(updated_user)
@@ -131,6 +183,7 @@ def update_user(user_id):
 @users_bp.route('/<uuid:user_id>', methods=['DELETE'])
 @token_required
 def delete_user(user_id):
+<<<<<<< HEAD
     """Delete a user (soft delete)."""
     user = repo.get_by_id(user_id)
     if not user or user.business_id != g.current_user.business_id:
@@ -140,6 +193,14 @@ def delete_user(user_id):
     if str(user.id) == str(g.current_user.id):
         return api_response(status_code=400, message="Cannot delete your own user account", error="Bad Request")
 
+=======
+    """Delete a user (must belong to current business)."""
+    # Verify ownership
+    user = repo.get_by_id(user_id)
+    if not user or user.business_id != g.business_id:
+        return api_response(status_code=404, message="User not found", error="Not Found")
+    
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
     try:
         success = repo.deactivate(user_id)
         if not success:
@@ -153,13 +214,17 @@ def delete_user(user_id):
 @users_bp.route('/<uuid:user_id>/deactivate', methods=['POST'])
 @token_required
 def deactivate_user(user_id):
+<<<<<<< HEAD
     """Deactivate a user."""
     user = repo.get_by_id(user_id)
     if not user or user.business_id != g.current_user.business_id:
         return api_response(status_code=404, message="User not found", error="Not Found")
     
+=======
+    """Deactivate a user (must belong to current business)."""
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
     try:
-        success = repo.deactivate(user_id)
+        success = repo.deactivate(user_id, business_id=g.business_id)
         if not success:
             return api_response(status_code=404, message="User not found", error="Not Found")
             
@@ -170,13 +235,17 @@ def deactivate_user(user_id):
 @users_bp.route('/<uuid:user_id>/activate', methods=['POST'])
 @token_required
 def activate_user(user_id):
+<<<<<<< HEAD
     """Activate a user."""
     user = repo.get_by_id(user_id)
     if not user or user.business_id != g.current_user.business_id:
         return api_response(status_code=404, message="User not found", error="Not Found")
 
+=======
+    """Activate a user (must belong to current business)."""
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
     try:
-        success = repo.activate(user_id)
+        success = repo.activate(user_id, business_id=g.business_id)
         if not success:
             return api_response(status_code=404, message="User not found", error="Not Found")
             

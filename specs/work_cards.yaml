@@ -7,7 +7,7 @@ paths:
   /api/work_cards:
     get:
       summary: Get work cards
-      description: Get work cards filtered by site+month or status.
+      description: Get work cards in the current business, filtered by site+month or status.
       security:
         - bearerAuth: []
       parameters:
@@ -56,6 +56,7 @@ paths:
           format: uuid
     get:
       summary: Get a work card by ID
+      description: Get a specific work card by ID. The work card must belong to the current business.
       security:
         - bearerAuth: []
       parameters:
@@ -99,7 +100,7 @@ paths:
           description: Work card not found
     put:
       summary: Update a work card
-      description: Update work card fields (e.g. assign employee)
+      description: Update a work card (e.g. assign employee). The work card must belong to the current business.
       security:
         - bearerAuth: []
       requestBody:
@@ -141,6 +142,7 @@ paths:
           format: uuid
     put:
       summary: Update review status
+      description: Update review status. The work card must belong to the current business.
       security:
         - bearerAuth: []
       requestBody:
@@ -180,6 +182,7 @@ paths:
           format: uuid
     post:
       summary: Approve a work card
+      description: Approve a work card. The work card must belong to the current business.
       security:
         - bearerAuth: []
       requestBody:
@@ -216,6 +219,9 @@ components:
       type: object
       properties:
         id:
+          type: string
+          format: uuid
+        business_id:
           type: string
           format: uuid
         site_id:

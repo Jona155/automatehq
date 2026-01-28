@@ -2,11 +2,16 @@ openapi: 3.1.0
 info:
   title: Businesses API
   version: 1.0.0
+<<<<<<< HEAD
   description: API for managing businesses (tenants).
+=======
+  description: API for managing businesses (multi-tenancy entities).
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
 paths:
   /api/businesses:
     get:
       summary: Get all businesses
+<<<<<<< HEAD
       description: Get all businesses, optionally filtered by active status.
       security:
         - bearerAuth: []
@@ -17,6 +22,11 @@ paths:
           schema:
             type: boolean
             default: false
+=======
+      description: Get all businesses. For regular users, only returns their own business.
+      security:
+        - bearerAuth: []
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
       responses:
         '200':
           description: List of businesses
@@ -33,8 +43,16 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Business'
+<<<<<<< HEAD
     post:
       summary: Create a new business
+=======
+        '404':
+          description: Business not found
+    post:
+      summary: Create a new business
+      description: Create a new business. In production, this should be restricted to super admins.
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
       security:
         - bearerAuth: []
       requestBody:
@@ -44,6 +62,7 @@ paths:
             schema:
               type: object
               required:
+<<<<<<< HEAD
                 - name
                 - code
               properties:
@@ -53,6 +72,14 @@ paths:
                 code:
                   type: string
                   description: The URL-friendly slug/code for the business
+=======
+                - business_name
+              properties:
+                business_name:
+                  type: string
+                business_code:
+                  type: string
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
       responses:
         '201':
           description: Business created
@@ -67,10 +94,15 @@ paths:
                     type: string
                   data:
                     $ref: '#/components/schemas/Business'
+<<<<<<< HEAD
         '400':
           description: Bad request (missing fields)
         '409':
           description: Business with this code or name already exists
+=======
+        '409':
+          description: Business with this name or code already exists
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
   /api/businesses/{business_id}:
     parameters:
       - name: business_id
@@ -81,6 +113,10 @@ paths:
           format: uuid
     get:
       summary: Get a business by ID
+<<<<<<< HEAD
+=======
+      description: Get a specific business by ID. Users can only access their own business.
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
       security:
         - bearerAuth: []
       responses:
@@ -97,10 +133,19 @@ paths:
                     type: string
                   data:
                     $ref: '#/components/schemas/Business'
+<<<<<<< HEAD
+=======
+        '403':
+          description: Access denied
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
         '404':
           description: Business not found
     put:
       summary: Update a business
+<<<<<<< HEAD
+=======
+      description: Update a business. Users can only update their own business.
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
       security:
         - bearerAuth: []
       requestBody:
@@ -110,9 +155,15 @@ paths:
             schema:
               type: object
               properties:
+<<<<<<< HEAD
                 name:
                   type: string
                 code:
+=======
+                business_name:
+                  type: string
+                business_code:
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
                   type: string
                 is_active:
                   type: boolean
@@ -130,17 +181,66 @@ paths:
                     type: string
                   data:
                     $ref: '#/components/schemas/Business'
+<<<<<<< HEAD
         '404':
           description: Business not found
         '409':
           description: Business with this code or name already exists
     delete:
       summary: Deactivate a business (soft delete)
+=======
+        '403':
+          description: Access denied
+        '404':
+          description: Business not found
+        '409':
+          description: Conflict (e.g. name or code already exists)
+    delete:
+      summary: Delete (deactivate) a business
+      description: Soft delete a business by deactivating it.
       security:
         - bearerAuth: []
       responses:
         '200':
           description: Business deactivated
+        '403':
+          description: Access denied
+        '404':
+          description: Business not found
+  /api/businesses/{business_id}/activate:
+    parameters:
+      - name: business_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Activate a business
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Business activated
+        '404':
+          description: Business not found
+  /api/businesses/{business_id}/deactivate:
+    parameters:
+      - name: business_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Deactivate a business
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Business deactivated
+<<<<<<< HEAD
           content:
              application/json:
               schema:
@@ -150,6 +250,8 @@ paths:
                     type: boolean
                   message:
                     type: string
+=======
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
         '404':
           description: Business not found
 components:
@@ -160,10 +262,18 @@ components:
         id:
           type: string
           format: uuid
+<<<<<<< HEAD
         name:
           type: string
         code:
           type: string
+=======
+        business_name:
+          type: string
+        business_code:
+          type: string
+          nullable: true
+>>>>>>> edd1bb21294eae8a7b37e75977dd739df6834c2d
         is_active:
           type: boolean
         created_at:
