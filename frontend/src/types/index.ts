@@ -51,3 +51,42 @@ export interface AuthResponse {
     user: User;
   };
 }
+
+export interface WorkCard {
+  id: string;
+  business_id: string;
+  site_id: string;
+  employee_id: string | null;
+  processing_month: string;
+  review_status: 'NEEDS_ASSIGNMENT' | 'NEEDS_REVIEW' | 'APPROVED' | 'REJECTED';
+  approved_by_user_id: string | null;
+  approved_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  employee?: Employee;
+  site?: Site;
+}
+
+export interface DayEntry {
+  id: string;
+  work_card_id: string;
+  day_of_month: number;
+  from_time: string | null;
+  to_time: string | null;
+  total_hours: number | null;
+  updated_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmployeeUploadStatus {
+  employee: Employee;
+  status: 'NO_UPLOAD' | 'PENDING' | 'EXTRACTED' | 'APPROVED' | 'FAILED';
+  work_card_id: string | null;
+}
+
+export interface MatrixData {
+  employees: Employee[];
+  matrix: Record<string, Record<number, number>>; // employee_id -> day -> hours
+}

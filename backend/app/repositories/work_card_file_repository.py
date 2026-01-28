@@ -55,6 +55,33 @@ class WorkCardFileRepository(BaseRepository[WorkCardFile]):
         self.session.commit()
         return True
     
+    def create(self, work_card_id: UUID, content_type: str, file_name: str, image_bytes: bytes) -> WorkCardFile:
+        """
+        Create a new work card file.
+        
+        Args:
+            work_card_id: The work card's UUID
+            content_type: The file's MIME type
+            file_name: The original file name
+            image_bytes: The file's binary data
+            
+        Returns:
+            The created WorkCardFile instance
+        """
+        file_size_bytes = len(image_bytes)
+        
+        file = WorkCardFile(
+            work_card_id=work_card_id,
+            content_type=content_type,
+            file_name=file_name,
+            file_size_bytes=file_size_bytes,
+            image_bytes=image_bytes
+        )
+        
+        self.session.add(file)
+        self.session.commit()
+        return file
+    
     def get_file_info(self, work_card_id: UUID) -> Optional[dict]:
         """
         Get file metadata without the image bytes (for performance).

@@ -2,12 +2,12 @@
 
 ## Current Focus
 
-Sites page done (list with employee counts, clickable rows → site details placeholder). Users and Employees pages done. Next: optional Business UI or uploads/extraction.
+Site Details page complete: all 3 tabs implemented (Employees & Uploads, Review & Approval, Hours Matrix). Next: Extraction worker or CSV export.
 
 ## Next Steps
 
-1. Implement Business management UI (optional for MVP).
-2. Uploads, extraction worker, review, CSV export.
+1. Extraction worker (OpenCV/OpenAI vision).
+2. CSV export.
 3. Heroku deploy.
 
 ## Decisions

@@ -16,6 +16,10 @@
 - **Businesses API**: Implemented full CRUD API for Business entity (`backend/app/api/businesses.py`) with OpenAPI spec (`specs/businesses.yaml`).
 - **Users Management page**: Admin page at `/:businessCode/users` — list (table), create (modal: email, full_name, password), edit (email/full_name only), soft-delete with confirmation; backend scopes all user ops to `g.current_user.business_id`; self-delete blocked. API: `frontend/src/api/users.ts`; page: `frontend/src/pages/UsersPage.tsx`.
 - **Sites page**: List at `/:businessCode/sites` — table (site name, code, employee count via API `include_counts`, activity status); includes active and inactive; row click → `/:businessCode/sites/:siteId`. Site details page placeholder shows site name only. Available to all authenticated users. API: `frontend/src/api/sites.ts`; pages: `SitesPage.tsx`, `SiteDetailsPage.tsx`.
+- **Site Details Backend APIs**: Six new endpoints for work card processing: (1) Single/batch upload endpoints create work_card + file + extraction job; (2) File retrieval returns image bytes; (3) Day entries GET/PUT with HH:MM validation; (4) Employee upload status by site+month (NO_UPLOAD|PENDING|EXTRACTED|APPROVED|FAILED); (5) Hours matrix optimized with window functions for 50+ employees, returns 31-day grid; (6) OpenAPI specs updated (`work_cards.yaml`, `sites.yaml`). All enforce multi-tenancy.
+- **Site Details Frontend - Tab 1 (Employees & Uploads)**: Employee list with upload status badges; single upload per employee; bulk upload for unknown employees; unknown uploads section with inline employee assignment; month picker persists in localStorage.
+- **Site Details Frontend - Tab 2 (Review & Approval)**: Split-screen panel with left sidebar (search, status filters, card list) and right panel (zoomable/rotatable image viewer + 31-day editable grid for HH:MM entries with validation + auto-calculated totals); prev/next navigation; save draft + approve actions.
+- **Site Details Frontend - Tab 3 (Hours Matrix)**: 31 days × N employees grid with sticky headers/column; toggles for approved-only and include-inactive; color-coded cells (empty/extracted/approved); optimized for 50+ employees.
 
 ## In Progress
 
@@ -24,9 +28,7 @@
 ## Left
 
 - Business management UI (optional).
-- Uploads & File Handling.
 - Extraction Worker (OpenCV/OpenAI).
-- Review Console.
 - CSV Export.
 - Heroku Deploy.
 

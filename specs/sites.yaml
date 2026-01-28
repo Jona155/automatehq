@@ -142,6 +142,120 @@ paths:
           description: Site deleted
         '404':
           description: Site not found
+  /api/sites/{site_id}/employee-upload-status:
+    parameters:
+      - name: site_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get employee upload status
+      description: Get employees with their upload status for a site and month. Status can be NO_UPLOAD, PENDING, EXTRACTED, APPROVED, or FAILED.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: processing_month
+          in: query
+          required: true
+          description: Month to check upload status for (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Employee upload status list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        employee:
+                          $ref: '#/components/schemas/Employee'
+                        status:
+                          type: string
+                          enum: [NO_UPLOAD, PENDING, EXTRACTED, APPROVED, FAILED]
+                        work_card_id:
+                          type: string
+                          format: uuid
+                          nullable: true
+        '400':
+          description: Bad request (missing or invalid processing_month)
+        '404':
+          description: Site not found
+  /api/sites/{site_id}/matrix:
+    parameters:
+      - name: site_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get hours matrix
+      description: Get hours matrix for a site and month. Returns employees and a matrix of total_hours by employee and day (1-31).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: processing_month
+          in: query
+          required: true
+          description: Month to get hours matrix for (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: approved_only
+          in: query
+          description: Only include approved work cards
+          schema:
+            type: boolean
+            default: true
+        - name: include_inactive
+          in: query
+          description: Include inactive employees
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Hours matrix
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      employees:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Employee'
+                      matrix:
+                        type: object
+                        description: Object mapping employee_id to day (1-31) to total_hours
+                        additionalProperties:
+                          type: object
+                          additionalProperties:
+                            type: number
+        '400':
+          description: Bad request (missing or invalid processing_month)
+        '404':
+          description: Site not found
 components:
   schemas:
     Site:
@@ -165,6 +279,33 @@ components:
         employee_count:
           type: integer
           description: Included only if requested
+    Employee:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        business_id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        passport_id:
+          type: string
+        external_employee_id:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
   securitySchemes:
     bearerAuth:
       type: http
