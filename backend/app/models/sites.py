@@ -30,6 +30,7 @@ class Employee(db.Model):
     site_id = db.Column(UUID(as_uuid=True), db.ForeignKey('sites.id'), nullable=False)
     full_name = db.Column(db.Text, nullable=False)
     passport_id = db.Column(db.Text, nullable=True)
+    phone_number = db.Column(db.Text, nullable=False)
     external_employee_id = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)

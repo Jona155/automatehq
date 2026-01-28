@@ -23,6 +23,22 @@ class SiteRepository(BaseRepository[Site]):
         """
         return self.session.query(Site).filter_by(site_name=site_name).first()
     
+    def get_by_name_and_business(self, site_name: str, business_id: UUID) -> Optional[Site]:
+        """
+        Get a site by its name within a specific business (tenant-scoped).
+        
+        Args:
+            site_name: The site's name
+            business_id: The business ID to scope the query
+            
+        Returns:
+            Site instance or None if not found
+        """
+        return self.session.query(Site).filter_by(
+            site_name=site_name, 
+            business_id=business_id
+        ).first()
+    
     def get_by_code(self, site_code: str) -> Optional[Site]:
         """
         Get a site by its code.
@@ -35,28 +51,41 @@ class SiteRepository(BaseRepository[Site]):
         """
         return self.session.query(Site).filter_by(site_code=site_code).first()
     
-    def get_active_sites(self) -> List[Site]:
+    def get_active_sites(self, business_id: Optional[UUID] = None) -> List[Site]:
         """
-        Get all active sites.
+        Get all active sites, optionally scoped to a business.
         
+        Args:
+            business_id: Optional business ID to filter by
+            
         Returns:
             List of active Site instances
         """
-        return self.session.query(Site).filter_by(is_active=True).all()
+        query = self.session.query(Site).filter_by(is_active=True)
+        if business_id:
+            query = query.filter_by(business_id=business_id)
+        return query.all()
     
-    def get_with_employee_count(self) -> List[Dict[str, Any]]:
+    def get_with_employee_count(self, business_id: Optional[UUID] = None) -> List[Dict[str, Any]]:
         """
-        Get all sites with their employee counts.
+        Get all sites with their employee counts, optionally scoped to a business.
         
+        Args:
+            business_id: Optional business ID to filter by
+            
         Returns:
             List of dicts with site info and employee_count
         """
-        results = self.session.query(
+        query = self.session.query(
             Site,
             func.count(Employee.id).label('employee_count')
         ).outerjoin(Employee, Site.id == Employee.site_id)\
-         .group_by(Site.id)\
-         .all()
+         .group_by(Site.id)
+        
+        if business_id:
+            query = query.filter(Site.business_id == business_id)
+        
+        results = query.all()
         
         return [
             {
@@ -66,22 +95,29 @@ class SiteRepository(BaseRepository[Site]):
             for site, count in results
         ]
     
-    def get_active_with_employee_count(self) -> List[Dict[str, Any]]:
+    def get_active_with_employee_count(self, business_id: Optional[UUID] = None) -> List[Dict[str, Any]]:
         """
-        Get all active sites with their active employee counts.
+        Get all active sites with their active employee counts, optionally scoped to a business.
         
+        Args:
+            business_id: Optional business ID to filter by
+            
         Returns:
             List of dicts with site info and employee_count
         """
-        results = self.session.query(
+        query = self.session.query(
             Site,
             func.count(Employee.id).label('employee_count')
         ).outerjoin(
             Employee, 
             (Site.id == Employee.site_id) & (Employee.is_active == True)
         ).filter(Site.is_active == True)\
-         .group_by(Site.id)\
-         .all()
+         .group_by(Site.id)
+        
+        if business_id:
+            query = query.filter(Site.business_id == business_id)
+        
+        results = query.all()
         
         return [
             {

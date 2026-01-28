@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import EmployeesPage from './pages/EmployeesPage';
 import SitesPage from './pages/SitesPage';
+import SiteDetailsPage from './pages/SiteDetailsPage';
 import UsersPage from './pages/UsersPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import TenantGuard from './components/TenantGuard';
@@ -22,6 +23,7 @@ function App() {
                 <Route path="/:businessCode/dashboard" element={<DashboardPage />} />
                 <Route path="/:businessCode/employees" element={<EmployeesPage />} />
                 <Route path="/:businessCode/sites" element={<SitesPage />} />
+                <Route path="/:businessCode/sites/:siteId" element={<SiteDetailsPage />} />
                 <Route path="/:businessCode/users" element={<UsersPage />} />
               </Route>
             </Route>
