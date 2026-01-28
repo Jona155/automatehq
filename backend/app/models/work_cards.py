@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB, BYTEA
 from ..extensions import db
 from ..utils import utc_now
 
+
 class WorkCard(db.Model):
     __tablename__ = 'work_cards'
 
@@ -33,7 +34,7 @@ class WorkCard(db.Model):
     __table_args__ = (
         Index('ix_work_cards_business_id', 'business_id'),
         Index('ix_work_cards_business_site_month', 'business_id', 'site_id', 'processing_month'),
-        Index('ix_work_cards_business_employee_month', 'business_id', 'employee_id', 'processing_month'),
+        Index('ix_work_cards_employee_month', 'employee_id', 'processing_month'),
         Index('ix_work_cards_review_status', 'review_status'),
     )
 

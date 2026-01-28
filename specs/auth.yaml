@@ -143,6 +143,20 @@ paths:
                     example: Unauthorized
 components:
   schemas:
+    Business:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Display name of the business
+        code:
+          type: string
+          description: URL-friendly slug for the business (used in routes)
+        is_active:
+          type: boolean
     User:
       type: object
       properties:
@@ -152,6 +166,7 @@ components:
         business_id:
           type: string
           format: uuid
+          description: ID of the business this user belongs to
         full_name:
           type: string
         email:
@@ -171,6 +186,9 @@ components:
         updated_at:
           type: string
           format: date-time
+        business:
+          $ref: '#/components/schemas/Business'
+          description: Business context for the user (included in auth responses)
   securitySchemes:
     bearerAuth:
       type: http

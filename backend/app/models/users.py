@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from ..extensions import db
 from ..utils import utc_now
 
+
 class User(db.Model):
     __tablename__ = 'users'
 
@@ -18,7 +19,6 @@ class User(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
-    # Indexes
     __table_args__ = (
         Index('ix_users_business_id', 'business_id'),
     )

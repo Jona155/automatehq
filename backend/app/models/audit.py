@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from ..extensions import db
 from ..utils import utc_now
 
+
 class ExportRun(db.Model):
     __tablename__ = 'export_runs'
 
@@ -21,6 +22,7 @@ class ExportRun(db.Model):
         Index('ix_export_runs_business_id', 'business_id'),
         Index('ix_export_runs_business_month_site', 'business_id', 'processing_month', 'site_id'),
     )
+
 
 class AuditEvent(db.Model):
     __tablename__ = 'audit_events'

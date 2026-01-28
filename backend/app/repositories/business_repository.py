@@ -1,5 +1,4 @@
-from typing import Optional, List
-from uuid import UUID
+from typing import Optional
 from .base import BaseRepository
 from ..models.business import Business
 
@@ -10,31 +9,31 @@ class BusinessRepository(BaseRepository[Business]):
     def __init__(self):
         super().__init__(Business)
     
-    def get_by_name(self, business_name: str) -> Optional[Business]:
+    def get_by_code(self, code: str) -> Optional[Business]:
         """
-        Get a business by name.
+        Get a business by its URL-friendly code.
         
         Args:
-            business_name: The business name
+            code: The business code (slug)
             
         Returns:
             Business instance or None if not found
         """
-        return self.session.query(Business).filter_by(business_name=business_name).first()
+        return self.session.query(Business).filter_by(code=code).first()
     
-    def get_by_code(self, business_code: str) -> Optional[Business]:
+    def get_by_name(self, name: str) -> Optional[Business]:
         """
-        Get a business by code.
+        Get a business by its name.
         
         Args:
-            business_code: The business code
+            name: The business name
             
         Returns:
             Business instance or None if not found
         """
-        return self.session.query(Business).filter_by(business_code=business_code).first()
+        return self.session.query(Business).filter_by(name=name).first()
     
-    def get_active_businesses(self) -> List[Business]:
+    def get_active_businesses(self):
         """
         Get all active businesses.
         
@@ -43,7 +42,7 @@ class BusinessRepository(BaseRepository[Business]):
         """
         return self.session.query(Business).filter_by(is_active=True).all()
     
-    def deactivate(self, business_id: UUID) -> bool:
+    def deactivate(self, business_id) -> bool:
         """
         Deactivate a business.
         
@@ -58,23 +57,5 @@ class BusinessRepository(BaseRepository[Business]):
             return False
         
         business.is_active = False
-        self.session.commit()
-        return True
-    
-    def activate(self, business_id: UUID) -> bool:
-        """
-        Activate a business.
-        
-        Args:
-            business_id: The UUID of the business to activate
-            
-        Returns:
-            True if activated successfully, False if business not found
-        """
-        business = self.get_by_id(business_id)
-        if not business:
-            return False
-        
-        business.is_active = True
         self.session.commit()
         return True

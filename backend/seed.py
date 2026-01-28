@@ -2,28 +2,46 @@ import os
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash
 from app import create_app
+from app.repositories.business_repository import BusinessRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.business_repository import BusinessRepository
 
 load_dotenv()
 
+
+def seed_business():
+    """Seed the default business if it doesn't exist."""
+    business_repo = BusinessRepository()
+    
+    existing_business = business_repo.get_by_code('automatehq')
+    if existing_business:
+        print("Default business 'AutomateHQ' already exists.")
+        return existing_business
+    
+    print("Creating default business 'AutomateHQ'...")
+    try:
+        business = business_repo.create(
+            name='AutomateHQ',
+            code='automatehq',
+            is_active=True
+        )
+        print("Default business created successfully.")
+        return business
+    except Exception as e:
+        print(f"Failed to create default business: {e}")
+        return None
+
+
 def seed_admin():
     app = create_app()
     with app.app_context():
-        user_repo = UserRepository()
-        business_repo = BusinessRepository()
-        
-        # Get or create Mizhav business (should exist from migration)
-        business = business_repo.get_by_name('Mizhav')
+        # First ensure default business exists
+        business = seed_business()
         if not business:
-            print("Creating Mizhav business...")
-            business = business_repo.create(
-                business_name='Mizhav',
-                business_code='MIZ',
-                is_active=True
-            )
+            print("Cannot create admin user without a business.")
+            return
         
-        print(f"Using business: {business.business_name} (ID: {business.id})")
+        user_repo = UserRepository()
         
         email = os.environ.get('ADMIN_EMAIL', 'admin@example.com')
         password = os.environ.get('ADMIN_PASSWORD', 'password123')
@@ -40,6 +58,7 @@ def seed_admin():
                 'full_name': 'System Admin',
                 'email': email,
                 'role': 'ADMIN',
+                'business_id': business.id,
                 'password_hash': generate_password_hash(password),
                 'is_active': True,
                 'business_id': business.id
@@ -49,6 +68,7 @@ def seed_admin():
             print("Admin user created successfully.")
         except Exception as e:
             print(f"Failed to create admin user: {e}")
+
 
 if __name__ == "__main__":
     seed_admin()
