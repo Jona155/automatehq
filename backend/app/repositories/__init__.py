@@ -6,16 +6,20 @@ following the repository pattern. All database access should go through
 these repositories rather than directly using SQLAlchemy models.
 
 Usage:
-    from app.repositories import UserRepository, SiteRepository
+    from app.repositories import UserRepository, SiteRepository, BusinessRepository
     
     user_repo = UserRepository()
     user = user_repo.get_by_email("admin@example.com")
     
     site_repo = SiteRepository()
     sites = site_repo.get_active_sites()
+    
+    business_repo = BusinessRepository()
+    business = business_repo.get_by_code("automatehq")
 """
 
 from .base import BaseRepository
+from .business_repository import BusinessRepository
 from .user_repository import UserRepository
 from .site_repository import SiteRepository
 from .employee_repository import EmployeeRepository
@@ -28,6 +32,7 @@ from .audit_event_repository import AuditEventRepository
 
 __all__ = [
     'BaseRepository',
+    'BusinessRepository',
     'UserRepository',
     'SiteRepository',
     'EmployeeRepository',

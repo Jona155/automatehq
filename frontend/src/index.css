@@ -1,2 +1,20 @@
-* { box-sizing: border-box; }
-body { margin: 0; font-family: system-ui, sans-serif; }
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #2b9dee;
+  --color-background-light: #f6f7f8;
+  --color-background-dark: #101a22;
+  
+  --font-display: "Inter", "Noto Sans Hebrew", sans-serif;
+}
+
+@layer base {
+  body {
+    margin: 0;
+    font-family: var(--font-display);
+  }
+  
+  * {
+    box-sizing: border-box;
+  }
+}

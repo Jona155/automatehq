@@ -201,6 +201,10 @@ components:
         id:
           type: string
           format: uuid
+        business_id:
+          type: string
+          format: uuid
+          description: ID of the business this user belongs to
         full_name:
           type: string
         email:

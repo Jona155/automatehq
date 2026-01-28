@@ -1,10 +1,38 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import LoginPage from './pages/LoginPage';
+import DashboardPage from './pages/DashboardPage';
+import EmployeesPage from './pages/EmployeesPage';
+import SitesPage from './pages/SitesPage';
+import UsersPage from './pages/UsersPage';
+import ProtectedRoute from './components/ProtectedRoute';
+import TenantGuard from './components/TenantGuard';
+import Layout from './components/Layout';
+
 function App() {
   return (
-    <main>
-      <h1>AutomateHQ Admin</h1>
-      <p>Work cards → extraction → review → CSV</p>
-    </main>
-  )
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          
+          <Route element={<ProtectedRoute />}>
+            <Route element={<TenantGuard />}>
+              <Route element={<Layout />}>
+                <Route path="/:businessCode/dashboard" element={<DashboardPage />} />
+                <Route path="/:businessCode/employees" element={<EmployeesPage />} />
+                <Route path="/:businessCode/sites" element={<SitesPage />} />
+                <Route path="/:businessCode/users" element={<UsersPage />} />
+              </Route>
+            </Route>
+            <Route path="/" element={<Navigate to="/login" replace />} />
+          </Route>
+          
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
+  );
 }
 
-export default App
+export default App;
