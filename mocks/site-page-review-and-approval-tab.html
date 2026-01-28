@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Site Details: Review &amp; Approval - AutomateHQ</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet"/>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#3b82f6",
+                        "background-light": "#f8fafc",
+                        "background-dark": "#0f172a",
+                    },
+                    fontFamily: {
+                        display: ["Assistant", "sans-serif"],
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.5rem",
+                    },
+                },
+            },
+        };
+        function toggleDarkMode() {
+            document.documentElement.classList.toggle('dark');
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Assistant', sans-serif;
+        }::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        .dark ::-webkit-scrollbar-thumb {
+            background: #334155;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex">
+<aside class="w-64 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col fixed inset-y-0 right-0 z-50">
+<div class="p-6 flex items-center gap-3">
+<div class="w-8 h-8 bg-primary rounded flex items-center justify-center text-white">
+<span class="material-icons-outlined text-sm">auto_awesome</span>
+</div>
+<span class="text-xl font-bold tracking-tight">AutomateHQ</span>
+</div>
+<nav class="flex-1 px-4 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-icons-outlined">dashboard</span>
+<span>לוח בקרה</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 text-primary font-semibold" href="#">
+<span class="material-icons-outlined">people</span>
+<span>עובדים</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-icons-outlined">business</span>
+<span>אתרים</span>
+</a>
+<div class="pt-4 pb-2 px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                ניהול
+            </div>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-icons-outlined">manage_accounts</span>
+<span>משתמשים</span>
+</a>
+</nav>
+<div class="p-4 border-t border-slate-200 dark:border-slate-800">
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" onclick="toggleDarkMode()">
+<span class="material-icons-outlined">dark_mode</span>
+<span>מצב לילה</span>
+</button>
+<button class="w-full flex items-center gap-3 px-3 py-2 mt-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors">
+<span class="material-icons-outlined">logout</span>
+<span>התנתק</span>
+</button>
+</div>
+</aside>
+<main class="flex-1 mr-64 flex flex-col h-screen">
+<header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-8 py-4 flex items-center justify-between sticky top-0 z-40">
+<div>
+<h1 class="text-2xl font-bold">פרטי אתר: סקירה ואישור</h1>
+<p class="text-sm text-slate-500 dark:text-slate-400">ניהול ואישור דיווחי שעות עובדים</p>
+</div>
+<div class="flex items-center gap-4">
+<span class="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 px-3 py-1 rounded-full text-sm font-medium">
+                    אתר: פרויקט מרכז
+                </span>
+<button class="bg-primary text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-600 transition-colors">
+<span class="material-icons-outlined text-base">add</span>
+                    צור עובד
+                </button>
+</div>
+</header>
+<div class="flex-1 flex overflow-hidden">
+<div class="w-1/3 border-l border-slate-200 dark:border-slate-800 flex flex-col bg-slate-50 dark:bg-slate-950/50">
+<div class="p-4 space-y-4">
+<div class="relative">
+<span class="material-icons-outlined absolute right-3 top-2.5 text-slate-400">search</span>
+<input class="w-full pr-10 rounded-lg border-slate-200 dark:border-slate-800 dark:bg-slate-900 focus:ring-primary focus:border-primary" placeholder="חיפוש לפי שם עובד..." type="text"/>
+</div>
+<div class="flex gap-2">
+<button class="flex-1 py-2 text-xs font-semibold rounded-md bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 text-primary">צריך סקירה (12)</button>
+<button class="flex-1 py-2 text-xs font-semibold rounded-md text-slate-500 hover:bg-white dark:hover:bg-slate-800 transition-all">אושר (45)</button>
+<button class="flex-1 py-2 text-xs font-semibold rounded-md text-slate-500 hover:bg-white dark:hover:bg-slate-800 transition-all">הופק (8)</button>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+<div class="p-4 bg-white dark:bg-slate-900 rounded-xl border-2 border-primary shadow-sm cursor-pointer ring-4 ring-primary/5">
+<div class="flex justify-between items-start mb-2">
+<span class="font-bold text-slate-800 dark:text-slate-100">עובד א'</span>
+<span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">ממתין לסקירה</span>
+</div>
+<div class="text-xs text-slate-500 dark:text-slate-400 space-y-1">
+<div class="flex items-center gap-1"><span class="material-icons-outlined text-[14px]">calendar_today</span> 01/2024</div>
+<div class="flex items-center gap-1"><span class="material-icons-outlined text-[14px]">fingerprint</span> 42384234802</div>
+</div>
+</div>
+<div class="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer">
+<div class="flex justify-between items-start mb-2">
+<span class="font-bold text-slate-800 dark:text-slate-100">עובד ב'</span>
+<span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">ממתין לסקירה</span>
+</div>
+<div class="text-xs text-slate-500 dark:text-slate-400 space-y-1">
+<div class="flex items-center gap-1"><span class="material-icons-outlined text-[14px]">calendar_today</span> 01/2024</div>
+<div class="flex items-center gap-1"><span class="material-icons-outlined text-[14px]">fingerprint</span> 03204203</div>
+</div>
+</div>
+<div class="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 opacity-60">
+<div class="flex justify-between items-start mb-2">
+<span class="font-bold">Employee A</span>
+<span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">הופק</span>
+</div>
+<div class="text-xs text-slate-500">
+<div class="flex items-center gap-1"><span class="material-icons-outlined text-[14px]">calendar_today</span> 12/2023</div>
+</div>
+</div>
+</div>
+</div>
+<div class="flex-1 flex flex-col bg-white dark:bg-slate-900 overflow-hidden">
+<div class="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+<div class="w-1/3">
+<label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">שיוך עובד</label>
+<select class="w-full rounded-lg border-slate-200 dark:border-slate-800 dark:bg-slate-950 focus:ring-primary text-sm">
+<option>עובד א' (42384234802)</option>
+<option>עובד ב' (03204203)</option>
+</select>
+</div>
+<div class="flex items-center gap-6">
+<div class="text-left">
+<div class="text-xs text-slate-500 dark:text-slate-400">סה"כ שעות שזוהו</div>
+<div class="text-lg font-bold">184.5</div>
+</div>
+<div class="h-8 w-px bg-slate-200 dark:bg-slate-800"></div>
+<div class="text-left">
+<div class="text-xs text-slate-500 dark:text-slate-400">ימי עבודה</div>
+<div class="text-lg font-bold">22</div>
+</div>
+</div>
+</div>
+<div class="flex-1 flex overflow-hidden">
+<div class="w-1/2 p-6 overflow-hidden flex flex-col">
+<div class="mb-2 flex items-center justify-between">
+<h3 class="text-sm font-bold flex items-center gap-2">
+<span class="material-icons-outlined text-primary">image</span>
+                                תמונת כרטיס עבודה
+                            </h3>
+<div class="flex gap-1">
+<button class="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors">
+<span class="material-icons-outlined text-sm">zoom_in</span>
+</button>
+<button class="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors">
+<span class="material-icons-outlined text-sm">rotate_right</span>
+</button>
+</div>
+</div>
+<div class="flex-1 bg-slate-100 dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800 overflow-auto flex items-center justify-center p-4">
+<img alt="Work card document" class="max-w-full shadow-2xl rounded" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAd7q0B1WmCdRGlsueIVKlFDEb8M3MYo3hLRNefnXDVatea-zHG8i5l1T3GNNL0nvya6Xz0Q_akjEWxvJHSKnLhwWGTqg8zqtqjMaktpGHAn2J8p8CKSWeTqMGCTkwm_4IuUEdcCvkXv51hm8wrFDcKaD_CGk5qLM_5EHQT_9fRWnYgxC9UeO9J3qU7GqS0F4pc5n1EaLoblz0XXP9o4viZQsSlNk8dFv6L6_taoK2V5wSXkLAtZzEdfkAZcys0j8rqPFTu8x-0"/>
+</div>
+</div>
+<div class="w-1/2 p-6 border-r border-slate-200 dark:border-slate-800 flex flex-col">
+<div class="mb-2 flex items-center justify-between">
+<h3 class="text-sm font-bold flex items-center gap-2">
+<span class="material-icons-outlined text-primary">edit_note</span>
+                                עריכת נתוני שעות
+                            </h3>
+<span class="text-[10px] text-green-500 font-bold bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded">
+<span class="material-icons-outlined text-[12px] align-middle ml-1">check_circle</span>
+                                ולידציה תקינה
+                            </span>
+</div>
+<div class="flex-1 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden flex flex-col bg-white dark:bg-slate-950">
+<div class="grid grid-cols-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-xs font-bold py-2 text-center">
+<div>יום</div>
+<div>מ-</div>
+<div>עד-</div>
+<div>סה"כ</div>
+</div>
+<div class="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+<div class="grid grid-cols-4 py-1 items-center text-center text-sm">
+<div class="font-medium">1</div>
+<div class="px-2"><input class="w-full h-8 text-xs text-center rounded border-slate-200 dark:border-slate-700 dark:bg-slate-900 focus:ring-primary p-0" type="text" value="08:00"/></div>
+<div class="px-2"><input class="w-full h-8 text-xs text-center rounded border-slate-200 dark:border-slate-700 dark:bg-slate-900 focus:ring-primary p-0" type="text" value="17:00"/></div>
+<div class="text-slate-500 font-mono">9.0</div>
+</div>
+<div class="grid grid-cols-4 py-1 items-center text-center text-sm">
+<div class="font-medium">2</div>
+<div class="px-2"><input class="w-full h-8 text-xs text-center rounded border-slate-200 dark:border-slate-700 dark:bg-slate-900 focus:ring-primary p-0" type="text" value="07:45"/></div>
+<div class="px-2"><input class="w-full h-8 text-xs text-center rounded border-slate-200 dark:border-slate-700 dark:bg-slate-900 focus:ring-primary p-0" type="text" value="16:30"/></div>
+<div class="text-slate-500 font-mono">8.75</div>
+</div>
+<div class="grid grid-cols-4 py-1 items-center text-center text-sm bg-red-50 dark:bg-red-900/10">
+<div class="font-medium">3</div>
+<div class="px-2"><input class="w-full h-8 text-xs text-center rounded border-red-300 dark:border-red-900 dark:bg-slate-900 focus:ring-red-500 p-0" type="text" value="08:00"/></div>
+<div class="px-2"><input class="w-full h-8 text-xs text-center rounded border-red-300 dark:border-red-900 dark:bg-slate-900 focus:ring-red-500 p-0" type="text" value="--"/></div>
+<div class="text-red-500 font-bold">!</div>
+</div>
+<div class="grid grid-cols-4 py-1 items-center text-center text-sm">
+<div class="font-medium">4</div>
+<div class="px-2"><input class="w-full h-8 text-xs text-center rounded border-slate-200 dark:border-slate-700 dark:bg-slate-900 focus:ring-primary p-0" type="text" value="--"/></div>
+<div class="px-2"><input class="w-full h-8 text-xs text-center rounded border-slate-200 dark:border-slate-700 dark:bg-slate-900 focus:ring-primary p-0" type="text" value="--"/></div>
+<div class="text-slate-300">0.0</div>
+</div>
+<script>
+                                    // Visual filler for remaining days
+                                    for(let i=5; i<=31; i++) {
+                                        document.write(`
+                                            <div class="grid grid-cols-4 py-1 items-center text-center text-sm">
+                                                <div class="font-medium">${i}</div>
+                                                <div class="px-2"><input type="text" value="08:00" class="w-full h-8 text-xs text-center rounded border-slate-200 dark:border-slate-700 dark:bg-slate-900 focus:ring-primary p-0"></div>
+                                                <div class="px-2"><input type="text" value="17:00" class="w-full h-8 text-xs text-center rounded border-slate-200 dark:border-slate-700 dark:bg-slate-900 focus:ring-primary p-0"></div>
+                                                <div class="text-slate-500 font-mono">9.0</div>
+                                            </div>
+                                        `);
+                                    }
+                                </script>
+</div>
+</div>
+</div>
+</div>
+<footer class="p-6 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
+<div class="flex gap-2">
+<button class="px-4 py-2 border border-slate-300 dark:border-slate-700 rounded-lg flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+<span class="material-icons-outlined text-sm">chevron_right</span>
+                            הקודם
+                        </button>
+<button class="px-4 py-2 border border-slate-300 dark:border-slate-700 rounded-lg flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                            הבא
+                            <span class="material-icons-outlined text-sm">chevron_left</span>
+</button>
+</div>
+<div class="flex gap-4">
+<button class="px-6 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                            שמור טיוטה
+                        </button>
+<button class="px-8 py-2 bg-primary text-white font-bold rounded-lg shadow-lg shadow-primary/20 hover:bg-blue-600 transition-all flex items-center gap-2">
+<span class="material-icons-outlined">verified</span>
+                            אשר וסיים
+                        </button>
+</div>
+</footer>
+</div>
+</div>
+</main>
+
+</body></html>

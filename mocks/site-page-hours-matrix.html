@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>ניהול אתר - מטריצת שעות</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#3b82f6",
+                        "background-light": "#f8fafc",
+                        "background-dark": "#0f172a",
+                    },
+                    fontFamily: {
+                        display: ["Heebo", "sans-serif"],
+                        body: ["Heebo", "sans-serif"],
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.5rem",
+                    },
+                },
+            },
+        };
+    </script>
+<style>
+        body {
+            font-family: 'Heebo', sans-serif;
+        }.matrix-scroll::-webkit-scrollbar {
+            height: 8px;
+            width: 8px;
+        }
+        .matrix-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .matrix-scroll::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        .dark .matrix-scroll::-webkit-scrollbar-thumb {
+            background: #334155;
+        }
+        .sticky-col {
+            position: sticky;
+            right: 0;
+            z-index: 20;
+        }
+        .sticky-header {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex">
+<aside class="w-64 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0 hidden lg:flex flex-col">
+<div class="p-6 flex items-center gap-2 border-b border-slate-100 dark:border-slate-800">
+<div class="w-8 h-8 bg-primary rounded flex items-center justify-center text-white">
+<span class="material-icons text-xl">layers</span>
+</div>
+<span class="font-bold text-lg tracking-tight">AutomateHQ</span>
+</div>
+<nav class="p-4 flex-1 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition-colors" href="#">
+<span class="material-icons text-xl">dashboard</span>
+<span>לוח בקרה</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 bg-blue-50 dark:bg-blue-900/30 text-primary rounded-md font-medium transition-colors" href="#">
+<span class="material-icons text-xl">groups</span>
+<span>עובדים</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition-colors" href="#">
+<span class="material-icons text-xl">business</span>
+<span>אתרים</span>
+</a>
+<div class="pt-4 pb-2 px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">ניהול</div>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition-colors" href="#">
+<span class="material-icons text-xl">person</span>
+<span>משתמשים</span>
+</a>
+</nav>
+<div class="p-4 border-t border-slate-100 dark:border-slate-800">
+<button class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 w-full hover:text-red-500 transition-colors">
+<span class="material-icons text-xl">logout</span>
+<span>התנתק</span>
+</button>
+</div>
+</aside>
+<main class="flex-1 flex flex-col min-w-0">
+<header class="h-16 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-8 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<h1 class="text-xl font-bold">פרטי אתר: מטריצת שעות</h1>
+<div class="h-4 w-px bg-slate-300 dark:bg-slate-700"></div>
+<div class="flex gap-2">
+<span class="px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-full text-xs font-medium">סניף תל אביב</span>
+<span class="px-3 py-1 bg-blue-100 dark:bg-blue-900/40 text-primary rounded-full text-xs font-medium">יולי 2024</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" onclick="document.documentElement.classList.toggle('dark')">
+<span class="material-icons text-xl dark:hidden">dark_mode</span>
+<span class="material-icons text-xl hidden dark:block">light_mode</span>
+</button>
+<button class="bg-primary text-white px-4 py-2 rounded-md font-medium flex items-center gap-2 shadow-sm hover:opacity-90 transition-opacity">
+<span class="material-icons text-sm">cloud_upload</span>
+                    העלאת דוח שעות
+                </button>
+</div>
+</header>
+<div class="p-8 flex-1 flex flex-col gap-6 overflow-hidden">
+<div class="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4">
+<div class="flex items-center gap-6">
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:-translate-x-full rtl:peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+<span class="mr-3 text-sm font-medium text-slate-700 dark:text-slate-300">הצג מאושרים בלבד</span>
+</label>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:-translate-x-full rtl:peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+<span class="mr-3 text-sm font-medium text-slate-700 dark:text-slate-300">הדגש חריגות</span>
+</label>
+</div>
+<div class="flex items-center gap-4 text-xs font-medium text-slate-500">
+<div class="flex items-center gap-1.5">
+<div class="w-3 h-3 rounded-sm bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"></div>
+<span>ריק</span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="w-3 h-3 rounded-sm bg-amber-100 dark:bg-amber-900/40 border border-amber-200 dark:border-amber-800"></div>
+<span>חולץ</span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="w-3 h-3 rounded-sm bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800"></div>
+<span>אושר</span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="w-3 h-3 rounded-sm bg-rose-100 dark:bg-rose-900/40 border border-rose-200 dark:border-rose-800"></div>
+<span>שגיאה</span>
+</div>
+</div>
+</div>
+<div class="flex-1 overflow-hidden bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col">
+<div class="flex-1 overflow-auto matrix-scroll">
+<table class="w-full text-sm border-separate border-spacing-0">
+<thead class="sticky-header">
+<tr>
+<th class="sticky-col right-0 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-right font-bold border-b border-l border-slate-200 dark:border-slate-700 z-40">יום</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">ישראל ישראלי</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">שרה כהן</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">אבי לוי</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">דנה אברהם</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">רון ארד</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">מיכל סלע</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">יוסי שרון</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">עדי גולן</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">יעל בר</th>
+<th class="min-w-[120px] bg-slate-50 dark:bg-slate-800 px-4 py-3 text-center font-bold border-b border-slate-200 dark:border-slate-700">נועם לביא</th>
+</tr>
+</thead>
+<tbody>
+<script>
+                                const tbody = document.currentScript.parentElement;
+                                for (let day = 1; day <= 31; day++) {
+                                    const row = document.createElement('tr');
+                                    const isWeekend = (day % 7 === 5 || day % 7 === 6);
+                                    row.innerHTML = `<td class="sticky-col right-0 px-4 py-2 text-right font-medium border-l border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 group-hover:bg-slate-50">${day}</td>`;
+                                    for (let emp = 0; emp < 10; emp++) {
+                                        let cellClass = "bg-white dark:bg-slate-900";
+                                        let text = "-";
+                                        let textColor = "text-slate-400";
+                                        if (isWeekend) {
+                                            cellClass = "bg-slate-50/50 dark:bg-slate-800/30";
+                                        } else {
+                                            const rand = Math.random();
+                                            if (rand > 0.8) {
+                                                cellClass = "bg-emerald-50 dark:bg-emerald-900/20";
+                                                text = "08:30";
+                                                textColor = "text-emerald-700 dark:text-emerald-400 font-medium";
+                                            } else if (rand > 0.5) {
+                                                cellClass = "bg-amber-50 dark:bg-amber-900/20";
+                                                text = "09:15";
+                                                textColor = "text-amber-700 dark:text-amber-400";
+                                            } else if (rand > 0.45) {
+                                                cellClass = "bg-rose-50 dark:bg-rose-900/20";
+                                                text = "12:00!";
+                                                textColor = "text-rose-700 dark:text-rose-400 font-bold";
+                                            }
+                                        }
+                                        row.innerHTML += `
+                                            <td class="relative p-0 border-b border-slate-100 dark:border-slate-800 group">
+                                                <button onclick="showPopover(event, '${day}', '${text}')" class="w-full h-12 flex items-center justify-center transition-all hover:ring-2 hover:ring-primary hover:z-10 ${cellClass} ${textColor}">
+                                                    ${text}
+                                                </button>
+                                            </td>
+                                        `;
+                                    }
+                                    tbody.appendChild(row);
+                                }
+                            </script>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</main>
+<div class="fixed hidden z-50 w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-4 pointer-events-auto" id="popover">
+<div class="flex justify-between items-start mb-3">
+<div>
+<h4 class="font-bold text-slate-900 dark:text-white" id="popover-title">פרטי יום עבודה</h4>
+<p class="text-xs text-slate-500" id="popover-subtitle">יום 15 ביולי, 2024</p>
+</div>
+<button class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200" onclick="hidePopover()">
+<span class="material-icons text-lg">close</span>
+</button>
+</div>
+<div class="space-y-2 mb-4">
+<div class="flex justify-between text-sm">
+<span class="text-slate-500">שעות עבודה:</span>
+<span class="font-medium" id="popover-hours">08:30 שעות</span>
+</div>
+<div class="flex justify-between text-sm">
+<span class="text-slate-500">סטטוס:</span>
+<span class="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 rounded text-xs">מאושר</span>
+</div>
+</div>
+<a class="block w-full py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-center text-sm font-medium rounded transition-colors" href="#">
+            עבור לסקירת כרטיס
+        </a>
+</div>
+<script>
+        const popover = document.getElementById('popover');
+        function showPopover(event, day, hours) {
+            const btn = event.currentTarget;
+            const rect = btn.getBoundingClientRect();
+            // Basic positioning
+            popover.style.display = 'block';
+            // Adjust to prevent overflow
+            let left = rect.left - (popover.offsetWidth / 2) + (rect.width / 2);
+            let top = rect.bottom + 10;
+            if (left < 10) left = 10;
+            if (left + popover.offsetWidth > window.innerWidth) left = window.innerWidth - popover.offsetWidth - 10;
+            if (top + popover.offsetHeight > window.innerHeight) top = rect.top - popover.offsetHeight - 10;
+            popover.style.left = left + 'px';
+            popover.style.top = top + 'px';
+            document.getElementById('popover-subtitle').innerText = `יום ${day} ביולי, 2024`;
+            document.getElementById('popover-hours').innerText = hours !== '-' ? `${hours} שעות` : 'אין נתונים';
+            event.stopPropagation();
+        }
+        function hidePopover() {
+            popover.style.display = 'none';
+        }
+        document.addEventListener('click', (e) => {
+            if (!popover.contains(e.target)) {
+                hidePopover();
+            }
+        });
+    </script>
+
+</body></html>
