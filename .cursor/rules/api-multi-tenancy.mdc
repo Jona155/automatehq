@@ -1,0 +1,16 @@
+---
+description: Backend API must enforce tenant scoping for all domain endpoints.
+globs: backend/app/api/**/*.py
+alwaysApply: false
+---
+## API Multi-Tenancy
+
+When adding or changing endpoints in `backend/app/api/`:
+
+- **Every** domain model with `business_id` is tenant-scoped. Use `g.current_user.business_id` from `token_required`.
+- **Create (POST):** Set `data['business_id'] = g.current_user.business_id` before `repo.create(**data)`. Never trust client for `business_id`.
+- **List (GET collection):** Filter by `business_id` (e.g. `filters={'business_id': g.current_user.business_id}` or repo methods that accept `business_id`).
+- **Get/Update/Delete by ID:** After loading the resource, check `resource.business_id == g.current_user.business_id`; return 404 if not. On update, `data.pop('business_id', None)`.
+- **Uniqueness:** Per tenant (e.g. site name unique per business). Use tenant-scoped repo lookups like `get_by_name_and_business(name, business_id)`.
+
+Reference: `memory-bank/system-patterns.md` (API Multi-Tenancy), `memory-bank/api-tenant-audit.md`.

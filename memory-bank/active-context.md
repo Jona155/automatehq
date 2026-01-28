@@ -2,15 +2,13 @@
 
 ## Current Focus
 
-Multi-tenancy architecture implemented. Business entity restored as first-class citizen. Login validates business exists/active, returns business context. Frontend routes use `/:businessCode/...` with TenantGuard validation.
+Sites page done (list with employee counts, clickable rows → site details placeholder). Users and Employees pages done. Next: optional Business UI or uploads/extraction.
 
 ## Next Steps
 
-1. Run migration (`flask db upgrade`) to apply Business entity changes.
-2. Seed default business and admin user.
-3. Integrate API with Frontend (Sites + Employees CRUD) — ensure all data is scoped to current tenant.
-4. Uploads, extraction worker, review, CSV export.
-5. Heroku deploy.
+1. Implement Business management UI (optional for MVP).
+2. Uploads, extraction worker, review, CSV export.
+3. Heroku deploy.
 
 ## Decisions
 

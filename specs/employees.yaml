@@ -57,6 +57,8 @@ paths:
               required:
                 - site_id
                 - full_name
+                - passport_id
+                - phone_number
               properties:
                 site_id:
                   type: string
@@ -64,6 +66,8 @@ paths:
                 full_name:
                   type: string
                 passport_id:
+                  type: string
+                phone_number:
                   type: string
                 external_employee_id:
                   type: string
@@ -125,6 +129,8 @@ paths:
                 full_name:
                   type: string
                 passport_id:
+                  type: string
+                phone_number:
                   type: string
                 external_employee_id:
                   type: string
@@ -200,12 +206,17 @@ components:
         id:
           type: string
           format: uuid
+        business_id:
+          type: string
+          format: uuid
         site_id:
           type: string
           format: uuid
         full_name:
           type: string
         passport_id:
+          type: string
+        phone_number:
           type: string
         external_employee_id:
           type: string

@@ -4,7 +4,7 @@
 
 | Layer | Tech |
 |-------|------|
-| Frontend | React 18, Vite |
+| Frontend | React 18, Vite, TypeScript (use `import type` for types when verbatimModuleSyntax is on) |
 | Backend | Flask, SQLAlchemy, Alembic |
 | Data Access | Repository Pattern (Generic Base + Domain Repos) |
 | DB | PostgreSQL (Heroku) |
