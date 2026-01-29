@@ -1,3 +1,4 @@
+import uuid
 from flask import Blueprint, request, g
 from ..repositories.employee_repository import EmployeeRepository
 from .utils import api_response, model_to_dict, models_to_list
@@ -10,28 +11,39 @@ repo = EmployeeRepository()
 @token_required
 def get_employees():
     """Get all employees in the current business, optionally filtered by site, name, or active status."""
-    site_id = request.args.get('site_id')
-    name_query = request.args.get('name')
-    only_active = request.args.get('active', 'false').lower() == 'true'
-    
-    if name_query:
-        results = repo.search_by_name(name_query, business_id=g.business_id, site_id=site_id)
-        # Filter for active if requested
-        if only_active:
-            results = [e for e in results if e.is_active]
-    else:
+    try:
+        site_id = request.args.get('site_id')
+        name_query = request.args.get('name')
+        only_active = request.args.get('active', 'false').lower() == 'true'
+        
+        # Convert site_id to UUID if present
+        site_id_uuid = None
         if site_id:
+            try:
+                site_id_uuid = uuid.UUID(site_id)
+            except ValueError:
+                return api_response(status_code=400, message="Invalid site_id format", error="Bad Request")
+        
+        if name_query:
+            results = repo.search_by_name(name_query, business_id=g.business_id, site_id=site_id_uuid)
+            # Filter for active if requested
             if only_active:
-                results = repo.get_active_by_site(site_id, business_id=g.business_id)
-            else:
-                results = repo.get_by_site(site_id, business_id=g.business_id)
+                results = [e for e in results if e.is_active]
         else:
-            if only_active:
-                results = repo.get_active_employees(business_id=g.business_id)
+            if site_id_uuid:
+                if only_active:
+                    results = repo.get_active_by_site(site_id_uuid, business_id=g.business_id)
+                else:
+                    results = repo.get_by_site(site_id_uuid, business_id=g.business_id)
             else:
-                results = repo.get_all_for_business(business_id=g.business_id)
-            
-    return api_response(data=models_to_list(results))
+                if only_active:
+                    results = repo.get_active_employees(business_id=g.business_id)
+                else:
+                    results = repo.get_all_for_business(business_id=g.business_id)
+                
+        return api_response(data=models_to_list(results))
+    except Exception as e:
+        return api_response(status_code=500, message="Failed to get employees", error=str(e))
 
 @employees_bp.route('', methods=['POST'])
 @token_required
