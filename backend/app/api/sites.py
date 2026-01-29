@@ -1,4 +1,5 @@
 from flask import Blueprint, request, g
+import traceback
 from datetime import datetime
 from sqlalchemy import and_, or_, func, case
 from sqlalchemy.orm import joinedload
@@ -22,31 +23,35 @@ extraction_repo = WorkCardExtractionRepository()
 @token_required
 def get_sites():
     """Get all sites, optionally with employee counts, scoped to tenant."""
-    include_counts = request.args.get('include_counts', 'false').lower() == 'true'
-    only_active = request.args.get('active', 'false').lower() == 'true'
-    
-    # Always scope to current business
-    business_id = g.current_user.business_id
-    
-    if include_counts:
-        if only_active:
-            results = repo.get_active_with_employee_count(business_id)
-        else:
-            results = repo.get_with_employee_count(business_id)
-            
-        data = []
-        for item in results:
-            site_dict = model_to_dict(item['site'])
-            site_dict['employee_count'] = item['employee_count']
-            data.append(site_dict)
-    else:
-        if only_active:
-            sites = repo.get_active_sites(business_id)
-        else:
-            sites = repo.get_all(filters={'business_id': business_id})
-        data = models_to_list(sites)
+    try:
+        include_counts = request.args.get('include_counts', 'false').lower() == 'true'
+        only_active = request.args.get('active', 'false').lower() == 'true'
         
-    return api_response(data=data)
+        # Always scope to current business
+        business_id = g.current_user.business_id
+        
+        if include_counts:
+            if only_active:
+                results = repo.get_active_with_employee_count(business_id)
+            else:
+                results = repo.get_with_employee_count(business_id)
+                
+            data = []
+            for item in results:
+                site_dict = model_to_dict(item['site'])
+                site_dict['employee_count'] = item['employee_count']
+                data.append(site_dict)
+        else:
+            if only_active:
+                sites = repo.get_active_sites(business_id)
+            else:
+                sites = repo.get_all(filters={'business_id': business_id})
+            data = models_to_list(sites)
+            
+        return api_response(data=data)
+    except Exception as e:
+        traceback.print_exc()
+        return api_response(status_code=500, message="Failed to get sites", error=str(e))
 
 @sites_bp.route('', methods=['POST'])
 @token_required
@@ -190,6 +195,7 @@ def get_employee_upload_status(site_id):
     except ValueError as e:
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
     except Exception as e:
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to get employee upload status", error=str(e))
 
 @sites_bp.route('/<uuid:site_id>/matrix', methods=['GET'])
@@ -303,4 +309,5 @@ def get_hours_matrix(site_id):
     except ValueError as e:
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
     except Exception as e:
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to get hours matrix", error=str(e))
