@@ -303,6 +303,16 @@ def update_day_entries(card_id):
 @token_required
 def upload_single():
     """Upload a single work card for a known employee."""
+    # Define allowed MIME types
+    ALLOWED_TYPES = {
+        'image/jpeg',
+        'image/jpg', 
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'application/pdf'
+    }
+    
     # Validate form data
     if 'file' not in request.files:
         return api_response(status_code=400, message="No file provided", error="Bad Request")
@@ -310,6 +320,15 @@ def upload_single():
     file = request.files['file']
     if file.filename == '':
         return api_response(status_code=400, message="No file selected", error="Bad Request")
+    
+    # Validate MIME type
+    content_type = file.content_type or 'application/octet-stream'
+    if content_type not in ALLOWED_TYPES:
+        return api_response(
+            status_code=400, 
+            message="סוג קובץ לא נתמך. אנא העלה קובץ תמונה או PDF בלבד", 
+            error="Invalid file type"
+        )
     
     site_id = request.form.get('site_id')
     employee_id = request.form.get('employee_id')
@@ -371,6 +390,16 @@ def upload_single():
 @token_required
 def upload_batch():
     """Upload multiple work cards for unknown employees (bulk upload)."""
+    # Define allowed MIME types
+    ALLOWED_TYPES = {
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'application/pdf'
+    }
+    
     # Validate files
     if 'files' not in request.files:
         return api_response(status_code=400, message="No files provided", error="Bad Request")
@@ -395,11 +424,19 @@ def upload_batch():
         for file in files:
             if file.filename == '':
                 continue
+            
+            # Validate MIME type for each file
+            content_type = file.content_type or 'application/octet-stream'
+            if content_type not in ALLOWED_TYPES:
+                failed.append({
+                    'filename': file.filename,
+                    'error': 'סוג קובץ לא נתמך. אנא העלה קובץ תמונה או PDF בלבד'
+                })
+                continue
                 
             try:
                 # Read file data
                 file_data = file.read()
-                content_type = file.content_type or 'application/octet-stream'
                 filename = secure_filename(file.filename)
                 
                 # Create work card (employee_id = NULL for unknown uploads)

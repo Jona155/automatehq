@@ -3,7 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import type { Site, Employee } from '../types';
 import { getSite } from '../api/sites';
 import { getEmployees } from '../api/employees';
+import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../hooks/useToast';
+import UploadWorkCardModal from '../components/UploadWorkCardModal';
 
 export default function SiteDetailsPage() {
   const { siteId } = useParams<{ siteId: string }>();
@@ -14,7 +17,10 @@ export default function SiteDetailsPage() {
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const navigate = useNavigate();
+  const { showToast, ToastContainer } = useToast();
 
   useEffect(() => {
     const fetchSite = async () => {
@@ -60,6 +66,25 @@ export default function SiteDetailsPage() {
     navigate(`/${user?.business?.code}/sites`);
   };
 
+  const handleUploadClick = (employee: Employee) => {
+    setSelectedEmployee(employee);
+    setUploadModalOpen(true);
+  };
+
+  const handleUpload = async (employeeId: string, month: string, file: File) => {
+    if (!siteId) return;
+
+    try {
+      await uploadSingleWorkCard(siteId, employeeId, month, file);
+      showToast('כרטיס הנוכחות הועלה בהצלחה', 'success');
+      // Optionally refresh the employee list here if needed
+    } catch (err: any) {
+      const errorMessage = err?.response?.data?.message || 'שגיאה בהעלאת כרטיס הנוכחות';
+      showToast(errorMessage, 'error');
+      throw err; // Re-throw to let the modal handle it
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6">
@@ -85,6 +110,7 @@ export default function SiteDetailsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <ToastContainer />
       {/* Breadcrumb */}
       <button
         onClick={handleBack}
@@ -119,6 +145,7 @@ export default function SiteDetailsPage() {
             <table className="w-full text-right">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400 text-sm">
+                  <th className="px-6 py-4 font-medium text-center">העלאה</th>
                   <th className="px-6 py-4 font-medium">שם העובד</th>
                   <th className="px-6 py-4 font-medium">מספר דרכון / ת.ז</th>
                   <th className="px-6 py-4 font-medium">מספר טלפון</th>
@@ -127,6 +154,17 @@ export default function SiteDetailsPage() {
               <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                 {employees.map((employee) => (
                   <tr key={employee.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex justify-center">
+                        <button
+                          onClick={() => handleUploadClick(employee)}
+                          className="p-2 text-slate-400 hover:text-primary transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
+                          title="העלאת כרטיס נוכחות"
+                        >
+                          <span className="material-symbols-outlined text-xl">upload</span>
+                        </button>
+                      </div>
+                    </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 flex items-center justify-center font-bold text-xs uppercase">
@@ -156,6 +194,17 @@ export default function SiteDetailsPage() {
           <span>מציג {employees.length} עובדים</span>
         </div>
       </div>
+
+      {/* Upload Modal */}
+      {selectedEmployee && (
+        <UploadWorkCardModal
+          isOpen={uploadModalOpen}
+          onClose={() => setUploadModalOpen(false)}
+          employee={selectedEmployee}
+          siteId={siteId!}
+          onUpload={handleUpload}
+        />
+      )}
     </div>
   );
 }
