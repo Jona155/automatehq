@@ -2,7 +2,7 @@
 
 ## Current Focus
 
-Site Details page complete: all 3 tabs implemented (Employees & Uploads, Review & Approval, Hours Matrix). Next: Extraction worker or CSV export.
+Site Details refactored into tab components. Next: Extraction worker or CSV export.
 
 ## Next Steps
 

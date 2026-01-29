@@ -20,6 +20,7 @@
 - **Site Details Frontend - Tab 1 (Employees & Uploads)**: Employee list with upload status badges; single upload per employee; bulk upload for unknown employees; unknown uploads section with inline employee assignment; month picker persists in localStorage.
 - **Site Details Frontend - Tab 2 (Review & Approval)**: Split-screen panel with left sidebar (search, status filters, card list) and right panel (zoomable/rotatable image viewer + 31-day editable grid for HH:MM entries with validation + auto-calculated totals); prev/next navigation; save draft + approve actions.
 - **Site Details Frontend - Tab 3 (Hours Matrix)**: 31 days × N employees grid with sticky headers/column; toggles for approved-only and include-inactive; color-coded cells (empty/extracted/approved); optimized for 50+ employees.
+- **Site Details page refactor**: Split `SiteDetailsPage.tsx` into tab components — `EmployeesTab` (list + uploads + unknown), `ReviewTab` (cards + image + day entries), `MatrixTab` (grid); shared `SummaryStats`, `UnknownUploadCard`. Fixed `SummaryStatsData` import with `import type`.
 
 ## In Progress
 
