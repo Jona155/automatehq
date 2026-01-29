@@ -2,7 +2,7 @@
 
 ## Current Focus
 
-Site Details refactored into tab components. Next: Extraction worker or CSV export.
+Site Details simplified to basic employee roster (name, passport, phone) as baby step. Previous complex tabs (uploads/review/matrix) not in use yet.
 
 ## Next Steps
 
