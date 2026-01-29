@@ -18,20 +18,35 @@ AutomateHQ/
   - **Always update** the corresponding YAML spec in `specs/` when changing API endpoints or models.
   - **Review** the API specs when designing new features to ensure consistency.
 
+## Request Context (Flask `g`)
+
+All protected endpoints use `@token_required`, which decodes the JWT, loads the user, verifies the business is active, then sets request-scoped context:
+
+- **`g.current_user`** – the authenticated User instance
+- **`g.business_id`** – the user's business ID (tenant context)
+
+**Convention:**
+
+- Use **`g.business_id`** for tenant scoping (list, create, get/update/delete checks, uniqueness). This is the single source of truth set by `token_required`.
+- Use **`g.current_user`** only when the handler needs the current user object (e.g., audit fields like `uploaded_by_user_id`, or self-checks like blocking self-delete).
+- Exception: **auth `/me`** uses `g.current_user` to return the current user.
+
+**Businesses API exception:** The `/api/businesses` endpoints are protected with `@token_required` but are **not** tenant-scoped. They are admin-level CRUD operations on the Business entity itself (e.g., for super-admin to manage businesses). Normal domain APIs (sites, employees, users, work_cards) are tenant-scoped.
+
 ## API Multi-Tenancy (Mandatory)
 
-All domain APIs (sites, employees, users, etc.) are **tenant-scoped**. Every request runs in the context of the authenticated user’s business (`g.current_user.business_id`). APIs **must** enforce this; otherwise you get 500s (e.g. NOT NULL `business_id`) or cross-tenant data leaks.
+All domain APIs (sites, employees, users, work_cards) are **tenant-scoped**. Every request runs in the context of the authenticated user’s business (`g.business_id`). APIs **must** enforce this; otherwise you get 500s (e.g. NOT NULL `business_id`) or cross-tenant data leaks.
 
 **Rules for every tenant-scoped API:**
 
 1. **List (GET collection)**  
-   Always filter by `business_id`: pass `filters={'business_id': g.current_user.business_id}` to repo, or use repo methods that accept `business_id` and filter by it.
+   Always filter by `business_id`: pass `filters={'business_id': g.business_id}` to repo, or use repo methods that accept `business_id` and filter by it.
 
 2. **Create (POST)**  
-   Set `data['business_id'] = g.current_user.business_id` before calling `repo.create(**data)`. Never trust `business_id` from the client.
+   Set `data['business_id'] = g.business_id` before calling `repo.create(**data)`. Never trust `business_id` from the client.
 
 3. **Get one / Update / Delete (GET/PUT/DELETE by ID)**  
-   After `repo.get_by_id(id)`, check `resource.business_id == g.current_user.business_id`. If not, return 404. On update, `data.pop('business_id', None)` so clients cannot change tenant.
+   After `repo.get_by_id(id)`, check `resource.business_id == g.business_id`. If not, return 404. On update, `data.pop('business_id', None)` so clients cannot change tenant.
 
 4. **Uniqueness checks**  
    Scope to tenant: e.g. “site name unique” means unique per business, not globally. Use repo methods like `get_by_name_and_business(name, business_id)`.
@@ -39,7 +54,7 @@ All domain APIs (sites, employees, users, etc.) are **tenant-scoped**. Every req
 5. **Repository layer**  
    List/count methods that support tenant scoping should accept an optional `business_id` (or equivalent filter) and apply it in the query.
 
-**Reference implementations:** `backend/app/api/users.py`, `backend/app/api/employees.py`, `backend/app/api/sites.py` (after fix).
+**Reference implementations:** `backend/app/api/users.py`, `backend/app/api/employees.py`, `backend/app/api/sites.py`.
 
 ## Repository Pattern
 

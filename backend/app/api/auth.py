@@ -1,9 +1,13 @@
 from flask import Blueprint, request, g
+import logging
+import traceback
 from werkzeug.security import check_password_hash
 from ..repositories.user_repository import UserRepository
 from ..repositories.business_repository import BusinessRepository
 from ..auth_utils import encode_auth_token, token_required
 from .utils import api_response, model_to_dict
+
+logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 user_repo = UserRepository()
@@ -87,6 +91,11 @@ def get_me():
     """
     Get current user details with business context
     """
-    user = g.current_user
-    user_data = get_user_with_business(user)
-    return api_response(data=user_data)
+    try:
+        user = g.current_user
+        user_data = get_user_with_business(user)
+        return api_response(data=user_data)
+    except Exception as e:
+        logger.exception("Failed to get current user")
+        traceback.print_exc()
+        return api_response(status_code=500, message="Failed to get user details", error=str(e))

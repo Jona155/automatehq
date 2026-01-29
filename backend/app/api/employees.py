@@ -1,8 +1,12 @@
 import uuid
+import logging
+import traceback
 from flask import Blueprint, request, g
 from ..repositories.employee_repository import EmployeeRepository
 from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required
+
+logger = logging.getLogger(__name__)
 
 employees_bp = Blueprint('employees', __name__, url_prefix='/api/employees')
 repo = EmployeeRepository()
@@ -43,6 +47,8 @@ def get_employees():
                 
         return api_response(data=models_to_list(results))
     except Exception as e:
+        logger.exception("Failed to get employees")
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to get employees", error=str(e))
 
 @employees_bp.route('', methods=['POST'])
@@ -74,6 +80,8 @@ def create_employee():
         employee = repo.create(**data)
         return api_response(data=model_to_dict(employee), message="Employee created successfully", status_code=201)
     except Exception as e:
+        logger.exception("Failed to create employee")
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to create employee", error=str(e))
 
 @employees_bp.route('/<uuid:employee_id>', methods=['GET'])
@@ -114,6 +122,8 @@ def update_employee(employee_id):
             
         return api_response(data=model_to_dict(updated_employee), message="Employee updated successfully")
     except Exception as e:
+        logger.exception(f"Failed to update employee {employee_id}")
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to update employee", error=str(e))
 
 @employees_bp.route('/<uuid:employee_id>', methods=['DELETE'])
@@ -132,6 +142,8 @@ def delete_employee(employee_id):
             
         return api_response(message="Employee deleted successfully")
     except Exception as e:
+        logger.exception(f"Failed to delete employee {employee_id}")
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to delete employee", error=str(e))
 
 @employees_bp.route('/<uuid:employee_id>/deactivate', methods=['POST'])
@@ -145,6 +157,8 @@ def deactivate_employee(employee_id):
             
         return api_response(message="Employee deactivated successfully")
     except Exception as e:
+        logger.exception(f"Failed to deactivate employee {employee_id}")
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to deactivate employee", error=str(e))
 
 @employees_bp.route('/<uuid:employee_id>/activate', methods=['POST'])
@@ -158,4 +172,6 @@ def activate_employee(employee_id):
             
         return api_response(message="Employee activated successfully")
     except Exception as e:
+        logger.exception(f"Failed to activate employee {employee_id}")
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to activate employee", error=str(e))

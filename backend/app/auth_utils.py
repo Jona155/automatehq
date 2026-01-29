@@ -67,6 +67,26 @@ def token_required(f):
             current_user = repo.get_by_id(resp)
             if not current_user:
                  return jsonify({'message': 'User not found', 'success': False, 'error': 'Unauthorized'}), 401
+            
+            # Verify user's business exists and is active
+            from .repositories.business_repository import BusinessRepository
+            business_repo = BusinessRepository()
+            business = business_repo.get_by_id(current_user.business_id)
+            
+            if not business:
+                return jsonify({
+                    'message': 'Your organization does not exist in the system',
+                    'success': False,
+                    'error': 'Forbidden'
+                }), 403
+            
+            if not business.is_active:
+                return jsonify({
+                    'message': 'Your organization has been deactivated',
+                    'success': False,
+                    'error': 'Forbidden'
+                }), 403
+                
         except Exception:
              return jsonify({'message': 'Token is invalid', 'success': False, 'error': 'Unauthorized'}), 401
 

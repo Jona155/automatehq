@@ -3,11 +3,13 @@ import type { Employee, Site } from '../types';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee } from '../api/employees';
 import type { CreateEmployeePayload, UpdateEmployeePayload } from '../api/employees';
 import { getSites } from '../api/sites';
+import { useAuth } from '../context/AuthContext';
 
 type SortField = 'full_name' | 'passport_id' | 'phone_number' | 'site_name';
 type SortOrder = 'asc' | 'desc';
 
 export default function EmployeesPage() {
+  const { isAuthenticated } = useAuth();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -61,9 +63,11 @@ export default function EmployeesPage() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+    
     fetchEmployees();
     fetchSites();
-  }, []);
+  }, [isAuthenticated]);
 
   // Get site name helper
   const getSiteName = (siteId: string) => {

@@ -5,6 +5,7 @@ import { getSites, createSite } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 
 export default function SitesPage() {
+  const { isAuthenticated, user } = useAuth();
   const [sites, setSites] = useState<Site[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -13,7 +14,6 @@ export default function SitesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   const fetchSites = async () => {
     setIsLoading(true);
@@ -30,8 +30,10 @@ export default function SitesPage() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+    
     fetchSites();
-  }, []);
+  }, [isAuthenticated]);
 
   const handleOpenCreate = () => {
     setFormData({ site_name: '', site_code: '' });
