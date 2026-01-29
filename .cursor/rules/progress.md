@@ -8,9 +8,11 @@ In Progress
 - Basic CRUD APIs for all resources.
 - JWT Authentication (Login, Token Validation, Protected Routes).
 - Admin User Seeding.
+- Site Details Page Refactoring (split into modular components).
 
 ## In Progress
 - Frontend Integration.
+- Frontend Refactoring & Enhancement.
 
 ## Planned
 - Frontend UI/UX.
