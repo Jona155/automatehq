@@ -1,5 +1,6 @@
 from flask import Blueprint, request, g
 import traceback
+import logging
 from datetime import datetime
 from sqlalchemy import and_, or_, func, case
 from sqlalchemy.orm import joinedload
@@ -12,6 +13,8 @@ from ..auth_utils import token_required
 from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
 from ..models.sites import Employee
 from ..extensions import db
+
+logger = logging.getLogger(__name__)
 
 sites_bp = Blueprint('sites', __name__, url_prefix='/api/sites')
 repo = SiteRepository()
@@ -28,7 +31,7 @@ def get_sites():
         only_active = request.args.get('active', 'false').lower() == 'true'
         
         # Always scope to current business
-        business_id = g.current_user.business_id
+        business_id = g.business_id
         
         if include_counts:
             if only_active:
@@ -50,6 +53,7 @@ def get_sites():
             
         return api_response(data=data)
     except Exception as e:
+        logger.exception("Failed to get sites")
         traceback.print_exc()
         return api_response(status_code=500, message="Failed to get sites", error=str(e))
 
@@ -63,31 +67,38 @@ def create_site():
         
     try:
         # Enforce tenant scoping
-        data['business_id'] = g.current_user.business_id
+        data['business_id'] = g.business_id
         
         # Validation
         if not data.get('site_name'):
             return api_response(status_code=400, message="Site name is required", error="Bad Request")
         
         # Check if site with name exists within tenant
-        existing = repo.get_by_name_and_business(data['site_name'], g.current_user.business_id)
+        existing = repo.get_by_name_and_business(data['site_name'], g.business_id)
         if existing:
              return api_response(status_code=409, message="Site with this name already exists", error="Conflict")
 
         site = repo.create(**data)
         return api_response(data=model_to_dict(site), message="Site created successfully", status_code=201)
     except Exception as e:
+        logger.exception("Failed to create site")
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to create site", error=str(e))
 
 @sites_bp.route('/<uuid:site_id>', methods=['GET'])
 @token_required
 def get_site(site_id):
     """Get a specific site by ID, scoped to tenant."""
-    site = repo.get_by_id(site_id)
-    if not site or site.business_id != g.current_user.business_id:
-        return api_response(status_code=404, message="Site not found", error="Not Found")
-        
-    return api_response(data=model_to_dict(site))
+    try:
+        site = repo.get_by_id(site_id)
+        if not site or site.business_id != g.business_id:
+            return api_response(status_code=404, message="Site not found", error="Not Found")
+            
+        return api_response(data=model_to_dict(site))
+    except Exception as e:
+        logger.exception(f"Failed to get site {site_id}")
+        traceback.print_exc()
+        return api_response(status_code=500, message="Failed to get site", error=str(e))
 
 @sites_bp.route('/<uuid:site_id>', methods=['PUT'])
 @token_required
@@ -100,7 +111,7 @@ def update_site(site_id):
     try:
         # Verify site belongs to user's business
         site = repo.get_by_id(site_id)
-        if not site or site.business_id != g.current_user.business_id:
+        if not site or site.business_id != g.business_id:
             return api_response(status_code=404, message="Site not found", error="Not Found")
         
         # Don't allow changing business_id
@@ -112,6 +123,8 @@ def update_site(site_id):
             
         return api_response(data=model_to_dict(updated_site), message="Site updated successfully")
     except Exception as e:
+        logger.exception(f"Failed to update site {site_id}")
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to update site", error=str(e))
 
 @sites_bp.route('/<uuid:site_id>', methods=['DELETE'])
@@ -121,7 +134,7 @@ def delete_site(site_id):
     try:
         # Verify site belongs to user's business
         site = repo.get_by_id(site_id)
-        if not site or site.business_id != g.current_user.business_id:
+        if not site or site.business_id != g.business_id:
             return api_response(status_code=404, message="Site not found", error="Not Found")
         
         # We might want to just mark as inactive instead of deleting if there are related records
@@ -133,6 +146,8 @@ def delete_site(site_id):
             
         return api_response(message="Site deleted successfully")
     except Exception as e:
+        logger.exception(f"Failed to delete site {site_id}")
+        traceback.print_exc()
         return api_response(status_code=500, message="Failed to delete site", error=str(e))
 
 @sites_bp.route('/<uuid:site_id>/employee-upload-status', methods=['GET'])
@@ -141,7 +156,7 @@ def get_employee_upload_status(site_id):
     """Get employee upload status for a site and month."""
     # Verify site belongs to user's business
     site = repo.get_by_id(site_id)
-    if not site or site.business_id != g.current_user.business_id:
+    if not site or site.business_id != g.business_id:
         return api_response(status_code=404, message="Site not found", error="Not Found")
     
     processing_month = request.args.get('processing_month')
@@ -153,13 +168,13 @@ def get_employee_upload_status(site_id):
         month = datetime.strptime(processing_month, '%Y-%m-%d').date()
         
         # Get all employees for this site
-        employees = employee_repo.get_by_site(site_id, g.current_user.business_id)
+        employees = employee_repo.get_by_site(site_id, g.business_id)
         
         # Build result with status for each employee
         result = []
         for employee in employees:
             # Get work cards for this employee and month
-            work_cards = work_card_repo.get_by_employee_month(employee.id, month, g.current_user.business_id)
+            work_cards = work_card_repo.get_by_employee_month(employee.id, month, g.business_id)
             
             # Determine status
             status = 'NO_UPLOAD'
@@ -195,6 +210,7 @@ def get_employee_upload_status(site_id):
     except ValueError as e:
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
     except Exception as e:
+        logger.exception(f"Failed to get employee upload status for site {site_id}")
         traceback.print_exc()
         return api_response(status_code=500, message="Failed to get employee upload status", error=str(e))
 
@@ -204,7 +220,7 @@ def get_hours_matrix(site_id):
     """Get hours matrix for a site and month with performance optimization."""
     # Verify site belongs to user's business
     site = repo.get_by_id(site_id)
-    if not site or site.business_id != g.current_user.business_id:
+    if not site or site.business_id != g.business_id:
         return api_response(status_code=404, message="Site not found", error="Not Found")
     
     processing_month = request.args.get('processing_month')
@@ -220,9 +236,9 @@ def get_hours_matrix(site_id):
         
         # Get employees for this site
         if include_inactive:
-            employees = employee_repo.get_by_site(site_id, g.current_user.business_id)
+            employees = employee_repo.get_by_site(site_id, g.business_id)
         else:
-            employees = employee_repo.get_active_by_site(site_id, g.current_user.business_id)
+            employees = employee_repo.get_active_by_site(site_id, g.business_id)
         
         # Build matrix structure
         matrix = {}
@@ -247,7 +263,7 @@ def get_hours_matrix(site_id):
                 ]
             ).label('rank')
         ).filter(
-            WorkCard.business_id == g.current_user.business_id,
+            WorkCard.business_id == g.business_id,
             WorkCard.site_id == site_id,
             WorkCard.processing_month == month,
             WorkCard.employee_id.isnot(None)
@@ -309,5 +325,6 @@ def get_hours_matrix(site_id):
     except ValueError as e:
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
     except Exception as e:
+        logger.exception(f"Failed to get hours matrix for site {site_id}")
         traceback.print_exc()
         return api_response(status_code=500, message="Failed to get hours matrix", error=str(e))

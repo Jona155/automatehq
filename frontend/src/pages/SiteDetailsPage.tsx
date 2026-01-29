@@ -6,15 +6,15 @@ import { useAuth } from '../context/AuthContext';
 
 export default function SiteDetailsPage() {
   const { siteId } = useParams<{ siteId: string }>();
+  const { isAuthenticated, user } = useAuth();
   const [site, setSite] = useState<Site | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   useEffect(() => {
     const fetchSite = async () => {
-      if (!siteId) return;
+      if (!isAuthenticated || !siteId) return;
       
       setIsLoading(true);
       try {
@@ -30,7 +30,7 @@ export default function SiteDetailsPage() {
     };
 
     fetchSite();
-  }, [siteId]);
+  }, [isAuthenticated, siteId]);
 
   const handleBack = () => {
     navigate(`/${user?.business?.code}/sites`);
