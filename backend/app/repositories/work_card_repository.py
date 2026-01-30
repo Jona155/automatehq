@@ -4,6 +4,7 @@ from datetime import date
 from sqlalchemy.orm import joinedload
 from .base import BaseRepository
 from ..models.work_cards import WorkCard
+from ..models.sites import Employee
 from ..utils import utc_now
 
 
@@ -30,6 +31,26 @@ class WorkCardRepository(BaseRepository[WorkCard]):
             processing_month=month,
             business_id=business_id
         ).all()
+    
+    def get_by_site_month_with_employee(self, site_id: UUID, month: date, business_id: UUID) -> List[WorkCard]:
+        """
+        Get all work cards for a site and month in a business with employee data eagerly loaded.
+        
+        Args:
+            site_id: The site's UUID
+            month: The processing month
+            business_id: The business UUID
+            
+        Returns:
+            List of WorkCard instances with employee relationship loaded
+        """
+        return self.session.query(WorkCard).options(
+            joinedload(WorkCard.employee)
+        ).filter_by(
+            site_id=site_id,
+            processing_month=month,
+            business_id=business_id
+        ).order_by(WorkCard.created_at.desc()).all()
     
     def get_by_employee_month(self, employee_id: UUID, month: date, business_id: UUID) -> List[WorkCard]:
         """

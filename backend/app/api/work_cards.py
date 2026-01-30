@@ -23,19 +23,31 @@ def get_work_cards():
     site_id = request.args.get('site_id')
     month_str = request.args.get('month') # YYYY-MM-DD
     status = request.args.get('status')
+    include_employee = request.args.get('include_employee', 'false').lower() == 'true'
     
     if site_id and month_str:
         try:
             month = datetime.strptime(month_str, '%Y-%m-%d').date()
-            results = repo.get_by_site_month(site_id, month, business_id=g.business_id)
+            if include_employee:
+                results = repo.get_by_site_month_with_employee(site_id, month, business_id=g.business_id)
+            else:
+                results = repo.get_by_site_month(site_id, month, business_id=g.business_id)
         except ValueError:
             return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
     elif status:
         results = repo.get_by_review_status(status, business_id=g.business_id)
     else:
         results = repo.get_all_for_business(business_id=g.business_id)
+    
+    # Serialize results with optional employee data
+    data = []
+    for card in results:
+        card_dict = model_to_dict(card)
+        if include_employee and hasattr(card, 'employee') and card.employee:
+            card_dict['employee'] = model_to_dict(card.employee)
+        data.append(card_dict)
         
-    return api_response(data=models_to_list(results))
+    return api_response(data=data)
 
 @work_cards_bp.route('/<uuid:card_id>', methods=['GET'])
 @token_required

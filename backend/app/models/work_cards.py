@@ -27,6 +27,7 @@ class WorkCard(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     # Relationships
+    employee = db.relationship('Employee', backref='work_cards', foreign_keys=[employee_id])
     files = db.relationship('WorkCardFile', backref='work_card', uselist=False, cascade="all, delete-orphan")
     extraction = db.relationship('WorkCardExtraction', backref='work_card', uselist=False, cascade="all, delete-orphan")
     day_entries = db.relationship('WorkCardDayEntry', backref='work_card', cascade="all, delete-orphan")

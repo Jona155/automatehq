@@ -7,6 +7,9 @@ import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import UploadWorkCardModal from '../components/UploadWorkCardModal';
+import WorkCardReviewTab from '../components/WorkCardReviewTab';
+
+type TabType = 'employees' | 'review';
 
 export default function SiteDetailsPage() {
   const { siteId } = useParams<{ siteId: string }>();
@@ -19,47 +22,54 @@ export default function SiteDetailsPage() {
   const [employeesError, setEmployeesError] = useState<string | null>(null);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [activeTab, setActiveTab] = useState<TabType>('employees');
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
 
   useEffect(() => {
-    const fetchSite = async () => {
-      if (!isAuthenticated || !siteId) return;
-      
+    if (!isAuthenticated || !siteId) return;
+
+    // Track if effect is still mounted to prevent state updates after unmount
+    let isMounted = true;
+
+    const fetchData = async () => {
       setIsLoading(true);
-      try {
-        const data = await getSite(siteId);
-        setSite(data);
-        setError(null);
-      } catch (err) {
-        console.error('Failed to fetch site:', err);
-        setError('שגיאה בטעינת פרטי האתר');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchSite();
-  }, [isAuthenticated, siteId]);
-
-  useEffect(() => {
-    const fetchEmployees = async () => {
-      if (!isAuthenticated || !siteId) return;
-      
       setIsLoadingEmployees(true);
-      try {
-        const data = await getEmployees({ site_id: siteId, active: true });
-        setEmployees(data);
-        setEmployeesError(null);
-      } catch (err) {
-        console.error('Failed to fetch employees:', err);
-        setEmployeesError('שגיאה בטעינת רשימת עובדים');
-      } finally {
-        setIsLoadingEmployees(false);
+
+      // Fetch site and employees in parallel
+      const [siteResult, employeesResult] = await Promise.allSettled([
+        getSite(siteId),
+        getEmployees({ site_id: siteId, active: true }),
+      ]);
+
+      if (!isMounted) return;
+
+      // Handle site result
+      if (siteResult.status === 'fulfilled') {
+        setSite(siteResult.value);
+        setError(null);
+      } else {
+        console.error('Failed to fetch site:', siteResult.reason);
+        setError('שגיאה בטעינת פרטי האתר');
       }
+      setIsLoading(false);
+
+      // Handle employees result
+      if (employeesResult.status === 'fulfilled') {
+        setEmployees(employeesResult.value);
+        setEmployeesError(null);
+      } else {
+        console.error('Failed to fetch employees:', employeesResult.reason);
+        setEmployeesError('שגיאה בטעינת רשימת עובדים');
+      }
+      setIsLoadingEmployees(false);
     };
 
-    fetchEmployees();
+    fetchData();
+
+    return () => {
+      isMounted = false;
+    };
   }, [isAuthenticated, siteId]);
 
   const handleBack = () => {
@@ -128,11 +138,38 @@ export default function SiteDetailsPage() {
         </div>
       </div>
 
-      {/* Employees Table */}
+      {/* Tab Navigation */}
       <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-        <div className="p-6 border-b border-slate-200 dark:border-slate-700">
-          <h2 className="text-lg font-bold">רשימת עובדים באתר</h2>
+        <div className="flex border-b border-slate-200 dark:border-slate-700">
+          <button
+            onClick={() => setActiveTab('employees')}
+            className={`flex-1 px-6 py-4 font-medium text-sm transition-colors ${
+              activeTab === 'employees'
+                ? 'text-primary border-b-2 border-primary bg-primary/5'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50'
+            }`}
+          >
+            רשימת עובדים
+          </button>
+          <button
+            onClick={() => setActiveTab('review')}
+            className={`flex-1 px-6 py-4 font-medium text-sm transition-colors ${
+              activeTab === 'review'
+                ? 'text-primary border-b-2 border-primary bg-primary/5'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50'
+            }`}
+          >
+            W.C Review
+          </button>
         </div>
+
+        {/* Tab Content */}
+        {activeTab === 'employees' && (
+          <div>
+            {/* Employees Table */}
+            <div className="px-6 pt-2 pb-4 border-b border-slate-200 dark:border-slate-700">
+              <h2 className="text-lg font-bold">רשימת עובדים באתר</h2>
+            </div>
 
         {isLoadingEmployees ? (
           <div className="p-8 text-center text-slate-500">טוען רשימת עובדים...</div>
@@ -190,9 +227,17 @@ export default function SiteDetailsPage() {
           </div>
         )}
 
-        <div className="p-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between text-sm text-slate-600 dark:text-slate-400">
-          <span>מציג {employees.length} עובדים</span>
-        </div>
+            <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between text-sm text-slate-600 dark:text-slate-400">
+              <span>מציג {employees.length} עובדים</span>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'review' && (
+          <div className="min-h-[600px]">
+            <WorkCardReviewTab siteId={siteId!} />
+          </div>
+        )}
       </div>
 
       {/* Upload Modal */}

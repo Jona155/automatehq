@@ -19,6 +19,7 @@ export interface GetWorkCardsParams {
   site_id: string;
   processing_month: string;
   review_status?: string;
+  include_employee?: boolean;
 }
 
 export interface UpdateDayEntriesRequest {
@@ -48,10 +49,16 @@ export interface GetMatrixParams {
 
 // List work cards with optional filtering
 export const getWorkCards = async (params: GetWorkCardsParams) => {
-  const normalizedParams = {
-    ...params,
-    processing_month: normalizeMonthFormat(params.processing_month),
+  const normalizedParams: Record<string, string> = {
+    site_id: params.site_id,
+    month: normalizeMonthFormat(params.processing_month),
   };
+  if (params.review_status) {
+    normalizedParams.status = params.review_status;
+  }
+  if (params.include_employee) {
+    normalizedParams.include_employee = 'true';
+  }
   const response = await client.get<{ data: WorkCard[] }>('/work_cards', { params: normalizedParams });
   return response.data.data;
 };
