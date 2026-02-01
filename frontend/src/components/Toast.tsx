@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-export type ToastType = 'success' | 'error';
+export type ToastType = 'success' | 'error' | 'info';
 
 export interface ToastProps {
   message: string;
@@ -21,11 +21,13 @@ export default function Toast({ message, type, onClose, duration = 4000 }: Toast
   const typeStyles = {
     success: 'bg-green-500 dark:bg-green-600',
     error: 'bg-red-500 dark:bg-red-600',
+    info: 'bg-blue-500 dark:bg-blue-600',
   };
 
   const iconName = {
     success: 'check_circle',
     error: 'error',
+    info: 'info',
   };
 
   return (
