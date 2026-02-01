@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { WorkCard, DayEntry } from '../types';
-import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries } from '../api/workCards';
+import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard } from '../api/workCards';
 import MonthPicker from './MonthPicker';
 import { useToast } from '../hooks/useToast';
+import { useAuth } from '../context/AuthContext';
+import Modal from './Modal';
 
 interface WorkCardReviewTabProps {
   siteId: string;
@@ -58,8 +60,10 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { showToast, ToastContainer } = useToast();
+  const { user } = useAuth();
 
   // Fetch work cards when month changes
   useEffect(() => {
@@ -217,6 +221,41 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
     }
   };
 
+  const handleApprove = async () => {
+    if (!selectedCard || !user) return;
+    try {
+      await approveWorkCard(selectedCard.id, user.id);
+      showToast('הכרטיס אושר בהצלחה', 'success');
+      
+      // Update local state
+      setWorkCards(prev => prev.map(c => 
+        c.id === selectedCard.id ? { ...c, review_status: 'APPROVED' } : c
+      ));
+      setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
+    } catch (err) {
+      console.error('Failed to approve card:', err);
+      showToast('שגיאה באישור הכרטיס', 'error');
+    }
+  };
+
+  const handleReject = async () => {
+    if (!selectedCard) return;
+    try {
+      await deleteWorkCard(selectedCard.id);
+      showToast('הכרטיס נדחה ונמחק בהצלחה', 'success');
+      
+      // Remove from list
+      setWorkCards(prev => prev.filter(c => c.id !== selectedCard.id));
+      setSelectedCard(null);
+      setImageUrl(null);
+      setDayEntries([]);
+      setShowRejectModal(false);
+    } catch (err) {
+      console.error('Failed to reject card:', err);
+      showToast('שגיאה בדחיית הכרטיס', 'error');
+    }
+  };
+
   // Check if there are unsaved changes
   const hasUnsavedChanges = dayEntries.some(e => e.isDirty);
 
@@ -348,23 +387,47 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
                     <span className="material-symbols-outlined text-lg">table_chart</span>
                     שעות עבודה
                   </h4>
-                  <button
-                    onClick={handleSave}
-                    disabled={isSaving || !hasUnsavedChanges}
-                    className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  >
-                    {isSaving ? (
-                      <>
-                        <span className="material-symbols-outlined text-lg animate-spin">progress_activity</span>
-                        <span>שומר...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="material-symbols-outlined text-lg">save</span>
-                        <span>שמור</span>
-                      </>
-                    )}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowRejectModal(true)}
+                      className="px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors font-medium text-sm flex items-center gap-2 border border-red-200"
+                      title="דחה כרטיס (מחק)"
+                    >
+                      <span className="material-symbols-outlined text-lg">close</span>
+                      <span>דחה</span>
+                    </button>
+                    <button
+                      onClick={handleApprove}
+                      disabled={selectedCard.review_status === 'APPROVED'}
+                      className={`px-4 py-2 rounded-lg transition-colors font-medium text-sm flex items-center gap-2 border ${
+                        selectedCard.review_status === 'APPROVED'
+                          ? 'bg-green-50 text-green-600 border-green-200 cursor-default'
+                          : 'bg-green-600 text-white hover:bg-green-700 border-transparent'
+                      }`}
+                      title="אשר כרטיס"
+                    >
+                      <span className="material-symbols-outlined text-lg">check</span>
+                      <span>{selectedCard.review_status === 'APPROVED' ? 'אושר' : 'אשר'}</span>
+                    </button>
+                    <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+                    <button
+                      onClick={handleSave}
+                      disabled={isSaving || !hasUnsavedChanges}
+                      className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {isSaving ? (
+                        <>
+                          <span className="material-symbols-outlined text-lg animate-spin">progress_activity</span>
+                          <span>שומר...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="material-symbols-outlined text-lg">save</span>
+                          <span>שמור</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 {isLoadingEntries ? (
@@ -432,6 +495,37 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
           )}
         </div>
       </div>
+      <Modal
+        isOpen={showRejectModal}
+        onClose={() => setShowRejectModal(false)}
+        title="דחיית כרטיס עבודה"
+        maxWidth="sm"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 text-amber-600 bg-amber-50 p-4 rounded-lg border border-amber-100">
+            <span className="material-symbols-outlined text-2xl">warning</span>
+            <p className="text-sm font-medium">פעולה זו היא בלתי הפיכה!</p>
+          </div>
+          <p className="text-slate-600 dark:text-slate-300">
+            האם אתה בטוח שברצונך לדחות את כרטיס העבודה? פעולה זו תמחק את הכרטיס ואת כל הנתונים הקשורים אליו מהמערכת.
+          </p>
+          <div className="flex justify-end gap-3 pt-4">
+            <button
+              onClick={() => setShowRejectModal(false)}
+              className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors font-medium text-sm"
+            >
+              ביטול
+            </button>
+            <button
+              onClick={handleReject}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm flex items-center gap-2"
+            >
+              <span className="material-symbols-outlined text-lg">delete</span>
+              <span>דחה ומחק</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

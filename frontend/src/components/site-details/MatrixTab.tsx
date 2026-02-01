@@ -118,9 +118,18 @@ export default function MatrixTab({ siteId, selectedMonth, showToast }: MatrixTa
                     {matrixData.employees.map((employee) => {
                       const hours = matrixData.matrix[employee.id]?.[day];
                       const hasHours = hours !== undefined && hours !== null;
-                      const cellClass = hasHours
-                        ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 font-medium'
-                        : 'bg-slate-50/50 dark:bg-slate-800/30 text-slate-400';
+                      const status = matrixData.status_map[employee.id];
+                      const isApproved = status === 'APPROVED';
+
+                      let cellClass = 'bg-slate-50/50 dark:bg-slate-800/30 text-slate-400';
+                      
+                      if (hasHours) {
+                        if (isApproved) {
+                          cellClass = 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-900 dark:text-emerald-100 font-medium';
+                        } else {
+                          cellClass = 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium ring-1 ring-inset ring-slate-200 dark:ring-slate-700';
+                        }
+                      }
 
                       return (
                         <td

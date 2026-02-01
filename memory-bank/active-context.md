@@ -2,7 +2,7 @@
 
 ## Current Focus
 
-Site Details simplified to basic employee roster (name, passport, phone) as baby step. Previous complex tabs (uploads/review/matrix) not in use yet.
+Site Details page: three tabs — (1) Employee roster + uploads, (2) Work Card Review (edit day entries, approve/reject cards with confirmation), (3) Monthly Summary matrix (status color-coding).
 
 ## Next Steps
 
