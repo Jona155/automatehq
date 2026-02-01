@@ -1,5 +1,5 @@
 import client from './client';
-import type { WorkCard, DayEntry, EmployeeUploadStatus, MatrixData } from '../types';
+import type { WorkCard, DayEntry, EmployeeUploadStatus, MatrixData, WorkCardExtraction } from '../types';
 
 // Helper to normalize month format: converts YYYY-MM to YYYY-MM-01 if needed
 const normalizeMonthFormat = (month: string): string => {
@@ -170,5 +170,17 @@ export const getHoursMatrix = async (
       ...params,
     },
   });
+  return response.data.data;
+};
+
+// Trigger extraction for a work card
+export const triggerExtraction = async (cardId: string) => {
+  const response = await client.post<{ data: WorkCardExtraction }>(`/work_cards/${cardId}/extract`);
+  return response.data.data;
+};
+
+// Get extraction status for a work card
+export const getExtraction = async (cardId: string) => {
+  const response = await client.get<{ data: WorkCardExtraction }>(`/work_cards/${cardId}/extraction`);
   return response.data.data;
 };
