@@ -82,6 +82,12 @@ export const approveWorkCard = async (cardId: string, userId: string) => {
   return response.data.data;
 };
 
+// Delete work card
+export const deleteWorkCard = async (cardId: string) => {
+  const response = await client.delete<{ message: string }>(`/work_cards/${cardId}`);
+  return response.data;
+};
+
 // Upload single work card for a specific employee
 export const uploadSingleWorkCard = async (
   siteId: string,

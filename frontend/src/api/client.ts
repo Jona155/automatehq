@@ -23,12 +23,20 @@ interface RetryConfig extends InternalAxiosRequestConfig {
 
 // Check if error is retryable
 const isRetryableError = (error: AxiosError): boolean => {
-  // Network errors (ECONNREFUSED, timeout, etc.)
-  if (!error.response) {
-    return true;
+  // Don't retry timeout errors - they indicate backend overload
+  if (error.code === 'ECONNABORTED') {
+    return false;
+  }
+  // Don't retry canceled requests
+  if (error.code === 'ERR_CANCELED') {
+    return false;
+  }
+  // Don't retry network errors - they often indicate connection issues from rapid navigation
+  if (error.code === 'ERR_NETWORK') {
+    return false;
   }
   // Server errors (5xx)
-  if (error.response.status && RETRY_CONFIG.retryableStatuses.includes(error.response.status)) {
+  if (error.response?.status && RETRY_CONFIG.retryableStatuses.includes(error.response.status)) {
     return true;
   }
   return false;

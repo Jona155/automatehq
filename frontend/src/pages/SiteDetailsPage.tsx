@@ -8,8 +8,9 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import UploadWorkCardModal from '../components/UploadWorkCardModal';
 import WorkCardReviewTab from '../components/WorkCardReviewTab';
+import MonthlySummaryTab from '../components/MonthlySummaryTab';
 
-type TabType = 'employees' | 'review';
+type TabType = 'employees' | 'review' | 'summary';
 
 export default function SiteDetailsPage() {
   const { siteId } = useParams<{ siteId: string }>();
@@ -29,46 +30,59 @@ export default function SiteDetailsPage() {
   useEffect(() => {
     if (!isAuthenticated || !siteId) return;
 
-    // Track if effect is still mounted to prevent state updates after unmount
-    let isMounted = true;
+    // Use AbortController to cancel requests on unmount/navigation
+    const abortController = new AbortController();
 
     const fetchData = async () => {
       setIsLoading(true);
       setIsLoadingEmployees(true);
 
-      // Fetch site and employees in parallel
-      const [siteResult, employeesResult] = await Promise.allSettled([
-        getSite(siteId),
-        getEmployees({ site_id: siteId, active: true }),
-      ]);
+      try {
+        // Fetch site and employees in parallel with abort signal
+        const [siteResult, employeesResult] = await Promise.allSettled([
+          getSite(siteId),
+          getEmployees({ site_id: siteId, active: true }),
+        ]);
 
-      if (!isMounted) return;
+        // Check if aborted before updating state
+        if (abortController.signal.aborted) return;
 
-      // Handle site result
-      if (siteResult.status === 'fulfilled') {
-        setSite(siteResult.value);
-        setError(null);
-      } else {
-        console.error('Failed to fetch site:', siteResult.reason);
-        setError('שגיאה בטעינת פרטי האתר');
+        // Handle site result
+        if (siteResult.status === 'fulfilled') {
+          setSite(siteResult.value);
+          setError(null);
+        } else {
+          // Don't show error if request was aborted
+          if (siteResult.reason?.code !== 'ERR_CANCELED' && siteResult.reason?.code !== 'ERR_NETWORK') {
+            console.error('Failed to fetch site:', siteResult.reason);
+            setError('שגיאה בטעינת פרטי האתר');
+          }
+        }
+        setIsLoading(false);
+
+        // Handle employees result
+        if (employeesResult.status === 'fulfilled') {
+          setEmployees(employeesResult.value);
+          setEmployeesError(null);
+        } else {
+          // Don't show error if request was aborted
+          if (employeesResult.reason?.code !== 'ERR_CANCELED' && employeesResult.reason?.code !== 'ERR_NETWORK') {
+            console.error('Failed to fetch employees:', employeesResult.reason);
+            setEmployeesError('שגיאה בטעינת רשימת עובדים');
+          }
+        }
+        setIsLoadingEmployees(false);
+      } catch (err) {
+        // Ignore errors from aborted requests
+        if (abortController.signal.aborted) return;
+        console.error('Fetch error:', err);
       }
-      setIsLoading(false);
-
-      // Handle employees result
-      if (employeesResult.status === 'fulfilled') {
-        setEmployees(employeesResult.value);
-        setEmployeesError(null);
-      } else {
-        console.error('Failed to fetch employees:', employeesResult.reason);
-        setEmployeesError('שגיאה בטעינת רשימת עובדים');
-      }
-      setIsLoadingEmployees(false);
     };
 
     fetchData();
 
     return () => {
-      isMounted = false;
+      abortController.abort();
     };
   }, [isAuthenticated, siteId]);
 
@@ -161,6 +175,16 @@ export default function SiteDetailsPage() {
           >
             W.C Review
           </button>
+          <button
+            onClick={() => setActiveTab('summary')}
+            className={`flex-1 px-6 py-4 font-medium text-sm transition-colors ${
+              activeTab === 'summary'
+                ? 'text-primary border-b-2 border-primary bg-primary/5'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50'
+            }`}
+          >
+            סיכום חודשי
+          </button>
         </div>
 
         {/* Tab Content */}
@@ -236,6 +260,12 @@ export default function SiteDetailsPage() {
         {activeTab === 'review' && (
           <div className="min-h-[600px]">
             <WorkCardReviewTab siteId={siteId!} />
+          </div>
+        )}
+
+        {activeTab === 'summary' && (
+          <div className="min-h-[600px]">
+            <MonthlySummaryTab siteId={siteId!} />
           </div>
         )}
       </div>

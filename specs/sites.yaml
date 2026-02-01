@@ -252,6 +252,13 @@ paths:
                           type: object
                           additionalProperties:
                             type: number
+                      status_map:
+                        type: object
+                        description: Object mapping employee_id to review_status (APPROVED, NEEDS_REVIEW, NEEDS_ASSIGNMENT, REJECTED, or null if no work card)
+                        additionalProperties:
+                          type: string
+                          nullable: true
+                          enum: [APPROVED, NEEDS_REVIEW, NEEDS_ASSIGNMENT, REJECTED]
         '400':
           description: Bad request (missing or invalid processing_month)
         '404':

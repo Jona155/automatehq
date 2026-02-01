@@ -242,6 +242,7 @@ def get_hours_matrix(site_id):
         
         # Build matrix structure
         matrix = {}
+        status_map = {}  # employee_id -> review_status
         
         # For performance, fetch all relevant work cards and day entries in a single query
         # We'll use a subquery to get the "best" work card for each employee
@@ -293,17 +294,20 @@ def get_hours_matrix(site_id):
             WorkCardDayEntry.work_card_id.in_(db.session.query(best_cards.c.work_card_id))
         ).all()
         
-        # Build a lookup: work_card_id -> employee_id
+        # Build a lookup: work_card_id -> (employee_id, review_status)
         work_card_to_employee = {}
         cards_query = db.session.query(
             WorkCard.id,
-            WorkCard.employee_id
+            WorkCard.employee_id,
+            WorkCard.review_status
         ).filter(
             WorkCard.id.in_(db.session.query(best_cards.c.work_card_id))
         ).all()
         
-        for card_id, employee_id in cards_query:
-            work_card_to_employee[str(card_id)] = str(employee_id)
+        for card_id, employee_id, review_status in cards_query:
+            employee_id_str = str(employee_id)
+            work_card_to_employee[str(card_id)] = employee_id_str
+            status_map[employee_id_str] = review_status
         
         # Build matrix from day entries
         for entry in day_entries:
@@ -317,10 +321,11 @@ def get_hours_matrix(site_id):
                 if entry.total_hours is not None:
                     matrix[employee_id][entry.day_of_month] = float(entry.total_hours)
         
-        # Return employees and matrix
+        # Return employees, matrix, and status_map
         return api_response(data={
             'employees': models_to_list(employees),
-            'matrix': matrix
+            'matrix': matrix,
+            'status_map': status_map
         })
     except ValueError as e:
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))

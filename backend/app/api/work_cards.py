@@ -150,6 +150,27 @@ def approve_work_card(card_id):
     except Exception as e:
         return api_response(status_code=500, message="Failed to approve work card", error=str(e))
 
+@work_cards_bp.route('/<uuid:card_id>', methods=['DELETE'])
+@token_required
+def delete_work_card(card_id):
+    """Delete a work card (must belong to current business)."""
+    # Verify ownership
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+    
+    try:
+        # Delete the card (cascade will handle related files/extractions/entries if configured,
+        # but the models define cascade="all, delete-orphan", so SQLAlchemy should handle it
+        # as long as we use session.delete(instance))
+        success = repo.delete(card_id)
+        if not success:
+             return api_response(status_code=404, message="Work card not found", error="Not Found")
+             
+        return api_response(message="Work card deleted successfully", status_code=200)
+    except Exception as e:
+        return api_response(status_code=500, message="Failed to delete work card", error=str(e))
+
 @work_cards_bp.route('/<uuid:card_id>/file', methods=['GET'])
 @token_required
 def get_work_card_file(card_id):
