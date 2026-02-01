@@ -1,0 +1,13 @@
+{
+  "name": "automatehq",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AutomateHQ - Work card management system",
+  "scripts": {
+    "heroku-postbuild": "npm install --prefix frontend && npm run build --prefix frontend"
+  },
+  "engines": {
+    "node": ">=18.x",
+    "npm": ">=9.x"
+  }
+}
