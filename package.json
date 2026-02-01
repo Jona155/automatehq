@@ -4,10 +4,9 @@
   "private": true,
   "description": "AutomateHQ - Work card management system",
   "scripts": {
-    "heroku-postbuild": "npm install --prefix frontend && npm run build --prefix frontend"
+    "heroku-postbuild": "npm install --include=dev --prefix frontend && npm run build --prefix frontend"
   },
   "engines": {
-    "node": ">=18.x",
-    "npm": ">=9.x"
+    "node": "20.x"
   }
 }
