@@ -16,7 +16,13 @@ def create_app():
     
     # Config
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/automatehq")
+    
+    # Fix DATABASE_URL protocol for Heroku compatibility
+    # Heroku provides postgres:// but SQLAlchemy 1.4+ requires postgresql://
+    database_url = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/automatehq")
+    if database_url and database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     
     # Initialize extensions
