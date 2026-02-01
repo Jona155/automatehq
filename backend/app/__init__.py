@@ -1,12 +1,18 @@
 import os
-from flask import Flask, request
+from flask import Flask, request, send_from_directory
 from flask_migrate import Migrate
 from .extensions import db
 from . import models  # Register models
 from .api import register_blueprints
 
 def create_app():
-    app = Flask(__name__)
+    # Configure static file serving for production (React build)
+    static_folder = os.path.join(os.path.dirname(__file__), '..', '..', 'frontend', 'dist')
+    app = Flask(
+        __name__,
+        static_folder=static_folder if os.path.exists(static_folder) else None,
+        template_folder=static_folder if os.path.exists(static_folder) else None
+    )
     
     # Config
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -38,5 +44,27 @@ def create_app():
     @app.get("/api/health")
     def health():
         return {"ok": True}
+    
+    # Catch-all route for React Router (serves index.html for non-API routes)
+    # This MUST be registered AFTER all API blueprints
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_react_app(path):
+        # Only serve static files for non-API routes
+        if path.startswith('api/'):
+            # This should never be reached due to API blueprints, but just in case
+            return {"error": "Not found"}, 404
+        
+        # Check if static folder exists (production)
+        if app.static_folder and os.path.exists(app.static_folder):
+            # Try to serve the requested file
+            file_path = os.path.join(app.static_folder, path)
+            if os.path.isfile(file_path):
+                return send_from_directory(app.static_folder, path)
+            # Otherwise serve index.html for client-side routing
+            return send_from_directory(app.static_folder, 'index.html')
+        
+        # Development mode - no static folder
+        return {"message": "Development mode - run frontend separately"}, 200
         
     return app

@@ -1,2 +1,2 @@
-web: gunicorn app:app
-worker: python worker/extractor.py
+web: gunicorn --worker-tmp-dir /dev/shm backend.run:app
+worker: python worker/run.py
