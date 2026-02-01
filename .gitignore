@@ -28,3 +28,9 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Mock Files
+mocks/
+
+#poc files
+poc-worker/
