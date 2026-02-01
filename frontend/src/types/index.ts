@@ -91,3 +91,24 @@ export interface MatrixData {
   matrix: Record<string, Record<number, number>>; // employee_id -> day -> hours
   status_map: Record<string, string | null>; // employee_id -> review_status
 }
+
+export interface WorkCardExtraction {
+  id: string;
+  work_card_id: string;
+  status: 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED';
+  attempts: number;
+  last_error: string | null;
+  locked_at: string | null;
+  locked_by: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  extracted_employee_name: string | null;
+  extracted_passport_id: string | null;
+  matched_employee_id: string | null;
+  match_method: string | null;
+  match_confidence: number | null;
+  model_name: string | null;
+  pipeline_version: string | null;
+  created_at: string;
+  updated_at: string;
+}

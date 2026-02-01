@@ -403,11 +403,7 @@ def upload_single():
             image_bytes=file_data
         )
         
-        # Create extraction job
-        extraction_repo.create(
-            work_card_id=work_card.id,
-            status='PENDING'
-        )
+        # Extraction is triggered explicitly by user via POST /work_cards/{id}/extract
         
         return api_response(
             data=model_to_dict(work_card),
@@ -418,6 +414,60 @@ def upload_single():
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
     except Exception as e:
         return api_response(status_code=500, message="Failed to upload work card", error=str(e))
+
+@work_cards_bp.route('/<uuid:card_id>/extract', methods=['POST'])
+@token_required
+def trigger_extraction(card_id):
+    """Trigger (or re-trigger) extraction for a work card."""
+    # Verify ownership
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+    
+    try:
+        # Get existing extraction job
+        extraction = extraction_repo.get_by_work_card(card_id)
+        
+        if extraction:
+            # Reset existing job to PENDING (will be picked up by worker)
+            extraction_repo.reset_job(extraction.id)
+            extraction = extraction_repo.get_by_id(extraction.id)  # Refresh
+            message = "Extraction re-triggered successfully"
+        else:
+            # Create new extraction job
+            extraction = extraction_repo.create(
+                work_card_id=card_id,
+                status='PENDING'
+            )
+            message = "Extraction triggered successfully"
+        
+        return api_response(
+            data=model_to_dict(extraction),
+            message=message
+        )
+    except Exception as e:
+        return api_response(status_code=500, message="Failed to trigger extraction", error=str(e))
+
+
+@work_cards_bp.route('/<uuid:card_id>/extraction', methods=['GET'])
+@token_required
+def get_extraction_status(card_id):
+    """Get the extraction status for a work card."""
+    # Verify ownership
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+    
+    try:
+        extraction = extraction_repo.get_by_work_card(card_id)
+        
+        if not extraction:
+            return api_response(status_code=404, message="No extraction found for this work card", error="Not Found")
+        
+        return api_response(data=model_to_dict(extraction))
+    except Exception as e:
+        return api_response(status_code=500, message="Failed to get extraction status", error=str(e))
+
 
 @work_cards_bp.route('/upload/batch', methods=['POST'])
 @token_required
@@ -496,11 +546,7 @@ def upload_batch():
                     image_bytes=file_data
                 )
                 
-                # Create extraction job
-                extraction_repo.create(
-                    work_card_id=work_card.id,
-                    status='PENDING'
-                )
+                # Extraction is triggered explicitly by user via POST /work_cards/{id}/extract
                 
                 uploaded.append({
                     'filename': filename,

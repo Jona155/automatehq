@@ -185,7 +185,7 @@ def get_employee_upload_status(site_id):
                 work_card = work_cards[-1]
                 work_card_id = str(work_card.id)
                 
-                # Get extraction status
+                # Get extraction status (may be None if user has not triggered extraction)
                 extraction = extraction_repo.get_by_work_card(work_card.id)
                 
                 if extraction:
@@ -198,6 +198,9 @@ def get_employee_upload_status(site_id):
                             status = 'APPROVED'
                         else:
                             status = 'EXTRACTED'
+                else:
+                    # Work card exists but extraction not yet triggered - show as pending
+                    status = 'PENDING'
             
             employee_dict = model_to_dict(employee)
             result.append({

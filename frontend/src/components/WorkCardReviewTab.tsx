@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { WorkCard, DayEntry } from '../types';
-import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard } from '../api/workCards';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { WorkCard, DayEntry, WorkCardExtraction } from '../types';
+import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, getExtraction } from '../api/workCards';
 import MonthPicker from './MonthPicker';
 import { useToast } from '../hooks/useToast';
 import { useAuth } from '../context/AuthContext';
@@ -62,6 +62,9 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
+  const [isTriggering, setIsTriggering] = useState(false);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const { showToast, ToastContainer } = useToast();
   const { user } = useAuth();
 
@@ -162,6 +165,80 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
       }
     };
   }, [selectedCard?.id]);
+
+  // Fetch extraction status when card is selected
+  useEffect(() => {
+    if (!selectedCard) {
+      setExtraction(null);
+      return;
+    }
+
+    const fetchExtraction = async () => {
+      try {
+        const extractionData = await getExtraction(selectedCard.id);
+        setExtraction(extractionData);
+      } catch {
+        // No extraction found - that's OK
+        setExtraction(null);
+      }
+    };
+
+    fetchExtraction();
+  }, [selectedCard?.id]);
+
+  // Poll extraction status when PENDING or RUNNING
+  useEffect(() => {
+    // Clear any existing polling
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+
+    // Start polling if extraction is in progress
+    if (extraction && selectedCard && (extraction.status === 'PENDING' || extraction.status === 'RUNNING')) {
+      pollingRef.current = setInterval(async () => {
+        try {
+          const extractionData = await getExtraction(selectedCard.id);
+          setExtraction(extractionData);
+
+          // If extraction completed, refresh day entries
+          if (extractionData.status === 'DONE') {
+            const entries = await getDayEntries(selectedCard.id);
+            initializeDayEntries(entries);
+            showToast('חילוץ הנתונים הסתיים בהצלחה', 'success');
+          } else if (extractionData.status === 'FAILED') {
+            showToast(`חילוץ נכשל: ${extractionData.last_error || 'שגיאה לא ידועה'}`, 'error');
+          }
+        } catch (err) {
+          console.error('Failed to poll extraction status:', err);
+        }
+      }, 3000); // Poll every 3 seconds
+    }
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [extraction?.status, selectedCard?.id, initializeDayEntries, showToast]);
+
+  // Trigger extraction
+  const handleTriggerExtraction = async () => {
+    if (!selectedCard) return;
+
+    setIsTriggering(true);
+    try {
+      const extractionData = await triggerExtraction(selectedCard.id);
+      setExtraction(extractionData);
+      showToast('חילוץ נתונים הופעל', 'info');
+    } catch (err) {
+      console.error('Failed to trigger extraction:', err);
+      showToast('שגיאה בהפעלת חילוץ', 'error');
+    } finally {
+      setIsTriggering(false);
+    }
+  };
 
   // Handle entry field change
   const handleEntryChange = (dayIndex: number, field: 'from_time' | 'to_time' | 'total_hours', value: string) => {
@@ -382,34 +459,59 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
 
               {/* Day Entries Panel */}
               <div className="w-1/2 flex flex-col min-h-0">
-                <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                  <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
-                    <span className="material-symbols-outlined text-lg">table_chart</span>
-                    שעות עבודה
-                  </h4>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setShowRejectModal(true)}
-                      className="px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors font-medium text-sm flex items-center gap-2 border border-red-200"
-                      title="דחה כרטיס (מחק)"
-                    >
-                      <span className="material-symbols-outlined text-lg">close</span>
-                      <span>דחה</span>
-                    </button>
-                    <button
-                      onClick={handleApprove}
-                      disabled={selectedCard.review_status === 'APPROVED'}
-                      className={`px-4 py-2 rounded-lg transition-colors font-medium text-sm flex items-center gap-2 border ${
-                        selectedCard.review_status === 'APPROVED'
-                          ? 'bg-green-50 text-green-600 border-green-200 cursor-default'
-                          : 'bg-green-600 text-white hover:bg-green-700 border-transparent'
-                      }`}
-                      title="אשר כרטיס"
-                    >
-                      <span className="material-symbols-outlined text-lg">check</span>
-                      <span>{selectedCard.review_status === 'APPROVED' ? 'אושר' : 'אשר'}</span>
-                    </button>
-                    <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+                <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex flex-col gap-3">
+                  {/* Row 1: Title + Extraction area */}
+                  <div className="flex items-center justify-between gap-4">
+                    <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2 shrink-0">
+                      <span className="material-symbols-outlined text-lg">table_chart</span>
+                      שעות עבודה
+                    </h4>
+                    {/* Extraction controls - separate area with spacing */}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <button
+                        onClick={handleTriggerExtraction}
+                        disabled={isTriggering || extraction?.status === 'PENDING' || extraction?.status === 'RUNNING'}
+                        className="px-4 py-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors font-medium text-sm flex items-center gap-2 border border-purple-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                        title="חלץ נתונים מהתמונה"
+                      >
+                        {isTriggering || extraction?.status === 'PENDING' || extraction?.status === 'RUNNING' ? (
+                          <>
+                            <span className="material-symbols-outlined text-lg animate-spin">progress_activity</span>
+                            <span>מחלץ...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="material-symbols-outlined text-lg">auto_fix_high</span>
+                            <span>חלץ נתונים</span>
+                          </>
+                        )}
+                      </button>
+                      {/* Extraction Status Badge - only when extraction exists */}
+                      {extraction && (
+                        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium gap-1 shrink-0 ${
+                          extraction.status === 'DONE'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
+                            : extraction.status === 'FAILED'
+                            ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-400'
+                            : extraction.status === 'RUNNING'
+                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-400'
+                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
+                        }`}>
+                          {(extraction.status === 'PENDING' || extraction.status === 'RUNNING') && (
+                            <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                          )}
+                          {extraction.status === 'DONE' && <span className="material-symbols-outlined text-sm">check_circle</span>}
+                          {extraction.status === 'FAILED' && <span className="material-symbols-outlined text-sm">error</span>}
+                          {extraction.status === 'PENDING' ? 'ממתין לחילוץ' :
+                           extraction.status === 'RUNNING' ? 'מחלץ...' :
+                           extraction.status === 'DONE' ? 'חולץ' :
+                           'חילוץ נכשל'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Row 2: Save + Approve/Reject (icon-only) */}
+                  <div className="flex items-center justify-end gap-2">
                     <button
                       onClick={handleSave}
                       disabled={isSaving || !hasUnsavedChanges}
@@ -426,6 +528,26 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
                           <span>שמור</span>
                         </>
                       )}
+                    </button>
+                    <div className="w-px h-6 bg-slate-200 dark:bg-slate-700" />
+                    <button
+                      onClick={handleApprove}
+                      disabled={selectedCard.review_status === 'APPROVED'}
+                      className={`w-9 h-9 rounded-lg transition-colors flex items-center justify-center border ${
+                        selectedCard.review_status === 'APPROVED'
+                          ? 'bg-green-50 text-green-600 border-green-200 cursor-default'
+                          : 'bg-green-600 text-white hover:bg-green-700 border-transparent'
+                      }`}
+                      title="אשר כרטיס"
+                    >
+                      <span className="material-symbols-outlined text-lg">check</span>
+                    </button>
+                    <button
+                      onClick={() => setShowRejectModal(true)}
+                      className="w-9 h-9 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors flex items-center justify-center border border-red-200"
+                      title="דחה כרטיס (מחק)"
+                    >
+                      <span className="material-symbols-outlined text-lg">close</span>
                     </button>
                   </div>
                 </div>
