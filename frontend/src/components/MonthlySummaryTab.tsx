@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getHoursMatrix } from '../api/workCards';
-import type { MatrixData, Employee } from '../types';
+import type { MatrixData } from '../types';
 import MonthPicker from './MonthPicker';
 
 interface MonthlySummaryTabProps {

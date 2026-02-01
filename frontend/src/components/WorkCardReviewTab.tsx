@@ -64,7 +64,7 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
   const [isTriggering, setIsTriggering] = useState(false);
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { showToast, ToastContainer } = useToast();
   const { user } = useAuth();
 
