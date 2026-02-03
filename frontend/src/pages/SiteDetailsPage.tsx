@@ -12,6 +12,15 @@ import MonthlySummaryTab from '../components/MonthlySummaryTab';
 
 type TabType = 'employees' | 'review' | 'summary';
 
+// Default month for shared Review/Summary tabs (previous month in YYYY-MM)
+function getPreviousMonth(): string {
+  const now = new Date();
+  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const year = prevMonth.getFullYear();
+  const month = String(prevMonth.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
 export default function SiteDetailsPage() {
   const { siteId } = useParams<{ siteId: string }>();
   const { isAuthenticated, user } = useAuth();
@@ -24,8 +33,16 @@ export default function SiteDetailsPage() {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('employees');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => getPreviousMonth());
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
+
+  // Restore shared month from localStorage when siteId is available
+  useEffect(() => {
+    if (!siteId) return;
+    const stored = localStorage.getItem(`site_details_month_${siteId}`);
+    if (stored) setSelectedMonth(stored);
+  }, [siteId]);
 
   useEffect(() => {
     if (!isAuthenticated || !siteId) return;
@@ -259,13 +276,23 @@ export default function SiteDetailsPage() {
 
         {activeTab === 'review' && (
           <div className="min-h-[600px]">
-            <WorkCardReviewTab siteId={siteId!} />
+            <WorkCardReviewTab
+              siteId={siteId!}
+              selectedMonth={selectedMonth}
+              onMonthChange={setSelectedMonth}
+              monthStorageKey={`site_details_month_${siteId}`}
+            />
           </div>
         )}
 
         {activeTab === 'summary' && (
           <div className="min-h-[600px]">
-            <MonthlySummaryTab siteId={siteId!} />
+            <MonthlySummaryTab
+              siteId={siteId!}
+              selectedMonth={selectedMonth}
+              onMonthChange={setSelectedMonth}
+              monthStorageKey={`site_details_month_${siteId}`}
+            />
           </div>
         )}
       </div>

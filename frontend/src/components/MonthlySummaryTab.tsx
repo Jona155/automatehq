@@ -5,16 +5,10 @@ import MonthPicker from './MonthPicker';
 
 interface MonthlySummaryTabProps {
   siteId: string;
+  selectedMonth: string;
+  onMonthChange: (value: string) => void;
+  monthStorageKey: string;
 }
-
-// Helper to get previous month in YYYY-MM format
-const getPreviousMonth = (): string => {
-  const now = new Date();
-  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const year = prevMonth.getFullYear();
-  const month = String(prevMonth.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-};
 
 // Get number of days in a month
 const getDaysInMonth = (yearMonth: string): number => {
@@ -59,8 +53,7 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
   },
 };
 
-export default function MonthlySummaryTab({ siteId }: MonthlySummaryTabProps) {
-  const [selectedMonth, setSelectedMonth] = useState<string>(getPreviousMonth());
+export default function MonthlySummaryTab({ siteId, selectedMonth, onMonthChange, monthStorageKey }: MonthlySummaryTabProps) {
   const [matrixData, setMatrixData] = useState<MatrixData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,8 +140,8 @@ export default function MonthlySummaryTab({ siteId }: MonthlySummaryTabProps) {
           {/* Month Picker */}
           <MonthPicker
             value={selectedMonth}
-            onChange={setSelectedMonth}
-            storageKey={`summary_month_${siteId}`}
+            onChange={onMonthChange}
+            storageKey={monthStorageKey}
           />
         </div>
       </div>
