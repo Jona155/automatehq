@@ -8,16 +8,10 @@ import Modal from './Modal';
 
 interface WorkCardReviewTabProps {
   siteId: string;
+  selectedMonth: string;
+  onMonthChange: (value: string) => void;
+  monthStorageKey: string;
 }
-
-// Helper to get previous month in YYYY-MM format
-const getPreviousMonth = (): string => {
-  const now = new Date();
-  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const year = prevMonth.getFullYear();
-  const month = String(prevMonth.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-};
 
 // Get number of days in a month
 const getDaysInMonth = (yearMonth: string): number => {
@@ -50,8 +44,7 @@ interface DayEntryRow {
   isDirty: boolean;
 }
 
-export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
-  const [selectedMonth, setSelectedMonth] = useState<string>(getPreviousMonth());
+export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey }: WorkCardReviewTabProps) {
   const [workCards, setWorkCards] = useState<WorkCard[]>([]);
   const [selectedCard, setSelectedCard] = useState<WorkCard | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -345,8 +338,8 @@ export default function WorkCardReviewTab({ siteId }: WorkCardReviewTabProps) {
         <h2 className="text-lg font-bold">סקירת כרטיסי עבודה</h2>
         <MonthPicker
           value={selectedMonth}
-          onChange={setSelectedMonth}
-          storageKey={`review_month_${siteId}`}
+          onChange={onMonthChange}
+          storageKey={monthStorageKey}
         />
       </div>
 
