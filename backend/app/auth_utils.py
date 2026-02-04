@@ -38,6 +38,52 @@ def decode_auth_token(auth_token):
     except jwt.InvalidTokenError:
         return 'Invalid token. Please log in again.'
 
+def encode_portal_token(payload: dict, expires_in_seconds: int = 3600):
+    try:
+        secret = os.environ.get('PORTAL_JWT_SECRET_KEY') or os.environ.get('JWT_SECRET_KEY')
+        token_payload = {
+            **payload,
+            'exp': datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds),
+            'iat': datetime.now(timezone.utc),
+        }
+        return jwt.encode(token_payload, secret, algorithm='HS256')
+    except Exception as e:
+        return e
+
+def decode_portal_token(token: str):
+    try:
+        secret = os.environ.get('PORTAL_JWT_SECRET_KEY') or os.environ.get('JWT_SECRET_KEY')
+        return jwt.decode(token, secret, algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        return 'Portal token expired.'
+    except jwt.InvalidTokenError:
+        return 'Invalid portal token.'
+
+def portal_token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'message': 'Token is missing', 'success': False, 'error': 'Unauthorized'}), 401
+
+        try:
+            auth_token = auth_header.split(" ")[1]
+        except IndexError:
+            return jsonify({'message': 'Token is invalid', 'success': False, 'error': 'Unauthorized'}), 401
+
+        resp = decode_portal_token(auth_token)
+        if isinstance(resp, str):
+            return jsonify({'message': resp, 'success': False, 'error': 'Unauthorized'}), 401
+
+        if resp.get('scope') != 'RESPONSIBLE_EMPLOYEE_UPLOAD':
+            return jsonify({'message': 'Invalid portal scope', 'success': False, 'error': 'Forbidden'}), 403
+
+        from flask import g
+        g.portal_claims = resp
+        return f(*args, **kwargs)
+
+    return decorated
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):

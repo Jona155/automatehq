@@ -1,5 +1,5 @@
 import client from './client';
-import type { Site } from '../types';
+import type { Site, UploadAccessRequest } from '../types';
 
 export interface GetSitesParams {
   active?: boolean;
@@ -29,5 +29,20 @@ export const updateSite = async (id: string, data: { site_name?: string; site_co
 
 export const deleteSite = async (id: string) => {
   const response = await client.delete(`/sites/${id}`);
+  return response.data;
+};
+
+export const createAccessLink = async (siteId: string, data: { employee_id: string; processing_month: string }) => {
+  const response = await client.post<{ data: UploadAccessRequest }>(`/sites/${siteId}/access-link`, data);
+  return response.data.data;
+};
+
+export const getAccessLinks = async (siteId: string) => {
+  const response = await client.get<{ data: UploadAccessRequest[] }>(`/sites/${siteId}/access-links`);
+  return response.data.data;
+};
+
+export const revokeAccessLink = async (siteId: string, requestId: string) => {
+  const response = await client.post(`/sites/${siteId}/access-link/${requestId}/revoke`);
   return response.data;
 };

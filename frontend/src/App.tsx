@@ -6,6 +6,7 @@ import EmployeesPage from './pages/EmployeesPage';
 import SitesPage from './pages/SitesPage';
 import SiteDetailsPage from './pages/SiteDetailsPage';
 import UsersPage from './pages/UsersPage';
+import PublicPortalPage from './pages/PublicPortalPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import TenantGuard from './components/TenantGuard';
 import Layout from './components/Layout';
@@ -16,6 +17,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/portal/:token" element={<PublicPortalPage />} />
           
           <Route element={<ProtectedRoute />}>
             <Route element={<TenantGuard />}>
