@@ -112,3 +112,19 @@ export interface WorkCardExtraction {
   created_at: string;
   updated_at: string;
 }
+
+export interface UploadAccessRequest {
+  id: string;
+  token: string;
+  business_id: string;
+  site_id: string;
+  employee_id: string;
+  processing_month: string;
+  created_by_user_id: string | null;
+  created_at: string;
+  expires_at: string | null;
+  last_accessed_at: string | null;
+  is_active: boolean;
+  url?: string;
+  employee_name?: string;
+}

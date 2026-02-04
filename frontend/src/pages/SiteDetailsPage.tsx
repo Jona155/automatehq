@@ -10,6 +10,7 @@ import UploadWorkCardModal from '../components/UploadWorkCardModal';
 import BatchUploadModal from '../components/BatchUploadModal';
 import WorkCardReviewTab from '../components/WorkCardReviewTab';
 import MonthlySummaryTab from '../components/MonthlySummaryTab';
+import AccessLinksManager from '../components/AccessLinksManager';
 
 type TabType = 'employees' | 'review' | 'summary';
 
@@ -220,6 +221,12 @@ export default function SiteDetailsPage() {
             <div className="px-6 pt-2 pb-4 border-b border-slate-200 dark:border-slate-700">
               <h2 className="text-lg font-bold">רשימת עובדים באתר</h2>
             </div>
+
+            <AccessLinksManager
+              siteId={siteId!}
+              employees={employees}
+              isLoadingEmployees={isLoadingEmployees}
+            />
 
         {isLoadingEmployees ? (
           <div className="p-8 text-center text-slate-500">טוען רשימת עובדים...</div>

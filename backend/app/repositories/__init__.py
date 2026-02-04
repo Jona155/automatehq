@@ -29,6 +29,7 @@ from .work_card_extraction_repository import WorkCardExtractionRepository
 from .work_card_day_entry_repository import WorkCardDayEntryRepository
 from .export_run_repository import ExportRunRepository
 from .audit_event_repository import AuditEventRepository
+from .upload_access_request_repository import UploadAccessRequestRepository
 
 __all__ = [
     'BaseRepository',
@@ -42,4 +43,5 @@ __all__ = [
     'WorkCardDayEntryRepository',
     'ExportRunRepository',
     'AuditEventRepository',
+    'UploadAccessRequestRepository',
 ]

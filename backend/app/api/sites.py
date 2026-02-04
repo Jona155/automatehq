@@ -1,13 +1,15 @@
 from flask import Blueprint, request, g
 import traceback
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import secrets
 from sqlalchemy import and_, or_, func, case
 from sqlalchemy.orm import joinedload
 from ..repositories.site_repository import SiteRepository
 from ..repositories.employee_repository import EmployeeRepository
 from ..repositories.work_card_repository import WorkCardRepository
 from ..repositories.work_card_extraction_repository import WorkCardExtractionRepository
+from ..repositories.upload_access_request_repository import UploadAccessRequestRepository
 from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required
 from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
@@ -21,6 +23,7 @@ repo = SiteRepository()
 employee_repo = EmployeeRepository()
 work_card_repo = WorkCardRepository()
 extraction_repo = WorkCardExtractionRepository()
+access_repo = UploadAccessRequestRepository()
 
 @sites_bp.route('', methods=['GET'])
 @token_required
@@ -336,3 +339,93 @@ def get_hours_matrix(site_id):
         logger.exception(f"Failed to get hours matrix for site {site_id}")
         traceback.print_exc()
         return api_response(status_code=500, message="Failed to get hours matrix", error=str(e))
+
+
+@sites_bp.route('/<uuid:site_id>/access-link', methods=['POST'])
+@token_required
+def create_access_link(site_id):
+    data = request.get_json() or {}
+    employee_id = data.get('employee_id')
+    processing_month = data.get('processing_month')
+
+    if not employee_id or not processing_month:
+        return api_response(status_code=400, message="employee_id and processing_month are required", error="Bad Request")
+
+    site = repo.get_by_id(site_id)
+    if not site or site.business_id != g.business_id:
+        return api_response(status_code=404, message="Site not found", error="Not Found")
+
+    employee = employee_repo.get_by_id(employee_id)
+    if not employee or employee.business_id != g.business_id or str(employee.site_id) != str(site_id):
+        return api_response(status_code=404, message="Employee not found for this site", error="Not Found")
+    if not employee.is_active:
+        return api_response(status_code=400, message="Employee is not active", error="Bad Request")
+
+    try:
+        month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+
+    # Generate unique token
+    token = None
+    for _ in range(5):
+        candidate = secrets.token_urlsafe(32)
+        if not access_repo.token_exists(candidate):
+            token = candidate
+            break
+    if not token:
+        return api_response(status_code=500, message="Failed to generate access token", error="Server Error")
+
+    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+
+    access_request = access_repo.create(
+        token=token,
+        business_id=g.business_id,
+        site_id=site_id,
+        employee_id=employee_id,
+        processing_month=month,
+        created_by_user_id=g.current_user.id,
+        expires_at=expires_at,
+        is_active=True
+    )
+
+    url = f"{request.host_url.rstrip('/')}/portal/{token}"
+    data = model_to_dict(access_request)
+    data['url'] = url
+    data['employee_name'] = employee.full_name
+
+    return api_response(data=data, message="Access link created", status_code=201)
+
+
+@sites_bp.route('/<uuid:site_id>/access-links', methods=['GET'])
+@token_required
+def list_access_links(site_id):
+    site = repo.get_by_id(site_id)
+    if not site or site.business_id != g.business_id:
+        return api_response(status_code=404, message="Site not found", error="Not Found")
+
+    links = access_repo.list_active_for_site(site_id, g.business_id)
+    data = []
+    for link in links:
+        link_dict = model_to_dict(link)
+        employee = employee_repo.get_by_id(link.employee_id)
+        link_dict['employee_name'] = employee.full_name if employee else ''
+        link_dict['url'] = f"{request.host_url.rstrip('/')}/portal/{link.token}"
+        data.append(link_dict)
+
+    return api_response(data=data)
+
+
+@sites_bp.route('/<uuid:site_id>/access-link/<uuid:request_id>/revoke', methods=['POST'])
+@token_required
+def revoke_access_link(site_id, request_id):
+    site = repo.get_by_id(site_id)
+    if not site or site.business_id != g.business_id:
+        return api_response(status_code=404, message="Site not found", error="Not Found")
+
+    access_request = access_repo.get_by_id(request_id)
+    if not access_request or access_request.business_id != g.business_id or str(access_request.site_id) != str(site_id):
+        return api_response(status_code=404, message="Access link not found", error="Not Found")
+
+    access_repo.revoke(request_id)
+    return api_response(message="Access link revoked")
