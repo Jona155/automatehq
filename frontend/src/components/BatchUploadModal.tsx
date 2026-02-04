@@ -45,7 +45,7 @@ export default function BatchUploadModal({
   const [uploadResult, setUploadResult] = useState<{
     uploaded: number;
     failed: number;
-    errors: Array<{ filename: string; error: string }>;
+    errors: Array<{ file_name: string; error: string }>;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -276,7 +276,7 @@ export default function BatchUploadModal({
                 <div className="mt-2 text-xs text-amber-700 dark:text-amber-400 space-y-1">
                   {uploadResult.errors.map((err, i) => (
                     <div key={i}>
-                      {err.filename}: {err.error}
+                      {err.file_name}: {err.error}
                     </div>
                   ))}
                 </div>
