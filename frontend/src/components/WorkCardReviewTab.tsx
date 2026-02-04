@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { WorkCard, DayEntry, WorkCardExtraction } from '../types';
-import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, getExtraction } from '../api/workCards';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import type { WorkCard, DayEntry, WorkCardExtraction, Employee } from '../types';
+import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, getExtraction, updateWorkCard } from '../api/workCards';
+import { getEmployees } from '../api/employees';
 import MonthPicker from './MonthPicker';
 import { useToast } from '../hooks/useToast';
 import { useAuth } from '../context/AuthContext';
@@ -54,12 +55,31 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
   const [isTriggering, setIsTriggering] = useState(false);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
+  const [isAssigning, setIsAssigning] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { showToast, ToastContainer } = useToast();
   const { user } = useAuth();
+
+  // Separate cards into assigned and unassigned
+  const { assignedCards, unassignedCards } = useMemo(() => {
+    const assigned = workCards.filter(card => card.employee_id !== null);
+    const unassigned = workCards.filter(card => card.employee_id === null);
+    return { assignedCards: assigned, unassignedCards: unassigned };
+  }, [workCards]);
+
+  // Check for identity mismatch between extracted passport and assigned employee
+  const hasIdentityMismatch = useMemo(() => {
+    if (!selectedCard?.employee?.passport_id || !extraction?.extracted_passport_id) {
+      return false;
+    }
+    return selectedCard.employee.passport_id.trim() !== extraction.extracted_passport_id.trim();
+  }, [selectedCard?.employee?.passport_id, extraction?.extracted_passport_id]);
 
   // Fetch work cards when month changes
   useEffect(() => {
@@ -89,6 +109,25 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       fetchWorkCards();
     }
   }, [siteId, selectedMonth]);
+
+  // Fetch employees for assignment modal
+  useEffect(() => {
+    if (!siteId) return;
+
+    const fetchEmployees = async () => {
+      setIsLoadingEmployees(true);
+      try {
+        const employeesList = await getEmployees({ site_id: siteId, active: true });
+        setEmployees(employeesList);
+      } catch (err) {
+        console.error('Failed to fetch employees:', err);
+      } finally {
+        setIsLoadingEmployees(false);
+      }
+    };
+
+    fetchEmployees();
+  }, [siteId]);
 
   // Initialize empty day entries for the selected month
   const initializeDayEntries = useCallback((existingEntries: DayEntry[]) => {
@@ -326,6 +365,32 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     }
   };
 
+  // Assign an employee to an unassigned work card
+  const handleAssignEmployee = async (employeeId: string) => {
+    if (!selectedCard) return;
+    setIsAssigning(true);
+    try {
+      const updatedCard = await updateWorkCard(selectedCard.id, { employee_id: employeeId });
+      
+      // Find the employee to update local state
+      const employee = employees.find(e => e.id === employeeId);
+      
+      // Update local state with the assigned employee
+      const cardWithEmployee = { ...updatedCard, employee };
+      setWorkCards(prev => prev.map(c => 
+        c.id === selectedCard.id ? cardWithEmployee : c
+      ));
+      setSelectedCard(cardWithEmployee);
+      setShowAssignModal(false);
+      showToast('העובד שויך בהצלחה', 'success');
+    } catch (err) {
+      console.error('Failed to assign employee:', err);
+      showToast('שגיאה בשיוך העובד', 'error');
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
   // Check if there are unsaved changes
   const hasUnsavedChanges = dayEntries.some(e => e.isDirty);
 
@@ -366,48 +431,97 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto">
-              {workCards.map((card) => (
-                <button
-                  key={card.id}
-                  onClick={() => setSelectedCard(card)}
-                  className={`w-full px-4 py-3 text-right border-b border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
-                    selectedCard?.id === card.id
-                      ? 'bg-primary/10 border-r-4 border-r-primary'
-                      : ''
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 flex items-center justify-center font-bold text-xs uppercase shrink-0">
-                      {card.employee?.full_name
-                        ? card.employee.full_name
-                            .split(' ')
-                            .map((word) => word[0])
-                            .join('')
-                            .slice(0, 2)
-                        : '??'}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-medium text-slate-900 dark:text-white truncate">
-                        {card.employee?.full_name || 'עובד לא ידוע'}
-                      </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                          card.review_status === 'APPROVED'
-                            ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
-                            : card.review_status === 'NEEDS_REVIEW'
-                            ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
-                            : 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-400'
-                        }`}>
-                          {card.review_status === 'APPROVED' ? 'מאושר' :
-                           card.review_status === 'NEEDS_REVIEW' ? 'ממתין לסקירה' :
-                           card.review_status === 'NEEDS_ASSIGNMENT' ? 'ממתין לשיוך' :
-                           card.review_status}
-                        </span>
-                      </div>
+              {/* Unassigned Cards Section */}
+              {unassignedCards.length > 0 && (
+                <div>
+                  <div className="px-4 py-2 bg-orange-50 dark:bg-orange-900/20 border-b border-orange-200 dark:border-orange-800 sticky top-0 z-10">
+                    <div className="flex items-center gap-2 text-orange-700 dark:text-orange-400">
+                      <span className="material-symbols-outlined text-sm">warning</span>
+                      <span className="text-xs font-semibold">ממתינים לשיוך ({unassignedCards.length})</span>
                     </div>
                   </div>
-                </button>
-              ))}
+                  {unassignedCards.map((card) => (
+                    <button
+                      key={card.id}
+                      onClick={() => setSelectedCard(card)}
+                      className={`w-full px-4 py-3 text-right border-b border-orange-200 dark:border-orange-800 hover:bg-orange-50 dark:hover:bg-orange-900/30 transition-colors bg-orange-50/50 dark:bg-orange-900/10 ${
+                        selectedCard?.id === card.id
+                          ? 'bg-primary/10 border-r-4 border-r-primary'
+                          : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-600 flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                          <span className="material-symbols-outlined text-lg">help</span>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-900 dark:text-white truncate">
+                            {extraction?.extracted_employee_name || 'עובד לא מזוהה'}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-400">
+                              ממתין לשיוך
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Assigned Cards Section */}
+              {assignedCards.length > 0 && (
+                <div>
+                  {unassignedCards.length > 0 && (
+                    <div className="px-4 py-2 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
+                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">כרטיסים משויכים ({assignedCards.length})</span>
+                    </div>
+                  )}
+                  {assignedCards.map((card) => (
+                    <button
+                      key={card.id}
+                      onClick={() => setSelectedCard(card)}
+                      className={`w-full px-4 py-3 text-right border-b border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
+                        selectedCard?.id === card.id
+                          ? 'bg-primary/10 border-r-4 border-r-primary'
+                          : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                          {card.employee?.full_name
+                            ? card.employee.full_name
+                                .split(' ')
+                                .map((word) => word[0])
+                                .join('')
+                                .slice(0, 2)
+                            : '??'}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-900 dark:text-white truncate">
+                            {card.employee?.full_name || 'עובד לא ידוע'}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                              card.review_status === 'APPROVED'
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
+                                : card.review_status === 'NEEDS_REVIEW'
+                                ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
+                                : 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-400'
+                            }`}>
+                              {card.review_status === 'APPROVED' ? 'מאושר' :
+                               card.review_status === 'NEEDS_REVIEW' ? 'ממתין לסקירה' :
+                               card.review_status === 'NEEDS_ASSIGNMENT' ? 'ממתין לשיוך' :
+                               card.review_status}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -503,6 +617,49 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                       )}
                     </div>
                   </div>
+                  {/* Identity Mismatch Warning */}
+                  {hasIdentityMismatch && (
+                    <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                      <span className="material-symbols-outlined text-amber-600 dark:text-amber-400">warning</span>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                          אי-התאמה בזיהוי
+                        </p>
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                          ת.ז/דרכון בכרטיס: <strong>{extraction?.extracted_passport_id}</strong> | 
+                          ת.ז/דרכון עובד: <strong>{selectedCard.employee?.passport_id}</strong>
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Unassigned Card - Assignment Section */}
+                  {!selectedCard.employee_id && (
+                    <div className="flex items-center gap-2 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
+                      <span className="material-symbols-outlined text-orange-600 dark:text-orange-400">person_add</span>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-orange-800 dark:text-orange-300">
+                          כרטיס לא משויך לעובד
+                        </p>
+                        {extraction?.extracted_passport_id && (
+                          <p className="text-xs text-orange-700 dark:text-orange-400">
+                            ת.ז/דרכון מזוהה: <strong>{extraction.extracted_passport_id}</strong>
+                            {extraction.extracted_employee_name && (
+                              <> | שם מזוהה: <strong>{extraction.extracted_employee_name}</strong></>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => setShowAssignModal(true)}
+                        className="px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium text-sm flex items-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-sm">link</span>
+                        <span>שייך עובד</span>
+                      </button>
+                    </div>
+                  )}
+
                   {/* Row 2: Save + Approve/Reject (icon-only) */}
                   <div className="flex items-center justify-end gap-2">
                     <button
@@ -525,13 +682,15 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                     <div className="w-px h-6 bg-slate-200 dark:bg-slate-700" />
                     <button
                       onClick={handleApprove}
-                      disabled={selectedCard.review_status === 'APPROVED'}
+                      disabled={selectedCard.review_status === 'APPROVED' || !selectedCard.employee_id}
                       className={`w-9 h-9 rounded-lg transition-colors flex items-center justify-center border ${
                         selectedCard.review_status === 'APPROVED'
                           ? 'bg-green-50 text-green-600 border-green-200 cursor-default'
+                          : !selectedCard.employee_id
+                          ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
                           : 'bg-green-600 text-white hover:bg-green-700 border-transparent'
                       }`}
-                      title="אשר כרטיס"
+                      title={!selectedCard.employee_id ? 'יש לשייך עובד תחילה' : 'אשר כרטיס'}
                     >
                       <span className="material-symbols-outlined text-lg">check</span>
                     </button>
@@ -637,6 +796,97 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
             >
               <span className="material-symbols-outlined text-lg">delete</span>
               <span>דחה ומחק</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Assign Employee Modal */}
+      <Modal
+        isOpen={showAssignModal}
+        onClose={() => setShowAssignModal(false)}
+        title="שיוך עובד לכרטיס"
+        maxWidth="md"
+      >
+        <div className="space-y-4">
+          {/* Extraction Info */}
+          {extraction && (extraction.extracted_passport_id || extraction.extracted_employee_name) && (
+            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <p className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-1">
+                פרטים מזוהים מהכרטיס:
+              </p>
+              <div className="text-xs text-blue-700 dark:text-blue-400 space-y-1">
+                {extraction.extracted_employee_name && (
+                  <p>שם: <strong>{extraction.extracted_employee_name}</strong></p>
+                )}
+                {extraction.extracted_passport_id && (
+                  <p>ת.ז/דרכון: <strong>{extraction.extracted_passport_id}</strong></p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Employee List */}
+          <div className="border border-slate-200 dark:border-slate-700 rounded-lg max-h-80 overflow-y-auto">
+            {isLoadingEmployees ? (
+              <div className="p-8 text-center">
+                <span className="material-symbols-outlined text-2xl text-slate-400 animate-spin">progress_activity</span>
+              </div>
+            ) : employees.length === 0 ? (
+              <div className="p-8 text-center text-slate-500">
+                <span className="material-symbols-outlined text-3xl mb-2">person_off</span>
+                <p>לא נמצאו עובדים באתר זה</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                {employees.map((employee) => {
+                  const isMatch = extraction?.extracted_passport_id && 
+                    employee.passport_id?.trim() === extraction.extracted_passport_id.trim();
+                  return (
+                    <button
+                      key={employee.id}
+                      onClick={() => handleAssignEmployee(employee.id)}
+                      disabled={isAssigning}
+                      className={`w-full px-4 py-3 text-right hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-3 disabled:opacity-50 ${
+                        isMatch ? 'bg-green-50 dark:bg-green-900/20' : ''
+                      }`}
+                    >
+                      <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                        {employee.full_name
+                          .split(' ')
+                          .map((word) => word[0])
+                          .join('')
+                          .slice(0, 2)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-slate-900 dark:text-white truncate flex items-center gap-2">
+                          {employee.full_name}
+                          {isMatch && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400">
+                              התאמה!
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                          ת.ז/דרכון: {employee.passport_id || 'לא הוזן'}
+                        </div>
+                      </div>
+                      <span className="material-symbols-outlined text-slate-400">chevron_left</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Cancel Button */}
+          <div className="flex justify-end">
+            <button
+              onClick={() => setShowAssignModal(false)}
+              disabled={isAssigning}
+              className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors font-medium text-sm disabled:opacity-50"
+            >
+              ביטול
             </button>
           </div>
         </div>

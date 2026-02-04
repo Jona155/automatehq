@@ -157,6 +157,22 @@ def process_job(
         else:
             logger.info("No employee match found")
         
+        # Identity validation for single uploads (Case B: employee_id is already set)
+        identity_mismatch = False
+        if work_card.employee_id and extracted_passport_id:
+            # Fetch the assigned employee to compare passport IDs
+            assigned_employee = employee_repo.get_by_id(work_card.employee_id)
+            if assigned_employee and assigned_employee.passport_id:
+                if assigned_employee.passport_id.strip() != extracted_passport_id.strip():
+                    identity_mismatch = True
+                    logger.warning(
+                        f"IDENTITY MISMATCH for work card {work_card.id}: "
+                        f"Assigned employee passport '{assigned_employee.passport_id}' != "
+                        f"Extracted passport '{extracted_passport_id}'"
+                    )
+                else:
+                    logger.info(f"Identity validated: passport IDs match for employee {assigned_employee.full_name}")
+        
         # Create day entries
         day_entries_created = 0
         for entry in entries:
@@ -186,24 +202,31 @@ def process_job(
         
         logger.info(f"Created {day_entries_created} day entries")
         
-        # Update work card with matched employee (if found)
+        # Update work card with matched employee (if found and not already assigned)
         if matched_employee_id and not work_card.employee_id:
             work_card_repo.update(work_card.id, employee_id=matched_employee_id)
             logger.info(f"Updated work card with matched employee {matched_employee_id}")
         
         # Update work card review status
-        if matched_employee_id:
+        # - If employee is already assigned (single upload) -> NEEDS_REVIEW
+        # - If matched via extraction (batch upload) -> NEEDS_REVIEW
+        # - If no employee assigned and no match -> NEEDS_ASSIGNMENT
+        if work_card.employee_id or matched_employee_id:
             new_status = 'NEEDS_REVIEW'
         else:
             new_status = 'NEEDS_ASSIGNMENT'
         work_card_repo.update_review_status(work_card.id, new_status, work_card.business_id)
         
         # Mark extraction as completed
+        # Include identity_mismatch flag in normalized_result for frontend warning display
         extraction_repo.mark_completed(job_id, {
             'extracted_employee_name': extraction_result.get('extracted_employee_name'),
             'extracted_passport_id': extracted_passport_id,
             'raw_result_jsonb': raw_result,
-            'normalized_result_jsonb': {'entries': entries},
+            'normalized_result_jsonb': {
+                'entries': entries,
+                'identity_mismatch': identity_mismatch,
+            },
             'matched_employee_id': matched_employee_id,
             'match_method': match_method,
             'match_confidence': match_confidence,

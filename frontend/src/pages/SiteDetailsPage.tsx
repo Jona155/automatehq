@@ -7,6 +7,7 @@ import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import UploadWorkCardModal from '../components/UploadWorkCardModal';
+import BatchUploadModal from '../components/BatchUploadModal';
 import WorkCardReviewTab from '../components/WorkCardReviewTab';
 import MonthlySummaryTab from '../components/MonthlySummaryTab';
 
@@ -31,6 +32,7 @@ export default function SiteDetailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [batchUploadModalOpen, setBatchUploadModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('employees');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => getPreviousMonth());
@@ -167,6 +169,13 @@ export default function SiteDetailsPage() {
           <h2 className="text-[#111518] dark:text-white text-3xl font-bold">{site.site_name}</h2>
           <p className="text-[#617989] dark:text-slate-400 mt-1">קוד אתר: {site.site_code || 'לא הוגדר'}</p>
         </div>
+        <button
+          onClick={() => setBatchUploadModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium text-sm"
+        >
+          <span className="material-symbols-outlined text-lg">cloud_upload</span>
+          <span>העלאה מרובה</span>
+        </button>
       </div>
 
       {/* Tab Navigation */}
@@ -307,6 +316,17 @@ export default function SiteDetailsPage() {
           onUpload={handleUpload}
         />
       )}
+
+      {/* Batch Upload Modal */}
+      <BatchUploadModal
+        isOpen={batchUploadModalOpen}
+        onClose={() => setBatchUploadModalOpen(false)}
+        siteId={siteId!}
+        siteName={site.site_name}
+        onUploadComplete={() => {
+          showToast('הקבצים הועלו בהצלחה והועברו לעיבוד', 'success');
+        }}
+      />
     </div>
   );
 }

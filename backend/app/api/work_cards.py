@@ -403,7 +403,11 @@ def upload_single():
             image_bytes=file_data
         )
         
-        # Extraction is triggered explicitly by user via POST /work_cards/{id}/extract
+        # Automatically trigger extraction
+        extraction_repo.create(
+            work_card_id=work_card.id,
+            status='PENDING'
+        )
         
         return api_response(
             data=model_to_dict(work_card),
@@ -546,7 +550,11 @@ def upload_batch():
                     image_bytes=file_data
                 )
                 
-                # Extraction is triggered explicitly by user via POST /work_cards/{id}/extract
+                # Automatically trigger extraction
+                extraction_repo.create(
+                    work_card_id=work_card.id,
+                    status='PENDING'
+                )
                 
                 uploaded.append({
                     'filename': filename,
