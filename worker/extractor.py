@@ -16,7 +16,7 @@ from openai import OpenAI
 logger = logging.getLogger('extraction_worker.extractor')
 
 # Pipeline version for tracking
-PIPELINE_VERSION = "1.0.0"
+PIPELINE_VERSION = "1.1.0"
 
 # OpenAI configuration
 GPT_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
@@ -48,6 +48,12 @@ class WorkRow(BaseModel):
 class WorkTable(BaseModel):
     """Collection of work entries from the card."""
     entries: List[WorkRow] = Field(default_factory=list, description="List of day entries")
+    employee_name: Optional[str] = Field(None, description="Employee name if visible on card")
+    passport_id: Optional[str] = Field(None, description="Passport/ID number if visible on card")
+
+
+class HeaderInfo(BaseModel):
+    """Header metadata from the work card (full image)."""
     employee_name: Optional[str] = Field(None, description="Employee name if visible on card")
     passport_id: Optional[str] = Field(None, description="Passport/ID number if visible on card")
 
@@ -192,6 +198,58 @@ def extract_single_crop(crop_img: np.ndarray, day_range_hint: str) -> Optional[W
     return response.choices[0].message.parsed
 
 
+def extract_header_from_full_image(image_bytes: bytes) -> Optional[HeaderInfo]:
+    """
+    Extract employee name and passport/ID from the full image.
+
+    Args:
+        image_bytes: Raw image bytes
+
+    Returns:
+        HeaderInfo with employee_name/passport_id if found, else None
+    """
+    client = get_openai_client()
+
+    file_bytes = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Could not decode image for header extraction")
+
+    base64_image = encode_image_to_base64(img)
+
+    logger.debug("Sending full image to GPT-4o for header extraction")
+
+    response = client.beta.chat.completions.parse(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a data extraction AI. Extract only the employee name and "
+                    "passport/ID number from the work card image header or any visible area. "
+                    "If not visible or illegible, return null."
+                )
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Extract the employee name and passport/ID number from this work card."
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                    }
+                ]
+            }
+        ],
+        response_format=HeaderInfo
+    )
+
+    return response.choices[0].message.parsed
+
+
 def extract_data_from_crops(crop_images: List[np.ndarray]) -> Dict[str, Any]:
     """
     Extract data from multiple cropped table images.
@@ -289,15 +347,29 @@ def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
         # Phase 1: OpenCV table cropping
         logger.info("Starting image processing...")
         crops = crop_tables_from_image_bytes(image_bytes)
-        
-        # Phase 2: GPT-4o Vision extraction
+
+        # Phase 2: GPT-4o Vision extraction (tables)
         logger.info("Starting data extraction...")
         result = extract_data_from_crops(crops)
+
+        # Phase 3: GPT-4o Vision extraction (full image header)
+        header_result = None
+        try:
+            header_result = extract_header_from_full_image(image_bytes)
+        except Exception as e:
+            logger.error(f"Header extraction failed: {e}")
+
+        if header_result:
+            if header_result.employee_name:
+                result['extracted_employee_name'] = header_result.employee_name
+            if header_result.passport_id:
+                result['extracted_passport_id'] = header_result.passport_id
         
         # Add metadata
         result['raw_result'] = {
             'num_crops': len(crops),
             'entries': result.get('entries', []),
+            'header_extraction': header_result.model_dump() if header_result else None,
         }
         result['model_name'] = GPT_MODEL
         
