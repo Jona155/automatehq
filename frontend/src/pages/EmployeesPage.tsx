@@ -75,6 +75,11 @@ export default function EmployeesPage() {
     return site?.site_name || 'לא ידוע';
   };
 
+  const isResponsibleEmployee = (employee: Employee) => {
+    const site = sites.find((s) => s.id === employee.site_id);
+    return site?.responsible_employee_id === employee.id;
+  };
+
   // Filtering logic
   const filteredEmployees = useMemo(() => {
     return employees.filter((emp) => {
@@ -359,7 +364,14 @@ export default function EmployeesPage() {
                 {sortedEmployees.map((employee) => (
                   <tr key={employee.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                     <td className="px-6 py-5">
-                      <span className="text-[#111518] dark:text-white font-medium">{employee.full_name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[#111518] dark:text-white font-medium">{employee.full_name}</span>
+                        {isResponsibleEmployee(employee) && (
+                          <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-xs font-semibold">
+                            אחראי
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-5">
                       <span className="text-[#111518] dark:text-white font-medium">{employee.passport_id}</span>

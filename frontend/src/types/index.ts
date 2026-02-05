@@ -27,6 +27,7 @@ export interface Site {
   created_at: string;
   updated_at: string;
   employee_count?: number;
+  responsible_employee_id?: string | null;
 }
 
 export interface Employee {
