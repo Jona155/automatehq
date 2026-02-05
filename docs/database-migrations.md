@@ -42,6 +42,12 @@ Apply the changes to your local development database:
 
 ```bash
 flask --app backend.run db upgrade
+
+If you see **"Multiple head revisions"**, upgrade all heads (or merge them) before continuing:
+
+```bash
+flask --app backend.run db upgrade heads
+```
 ```
 
 ### 5. Verify
