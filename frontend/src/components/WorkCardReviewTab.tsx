@@ -63,6 +63,10 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
+  const [cardSearch, setCardSearch] = useState('');
+  const [listFilter, setListFilter] = useState<'all' | 'unassigned' | 'assigned'>('all');
+  const [layoutMode, setLayoutMode] = useState<'balanced' | 'focusImage' | 'focusTable'>('balanced');
+  const [showDirtyOnly, setShowDirtyOnly] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestedExtractionsRef = useRef<Set<string>>(new Set());
   const selectedCardIdRef = useRef<string | null>(null);
@@ -76,6 +80,47 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     return { assignedCards: assigned, unassignedCards: unassigned };
   }, [workCards]);
 
+  const filteredCards = useMemo(() => {
+    const search = cardSearch.trim().toLowerCase();
+
+    const matchesCard = (card: WorkCard, extractionData?: WorkCardExtraction | null) => {
+      if (!search) return true;
+      const name = card.employee?.full_name?.toLowerCase() || '';
+      const passport = card.employee?.passport_id?.toLowerCase() || '';
+      const extractedName = extractionData?.extracted_employee_name?.toLowerCase() || '';
+      const extractedPassport = extractionData?.extracted_passport_id?.toLowerCase() || '';
+      return (
+        name.includes(search) ||
+        passport.includes(search) ||
+        extractedName.includes(search) ||
+        extractedPassport.includes(search) ||
+        String(card.id).toLowerCase().includes(search)
+      );
+    };
+
+    const filteredAssigned = assignedCards.filter(card => matchesCard(card));
+    const filteredUnassigned = unassignedCards.filter(card =>
+      matchesCard(card, extractionsByCardId[card.id] ?? null)
+    );
+
+    return {
+      assigned: listFilter === 'unassigned' ? [] : filteredAssigned,
+      unassigned: listFilter === 'assigned' ? [] : filteredUnassigned,
+    };
+  }, [assignedCards, unassignedCards, extractionsByCardId, cardSearch, listFilter]);
+
+  const totalHours = useMemo(() => {
+    return dayEntries.reduce((sum, entry) => {
+      const value = parseFloat(entry.total_hours);
+      return Number.isFinite(value) ? sum + value : sum;
+    }, 0);
+  }, [dayEntries]);
+
+  const displayedEntries = useMemo(() => {
+    const rows = dayEntries.map((entry, index) => ({ entry, index }));
+    return showDirtyOnly ? rows.filter(row => row.entry.isDirty) : rows;
+  }, [dayEntries, showDirtyOnly]);
+
   // Check for identity mismatch between extracted passport and assigned employee
   const hasIdentityMismatch = useMemo(() => {
     if (!selectedCard?.employee?.passport_id || !extraction?.extracted_passport_id) {
@@ -86,6 +131,10 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
 
   useEffect(() => {
     selectedCardIdRef.current = selectedCard?.id ?? null;
+  }, [selectedCard?.id]);
+
+  useEffect(() => {
+    setShowDirtyOnly(false);
   }, [selectedCard?.id]);
 
   const fetchWorkCards = useCallback(async () => {
@@ -107,7 +156,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       requestedExtractionsRef.current = new Set();
     } catch (err) {
       console.error('Failed to fetch work cards:', err);
-      setError('????? ?????? ?????? ??????');
+      setError('שגיאה בטעינת הכרטיסים');
     } finally {
       setIsLoadingCards(false);
     }
@@ -497,6 +546,19 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   // Check if there are unsaved changes
   const hasUnsavedChanges = dayEntries.some(e => e.isDirty);
 
+  const imagePanelWidth =
+    layoutMode === 'focusImage'
+      ? 'w-full lg:w-2/3'
+      : layoutMode === 'focusTable'
+      ? 'w-full lg:w-1/3'
+      : 'w-full lg:w-1/2';
+  const tablePanelWidth =
+    layoutMode === 'focusTable'
+      ? 'w-full lg:w-2/3'
+      : layoutMode === 'focusImage'
+      ? 'w-full lg:w-1/3'
+      : 'w-full lg:w-1/2';
+
   return (
     <div className="flex flex-col h-full">
       <ToastContainer />
@@ -515,10 +577,48 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       <div className="flex flex-1 min-h-0">
         {/* Sidebar - Work Cards List */}
         <div className="w-80 border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-50 dark:bg-slate-900/50">
-          <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-            <span className="text-sm text-slate-600 dark:text-slate-400">
-              {workCards.length} כרטיסים
-            </span>
+          <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-slate-600 dark:text-slate-400">
+                {workCards.length} כרטיסים
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-500">
+                {filteredCards.assigned.length + filteredCards.unassigned.length} מוצגים
+              </span>
+            </div>
+            <div className="relative">
+              <span className="material-symbols-outlined text-base text-slate-400 absolute right-3 top-2.5">search</span>
+              <input
+                value={cardSearch}
+                onChange={(e) => setCardSearch(e.target.value)}
+                placeholder="חיפוש עובד / ת.ז / מזהה..."
+                className="w-full pr-9 pl-8 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              {cardSearch && (
+                <button
+                  onClick={() => setCardSearch("")}
+                  className="absolute left-2 top-2 text-slate-400 hover:text-slate-600"
+                  title="נקה חיפוש"
+                >
+                  <span className="material-symbols-outlined text-base">close</span>
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {(["all", "unassigned", "assigned"] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setListFilter(filter)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                    listFilter === filter
+                      ? 'bg-primary text-white border-primary'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {filter === 'all' ? 'הכל' : filter === 'unassigned' ? 'לא משויך' : 'משויך'}
+                </button>
+              ))}
+            </div>
           </div>
 
           {isLoadingCards ? (
@@ -535,15 +635,15 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
           ) : (
             <div className="flex-1 overflow-y-auto">
               {/* Unassigned Cards Section */}
-              {unassignedCards.length > 0 && (
+              {filteredCards.unassigned.length > 0 && (
                 <div>
                   <div className="px-4 py-2 bg-orange-50 dark:bg-orange-900/20 border-b border-orange-200 dark:border-orange-800 sticky top-0 z-10">
                     <div className="flex items-center gap-2 text-orange-700 dark:text-orange-400">
                       <span className="material-symbols-outlined text-sm">warning</span>
-                      <span className="text-xs font-semibold">ממתינים לשיוך ({unassignedCards.length})</span>
+                      <span className="text-xs font-semibold">ממתינים לשיוך ({filteredCards.unassigned.length})</span>
                     </div>
                   </div>
-                  {unassignedCards.map((card) => (
+                  {filteredCards.unassigned.map((card) => (
                     <button
                       key={card.id}
                       onClick={() => setSelectedCard(card)}
@@ -574,14 +674,14 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
               )}
 
               {/* Assigned Cards Section */}
-              {assignedCards.length > 0 && (
+              {filteredCards.assigned.length > 0 && (
                 <div>
-                  {unassignedCards.length > 0 && (
+                  {filteredCards.unassigned.length > 0 && (
                     <div className="px-4 py-2 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
-                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">כרטיסים משויכים ({assignedCards.length})</span>
+                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">כרטיסים משויכים ({filteredCards.assigned.length})</span>
                     </div>
                   )}
-                  {assignedCards.map((card) => (
+                  {filteredCards.assigned.map((card) => (
                     <button
                       key={card.id}
                       onClick={() => setSelectedCard(card)}
@@ -625,6 +725,12 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                   ))}
                 </div>
               )}
+              {filteredCards.assigned.length === 0 && filteredCards.unassigned.length === 0 && (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
+                  <span className="material-symbols-outlined text-4xl text-slate-300 dark:text-slate-600 mb-2">manage_search</span>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">אין תוצאות לחיפוש/סינון</p>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -638,235 +744,341 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
               <p className="text-sm text-slate-500 dark:text-slate-500">בחר כרטיס מהרשימה משמאל לצפייה ועריכה</p>
             </div>
           ) : (
-            <div className="flex-1 flex min-h-0 overflow-hidden">
-              {/* Image Panel */}
-              <div className="w-1/2 border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-100 dark:bg-slate-900">
-                <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-                  <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
-                    <span className="material-symbols-outlined text-lg">image</span>
-                    תמונת כרטיס
-                  </h4>
-                </div>
-                <div className="flex-1 overflow-auto p-4 flex items-start justify-center">
-                  {isLoadingImage ? (
-                    <div className="flex items-center justify-center h-full">
-                      <span className="material-symbols-outlined text-3xl text-slate-400 animate-spin">progress_activity</span>
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-200 flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                      {selectedCard.employee?.full_name
+                        ? selectedCard.employee.full_name
+                            .split(' ')
+                            .map((word) => word[0])
+                            .join('')
+                            .slice(0, 2)
+                        : <span className="material-symbols-outlined text-base">badge</span>}
                     </div>
-                  ) : imageUrl ? (
-                    <img
-                      src={imageUrl}
-                      alt="Work Card"
-                      className="max-w-full h-auto rounded-lg shadow-lg"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-slate-400">
-                      <span className="material-symbols-outlined text-4xl mb-2">broken_image</span>
-                      <span className="text-sm">לא ניתן לטעון את התמונה</span>
+                    <div className="min-w-0">
+                      <div className="font-semibold text-slate-900 dark:text-white truncate">
+                        {selectedCard.employee?.full_name || 'כרטיס לא משויך'}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+                        <span>מזהה: {String(selectedCard.id).slice(0, 8)}</span>
+                        {selectedCard.employee?.passport_id && (
+                          <span>ת.ז: {selectedCard.employee.passport_id}</span>
+                        )}
+                        {!selectedCard.employee?.passport_id && extraction?.extracted_passport_id && (
+                          <span>ת.ז מזוהה: {extraction.extracted_passport_id}</span>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
-              </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-3">
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                        selectedCard.review_status === 'APPROVED'
+                          ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
+                          : selectedCard.review_status === 'NEEDS_REVIEW'
+                          ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
+                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                      }`}>
+                        {selectedCard.review_status === 'APPROVED' ? 'מאושר' :
+                         selectedCard.review_status === 'NEEDS_REVIEW' ? 'ממתין לסקירה' :
+                         selectedCard.review_status === 'NEEDS_ASSIGNMENT' ? 'ממתין לשיוך' :
+                         selectedCard.review_status}
+                      </span>
+                      {hasUnsavedChanges && (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">שינויים לא נשמרו</span>
+                      )}
+                    </div>
 
-              {/* Day Entries Panel */}
-              <div className="w-1/2 flex flex-col min-h-0">
-                <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex flex-col gap-3">
-                  {/* Row 1: Title + Extraction area */}
-                  <div className="flex items-center justify-between gap-4">
-                    <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2 shrink-0">
-                      <span className="material-symbols-outlined text-lg">table_chart</span>
-                      שעות עבודה
-                    </h4>
-                    {/* Extraction controls - separate area with spacing */}
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <div className="flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 p-1 bg-white dark:bg-slate-800">
+                        <button
+                          onClick={() => setLayoutMode('focusImage')}
+                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                            layoutMode === 'focusImage' ? 'bg-primary text-white' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                          title="מיקוד תמונה"
+                        >
+                          <span className="material-symbols-outlined text-base">image</span>
+                        </button>
+                        <button
+                          onClick={() => setLayoutMode('balanced')}
+                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                            layoutMode === 'balanced' ? 'bg-primary text-white' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                          title="תצוגה מאוזנת"
+                        >
+                          <span className="material-symbols-outlined text-base">dashboard_customize</span>
+                        </button>
+                        <button
+                          onClick={() => setLayoutMode('focusTable')}
+                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                            layoutMode === 'focusTable' ? 'bg-primary text-white' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                          title="מיקוד טבלה"
+                        >
+                          <span className="material-symbols-outlined text-base">table_chart</span>
+                        </button>
+                      </div>
+
+                      {!selectedCard.employee_id && (
+                        <button
+                          onClick={() => setShowAssignModal(true)}
+                          className="px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium text-xs flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-sm">link</span>
+                          <span>שיוך עובד</span>
+                        </button>
+                      )}
+
                       <button
                         onClick={handleTriggerExtraction}
-                        disabled={isTriggering || extraction?.status === 'PENDING' || extraction?.status === 'RUNNING'}
-                        className="px-4 py-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors font-medium text-sm flex items-center gap-2 border border-purple-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                        title="חלץ נתונים מהתמונה"
+                        disabled={
+                          isTriggering ||
+                          extraction?.status === 'PENDING' ||
+                          extraction?.status === 'RUNNING' ||
+                          extraction?.status === 'DONE'
+                        }
+                        className={`px-3 py-2 rounded-lg transition-colors font-medium text-xs flex items-center gap-1 border disabled:opacity-50 disabled:cursor-not-allowed ${
+                          extraction?.status === 'DONE'
+                            ? 'bg-green-50 text-green-700 border-green-200'
+                            : 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100'
+                        }`}
+                        title={
+                          extraction?.status === 'DONE'
+                            ? 'נתונים חולצו'
+                            : 'חלץ נתונים מהתמונה'
+                        }
                       >
                         {isTriggering || extraction?.status === 'PENDING' || extraction?.status === 'RUNNING' ? (
                           <>
-                            <span className="material-symbols-outlined text-lg animate-spin">progress_activity</span>
+                            <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
                             <span>מחלץ...</span>
+                          </>
+                        ) : extraction?.status === 'DONE' ? (
+                          <>
+                            <span className="material-symbols-outlined text-base">check_circle</span>
+                            <span>חולץ</span>
                           </>
                         ) : (
                           <>
-                            <span className="material-symbols-outlined text-lg">auto_fix_high</span>
+                            <span className="material-symbols-outlined text-base">auto_fix_high</span>
                             <span>חלץ נתונים</span>
                           </>
                         )}
                       </button>
-                      {/* Extraction Status Badge - only when extraction exists */}
-                      {extraction && (
-                        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium gap-1 shrink-0 ${
-                          extraction.status === 'DONE'
-                            ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
-                            : extraction.status === 'FAILED'
-                            ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-400'
-                            : extraction.status === 'RUNNING'
-                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-400'
-                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
-                        }`}>
-                          {(extraction.status === 'PENDING' || extraction.status === 'RUNNING') && (
-                            <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
-                          )}
-                          {extraction.status === 'DONE' && <span className="material-symbols-outlined text-sm">check_circle</span>}
-                          {extraction.status === 'FAILED' && <span className="material-symbols-outlined text-sm">error</span>}
-                          {extraction.status === 'PENDING' ? 'ממתין לחילוץ' :
-                           extraction.status === 'RUNNING' ? 'מחלץ...' :
-                           extraction.status === 'DONE' ? 'חולץ' :
-                           'חילוץ נכשל'}
-                        </span>
-                      )}
+
+                      <button
+                        onClick={handleSave}
+                        disabled={isSaving || !hasUnsavedChanges}
+                        className="px-3 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium text-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        {isSaving ? (
+                          <>
+                            <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
+                            <span>שומר...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="material-symbols-outlined text-base">save</span>
+                            <span>שמור</span>
+                          </>
+                        )}
+                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleApprove}
+                          disabled={selectedCard.review_status === 'APPROVED' || !selectedCard.employee_id}
+                          className={`px-3 py-2 rounded-lg transition-colors font-medium text-xs flex items-center gap-1 border ${
+                            selectedCard.review_status === 'APPROVED'
+                              ? 'bg-green-50 text-green-600 border-green-200 cursor-default'
+                              : !selectedCard.employee_id
+                              ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                              : 'bg-green-600 text-white hover:bg-green-700 border-transparent'
+                          }`}
+                          title={!selectedCard.employee_id ? 'יש לשייך עובד תחילה' : 'אשר כרטיס'}
+                        >
+                          <span className="material-symbols-outlined text-base">check</span>
+                          <span>אשר</span>
+                        </button>
+                        <button
+                          onClick={() => setShowRejectModal(true)}
+                          className="px-3 py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors font-medium text-xs flex items-center gap-1 border border-red-200"
+                          title="דחה כרטיס (מחק)"
+                        >
+                          <span className="material-symbols-outlined text-base">close</span>
+                          <span>דחה</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  {/* Identity Mismatch Warning */}
-                  {hasIdentityMismatch && (
-                    <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-                      <span className="material-symbols-outlined text-amber-600 dark:text-amber-400">warning</span>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                          אי-התאמה בזיהוי
-                        </p>
-                        <p className="text-xs text-amber-700 dark:text-amber-400">
-                          ת.ז/דרכון בכרטיס: <strong>{extraction?.extracted_passport_id}</strong> | 
-                          ת.ז/דרכון עובד: <strong>{selectedCard.employee?.passport_id}</strong>
-                        </p>
+                </div>
+              </div>
+              <div className="flex-1 flex min-h-0 overflow-hidden flex-col lg:flex-row">
+                {/* Image Panel */}
+                <div className={`${imagePanelWidth} lg:border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-100 dark:bg-slate-900`}>
+                  <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                    <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
+                      <span className="material-symbols-outlined text-lg">image</span>
+                      תמונת כרטיס
+                    </h4>
+                  </div>
+                  <div className="flex-1 overflow-auto p-4 flex items-start justify-center">
+                    {isLoadingImage ? (
+                      <div className="flex items-center justify-center h-full">
+                        <span className="material-symbols-outlined text-3xl text-slate-400 animate-spin">progress_activity</span>
                       </div>
-                    </div>
-                  )}
-
-                  {/* Unassigned Card - Assignment Section */}
-                  {!selectedCard.employee_id && (
-                    <div className="flex items-center gap-2 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
-                      <span className="material-symbols-outlined text-orange-600 dark:text-orange-400">person_add</span>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-orange-800 dark:text-orange-300">
-                          כרטיס לא משויך לעובד
-                        </p>
-                        {extraction?.extracted_passport_id && (
-                          <p className="text-xs text-orange-700 dark:text-orange-400">
-                            ת.ז/דרכון מזוהה: <strong>{extraction.extracted_passport_id}</strong>
-                            {extraction.extracted_employee_name && (
-                              <> | שם מזוהה: <strong>{extraction.extracted_employee_name}</strong></>
-                            )}
-                          </p>
-                        )}
+                    ) : imageUrl ? (
+                      <img
+                        src={imageUrl}
+                        alt="Work Card"
+                        className="max-w-full h-auto rounded-lg shadow-lg"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                        <span className="material-symbols-outlined text-4xl mb-2">broken_image</span>
+                        <span className="text-sm">לא ניתן לטעון את התמונה</span>
                       </div>
-                      <button
-                        onClick={() => setShowAssignModal(true)}
-                        className="px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium text-sm flex items-center gap-1"
-                      >
-                        <span className="material-symbols-outlined text-sm">link</span>
-                        <span>שייך עובד</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Row 2: Save + Approve/Reject (icon-only) */}
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      onClick={handleSave}
-                      disabled={isSaving || !hasUnsavedChanges}
-                      className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    >
-                      {isSaving ? (
-                        <>
-                          <span className="material-symbols-outlined text-lg animate-spin">progress_activity</span>
-                          <span>שומר...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="material-symbols-outlined text-lg">save</span>
-                          <span>שמור</span>
-                        </>
-                      )}
-                    </button>
-                    <div className="w-px h-6 bg-slate-200 dark:bg-slate-700" />
-                    <button
-                      onClick={handleApprove}
-                      disabled={selectedCard.review_status === 'APPROVED' || !selectedCard.employee_id}
-                      className={`w-9 h-9 rounded-lg transition-colors flex items-center justify-center border ${
-                        selectedCard.review_status === 'APPROVED'
-                          ? 'bg-green-50 text-green-600 border-green-200 cursor-default'
-                          : !selectedCard.employee_id
-                          ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                          : 'bg-green-600 text-white hover:bg-green-700 border-transparent'
-                      }`}
-                      title={!selectedCard.employee_id ? 'יש לשייך עובד תחילה' : 'אשר כרטיס'}
-                    >
-                      <span className="material-symbols-outlined text-lg">check</span>
-                    </button>
-                    <button
-                      onClick={() => setShowRejectModal(true)}
-                      className="w-9 h-9 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors flex items-center justify-center border border-red-200"
-                      title="דחה כרטיס (מחק)"
-                    >
-                      <span className="material-symbols-outlined text-lg">close</span>
-                    </button>
+                    )}
                   </div>
                 </div>
 
-                {isLoadingEntries ? (
-                  <div className="flex-1 flex items-center justify-center">
-                    <span className="material-symbols-outlined text-3xl text-slate-400 animate-spin">progress_activity</span>
+                {/* Day Entries Panel */}
+                <div className={`${tablePanelWidth} flex flex-col min-h-0 border-t border-slate-200 dark:border-slate-700 lg:border-t-0`}>
+                  <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-4">
+                    <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2 shrink-0">
+                      <span className="material-symbols-outlined text-lg">table_chart</span>
+                      שעות עבודה
+                    </h4>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={showDirtyOnly}
+                          onChange={(e) => setShowDirtyOnly(e.target.checked)}
+                          className="rounded border-slate-300 text-primary focus:ring-primary/40"
+                        />
+                        שינויים בלבד
+                      </label>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-full">
+                        סה"כ {totalHours.toFixed(2)} שעות
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div className="flex-1 overflow-auto">
-                    <table className="w-full text-sm">
-                      <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800 z-10">
-                        <tr className="text-slate-600 dark:text-slate-400">
-                          <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700 w-16">יום</th>
-                          <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">כניסה</th>
-                          <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">יציאה</th>
-                          <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">סה"כ</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {dayEntries.map((entry, index) => (
-                          <tr
-                            key={entry.day_of_month}
-                            className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
-                              entry.isDirty ? 'bg-yellow-50 dark:bg-yellow-900/10' : ''
-                            }`}
-                          >
-                            <td className="px-3 py-2 text-center font-medium text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-700">
-                              {entry.day_of_month}
-                            </td>
-                            <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
-                              <input
-                                type="time"
-                                value={entry.from_time}
-                                onChange={(e) => handleEntryChange(index, 'from_time', e.target.value)}
-                                className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                              />
-                            </td>
-                            <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
-                              <input
-                                type="time"
-                                value={entry.to_time}
-                                onChange={(e) => handleEntryChange(index, 'to_time', e.target.value)}
-                                className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                              />
-                            </td>
-                            <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
-                              <input
-                                type="number"
-                                step="0.25"
-                                min="0"
-                                max="24"
-                                value={entry.total_hours}
-                                onChange={(e) => handleEntryChange(index, 'total_hours', e.target.value)}
-                                className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                                placeholder="0"
-                              />
-                            </td>
+
+                  <div className="px-4 pt-3 space-y-3">
+                    {/* Identity Mismatch Warning */}
+                    {hasIdentityMismatch && (
+                      <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                        <span className="material-symbols-outlined text-amber-600 dark:text-amber-400">warning</span>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                            אי-התאמה בזיהוי
+                          </p>
+                          <p className="text-xs text-amber-700 dark:text-amber-400">
+                            ת.ז/דרכון בכרטיס: <strong>{extraction?.extracted_passport_id}</strong> | 
+                            ת.ז/דרכון עובד: <strong>{selectedCard.employee?.passport_id}</strong>
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Unassigned Card - Assignment Section */}
+                    {!selectedCard.employee_id && (
+                      <div className="flex items-center gap-2 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
+                        <span className="material-symbols-outlined text-orange-600 dark:text-orange-400">person_add</span>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-orange-800 dark:text-orange-300">
+                            כרטיס לא משויך לעובד
+                          </p>
+                          {extraction?.extracted_passport_id && (
+                            <p className="text-xs text-orange-700 dark:text-orange-400">
+                              ת.ז/דרכון מזוהה: <strong>{extraction.extracted_passport_id}</strong>
+                              {extraction.extracted_employee_name && (
+                                <> | שם מזוהה: <strong>{extraction.extracted_employee_name}</strong></>
+                              )}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => setShowAssignModal(true)}
+                          className="px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium text-sm flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-sm">link</span>
+                          <span>שייך עובד</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {isLoadingEntries ? (
+                    <div className="flex-1 flex items-center justify-center">
+                      <span className="material-symbols-outlined text-3xl text-slate-400 animate-spin">progress_activity</span>
+                    </div>
+                  ) : displayedEntries.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
+                      <span className="material-symbols-outlined text-4xl text-slate-300 dark:text-slate-600 mb-2">table_rows</span>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">אין שורות להצגה</p>
+                    </div>
+                  ) : (
+                    <div className="flex-1 overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800 z-10">
+                          <tr className="text-slate-600 dark:text-slate-400">
+                            <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700 w-16">יום</th>
+                            <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">כניסה</th>
+                            <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">יציאה</th>
+                            <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">סה"כ</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                        </thead>
+                        <tbody>
+                          {displayedEntries.map(({ entry, index }) => (
+                            <tr
+                              key={entry.day_of_month}
+                              className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
+                                entry.isDirty ? 'bg-yellow-50 dark:bg-yellow-900/10' : ''
+                              }`}
+                            >
+                              <td className="px-3 py-2 text-center font-medium text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-700">
+                                {entry.day_of_month}
+                              </td>
+                              <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
+                                <input
+                                  type="time"
+                                  value={entry.from_time}
+                                  onChange={(e) => handleEntryChange(index, 'from_time', e.target.value)}
+                                  className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                                />
+                              </td>
+                              <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
+                                <input
+                                  type="time"
+                                  value={entry.to_time}
+                                  onChange={(e) => handleEntryChange(index, 'to_time', e.target.value)}
+                                  className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                                />
+                              </td>
+                              <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
+                                <input
+                                  type="number"
+                                  step="0.25"
+                                  min="0"
+                                  max="24"
+                                  value={entry.total_hours}
+                                  onChange={(e) => handleEntryChange(index, 'total_hours', e.target.value)}
+                                  className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                                  placeholder="0"
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
