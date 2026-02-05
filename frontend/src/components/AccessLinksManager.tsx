@@ -8,6 +8,7 @@ interface AccessLinksManagerProps {
   siteId: string;
   employees: Employee[];
   isLoadingEmployees?: boolean;
+  defaultEmployeeId?: string | null;
 }
 
 const formatMonth = (value?: string) => {
@@ -30,7 +31,12 @@ const getDefaultMonth = () => {
   return `${year}-${month}`;
 };
 
-export default function AccessLinksManager({ siteId, employees, isLoadingEmployees }: AccessLinksManagerProps) {
+export default function AccessLinksManager({
+  siteId,
+  employees,
+  isLoadingEmployees,
+  defaultEmployeeId,
+}: AccessLinksManagerProps) {
   const [links, setLinks] = useState<UploadAccessRequest[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -40,6 +46,10 @@ export default function AccessLinksManager({ siteId, employees, isLoadingEmploye
   const { showToast, ToastContainer } = useToast();
 
   const eligibleEmployees = useMemo(() => employees.filter((employee) => employee.is_active), [employees]);
+  const defaultEmployee = useMemo(() => {
+    if (!defaultEmployeeId) return null;
+    return eligibleEmployees.find((employee) => employee.id === defaultEmployeeId) || null;
+  }, [defaultEmployeeId, eligibleEmployees]);
 
   const fetchLinks = async () => {
     if (!siteId) return;
@@ -59,6 +69,13 @@ export default function AccessLinksManager({ siteId, employees, isLoadingEmploye
   useEffect(() => {
     fetchLinks();
   }, [siteId]);
+
+  useEffect(() => {
+    if (!defaultEmployee) return;
+    const hasSelected = selectedEmployeeId && eligibleEmployees.some((employee) => employee.id === selectedEmployeeId);
+    if (hasSelected) return;
+    setSelectedEmployeeId(defaultEmployee.id);
+  }, [defaultEmployee, eligibleEmployees, selectedEmployeeId]);
 
   const handleCreate = async () => {
     if (!selectedEmployeeId || !selectedMonth) return;
@@ -122,6 +139,7 @@ export default function AccessLinksManager({ siteId, employees, isLoadingEmploye
               {eligibleEmployees.map((employee) => (
                 <option key={employee.id} value={employee.id}>
                   {employee.full_name}
+                  {defaultEmployeeId === employee.id ? ' (ברירת מחדל)' : ''}
                 </option>
               ))}
             </select>

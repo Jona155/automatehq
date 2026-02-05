@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { Site, Employee } from '../types';
-import { getSite } from '../api/sites';
+import { getSite, updateSite } from '../api/sites';
 import { getEmployees } from '../api/employees';
 import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
@@ -11,6 +11,7 @@ import BatchUploadModal from '../components/BatchUploadModal';
 import WorkCardReviewTab from '../components/WorkCardReviewTab';
 import MonthlySummaryTab from '../components/MonthlySummaryTab';
 import AccessLinksManager from '../components/AccessLinksManager';
+import Modal from '../components/Modal';
 
 type TabType = 'employees' | 'review' | 'summary';
 
@@ -37,6 +38,9 @@ export default function SiteDetailsPage() {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('employees');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => getPreviousMonth());
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [responsibleEmployeeId, setResponsibleEmployeeId] = useState<string>('');
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
 
@@ -129,6 +133,30 @@ export default function SiteDetailsPage() {
     }
   };
 
+  const handleOpenSettings = () => {
+    setResponsibleEmployeeId(site?.responsible_employee_id || '');
+    setSettingsModalOpen(true);
+  };
+
+  const handleSaveSettings = async () => {
+    if (!siteId) return;
+    setIsSavingSettings(true);
+    try {
+      const payload = {
+        responsible_employee_id: responsibleEmployeeId || null,
+      };
+      const updated = await updateSite(siteId, payload);
+      setSite(updated);
+      showToast('ההגדרות נשמרו בהצלחה', 'success');
+      setSettingsModalOpen(false);
+    } catch (err: any) {
+      console.error('Failed to update site settings:', err);
+      showToast(err?.response?.data?.message || 'שגיאה בעדכון ההגדרות', 'error');
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6">
@@ -170,13 +198,23 @@ export default function SiteDetailsPage() {
           <h2 className="text-[#111518] dark:text-white text-3xl font-bold">{site.site_name}</h2>
           <p className="text-[#617989] dark:text-slate-400 mt-1">קוד אתר: {site.site_code || 'לא הוגדר'}</p>
         </div>
-        <button
-          onClick={() => setBatchUploadModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium text-sm"
-        >
-          <span className="material-symbols-outlined text-lg">cloud_upload</span>
-          <span>העלאה מרובה</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleOpenSettings}
+            className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+            title="הגדרות אתר"
+            aria-label="הגדרות אתר"
+          >
+            <span className="material-symbols-outlined text-lg">settings</span>
+          </button>
+          <button
+            onClick={() => setBatchUploadModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium text-sm"
+          >
+            <span className="material-symbols-outlined text-lg">cloud_upload</span>
+            <span>העלאה מרובה</span>
+          </button>
+        </div>
       </div>
 
       {/* Tab Navigation */}
@@ -226,6 +264,7 @@ export default function SiteDetailsPage() {
               siteId={siteId!}
               employees={employees}
               isLoadingEmployees={isLoadingEmployees}
+              defaultEmployeeId={site.responsible_employee_id || null}
             />
 
         {isLoadingEmployees ? (
@@ -269,6 +308,9 @@ export default function SiteDetailsPage() {
                             .slice(0, 2)}
                         </div>
                         <span className="font-medium">{employee.full_name}</span>
+                        {site.responsible_employee_id === employee.id && (
+                          <span className="ml-2 inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-xs font-semibold">אחראי</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
@@ -312,6 +354,52 @@ export default function SiteDetailsPage() {
           </div>
         )}
       </div>
+
+
+      {/* Site Settings Modal */}
+      <Modal
+        isOpen={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        title="הגדרות אתר"
+        maxWidth="sm"
+      >
+        <div className="flex flex-col gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">עובד אחראי</label>
+            <select
+              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              value={responsibleEmployeeId}
+              onChange={(event) => setResponsibleEmployeeId(event.target.value)}
+              disabled={isLoadingEmployees}
+            >
+              <option value="">ללא אחראי</option>
+              {employees
+                .filter((employee) => employee.is_active)
+                .map((employee) => (
+                  <option key={employee.id} value={employee.id}>
+                    {employee.full_name}
+                  </option>
+                ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">העובד האחראי יהיה ברירת המחדל ליצירת קישורי גישה להעלאת כרטיסים.</p>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setSettingsModalOpen(false)}
+              className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
+              disabled={isSavingSettings}
+            >אחראי</button>
+            <button
+              onClick={handleSaveSettings}
+              className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
+              disabled={isSavingSettings}
+            >
+              {isSavingSettings ? 'שומר...' : 'שמור'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Upload Modal */}
       {selectedEmployee && (

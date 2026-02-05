@@ -1,4 +1,5 @@
 from flask import Blueprint, request, g
+import uuid
 import traceback
 import logging
 from datetime import datetime, timedelta, timezone
@@ -119,6 +120,24 @@ def update_site(site_id):
         
         # Don't allow changing business_id
         data.pop('business_id', None)
+
+        if 'responsible_employee_id' in data:
+            responsible_employee_id = data.get('responsible_employee_id')
+            if not responsible_employee_id:
+                data['responsible_employee_id'] = None
+            else:
+                try:
+                    responsible_employee_uuid = uuid.UUID(str(responsible_employee_id))
+                except ValueError:
+                    return api_response(status_code=400, message="Invalid responsible_employee_id format", error="Bad Request")
+
+                employee = employee_repo.get_by_id(responsible_employee_uuid)
+                if not employee or employee.business_id != g.business_id or str(employee.site_id) != str(site_id):
+                    return api_response(status_code=404, message="Responsible employee not found for this site", error="Not Found")
+                if not employee.is_active:
+                    return api_response(status_code=400, message="Responsible employee is not active", error="Bad Request")
+
+                data['responsible_employee_id'] = responsible_employee_uuid
         
         updated_site = repo.update(site_id, **data)
         if not updated_site:
