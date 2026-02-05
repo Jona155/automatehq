@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Worker Extraction Debugger</title>
+    <style>
+        :root {
+            --bg: #f6f7fb;
+            --panel: #ffffff;
+            --ink: #1f2937;
+            --muted: #6b7280;
+            --accent: #0f766e;
+            --border: #e5e7eb;
+        }
+        body {
+            margin: 0;
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--ink);
+        }
+        .wrap {
+            max-width: 1100px;
+            margin: 24px auto;
+            padding: 0 20px 40px;
+        }
+        .header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+        .header p {
+            margin: 6px 0 0;
+            color: var(--muted);
+        }
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            margin-top: 16px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        }
+        .upload {
+            border: 2px dashed var(--border);
+            border-radius: 10px;
+            padding: 22px;
+            text-align: center;
+            cursor: pointer;
+            transition: 0.2s;
+            background: #fafafa;
+        }
+        .upload:hover {
+            border-color: var(--accent);
+            background: #f0fdf9;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 12px;
+        }
+        .image-box img {
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            display: block;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: #e0f2f1;
+            color: #0f766e;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        pre {
+            background: #0b1020;
+            color: #d1e0ff;
+            padding: 12px;
+            border-radius: 8px;
+            overflow: auto;
+            max-height: 380px;
+            font-size: 12px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid var(--border);
+            padding: 8px;
+            text-align: center;
+        }
+        th {
+            background: #0f766e;
+            color: white;
+        }
+        .muted {
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .loader {
+            display: none;
+            margin-top: 10px;
+            color: var(--accent);
+            font-weight: 600;
+        }
+        .meta {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+        .meta .item {
+            background: #ecfeff;
+            border: 1px solid #cffafe;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            color: #0e7490;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="header">
+            <div>
+                <h1>Worker Extraction Debugger</h1>
+                <p>Runs the actual worker extractor on a single image.</p>
+            </div>
+            <span class="badge">/debug</span>
+        </div>
+
+        <div class="panel">
+            <div class="upload" onclick="document.getElementById('fileInput').click()">
+                <strong>Click to Upload Image</strong>
+                <div class="muted">or drag and drop a file into this box</div>
+                <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleFile(this.files[0])">
+            </div>
+            <div id="loader" class="loader">Processing image (crop + extract)...</div>
+        </div>
+
+        <div id="results" style="display:none;">
+            <div class="panel">
+                <h2>Original Image</h2>
+                <div class="image-box">
+                    <img id="originalPreview" alt="Original image preview">
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>Metadata</h2>
+                <div class="meta">
+                    <div class="item" id="modelName">Model: -</div>
+                    <div class="item" id="pipelineVersion">Pipeline: -</div>
+                    <div class="item" id="employeeName">Name: -</div>
+                    <div class="item" id="passportId">Passport: -</div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>Cropped Tables</h2>
+                <div id="cropsGrid" class="grid"></div>
+            </div>
+
+            <div class="panel">
+                <h2>Extracted Rows</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Day</th>
+                            <th>Start Time</th>
+                            <th>End Time</th>
+                            <th>Total Hours</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rowsBody"></tbody>
+                </table>
+                <div class="muted" id="rowsNote"></div>
+            </div>
+
+            <div class="panel">
+                <h2>Raw JSON Response</h2>
+                <pre id="rawJson"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function handleFile(file) {
+            if (!file) return;
+
+            document.getElementById('loader').style.display = 'block';
+            document.getElementById('results').style.display = 'none';
+
+            const reader = new FileReader();
+            reader.onload = () => {
+                document.getElementById('originalPreview').src = reader.result;
+            };
+            reader.readAsDataURL(file);
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/process', { method: 'POST', body: formData });
+                const result = await response.json();
+
+                if (result.error) {
+                    alert("Error: " + result.error);
+                    return;
+                }
+
+                renderMeta(result);
+                renderCrops(result.crops || []);
+                renderRows(result.data || []);
+                renderRaw(result);
+                document.getElementById('results').style.display = 'block';
+            } catch (err) {
+                console.error(err);
+                alert("Processing failed. Check server logs for details.");
+            } finally {
+                document.getElementById('loader').style.display = 'none';
+            }
+        }
+
+        function renderMeta(result) {
+            document.getElementById('modelName').textContent = `Model: ${result.model_name || '-'}`;
+            document.getElementById('pipelineVersion').textContent = `Pipeline: ${result.pipeline_version || '-'}`;
+            document.getElementById('employeeName').textContent = `Name: ${result.extracted_employee_name || '-'}`;
+            document.getElementById('passportId').textContent = `Passport: ${result.extracted_passport_id || '-'}`;
+        }
+
+        function renderCrops(crops) {
+            const grid = document.getElementById('cropsGrid');
+            grid.innerHTML = '';
+            if (!crops.length) {
+                grid.innerHTML = '<div class="muted">No crops returned.</div>';
+                return;
+            }
+            crops.forEach((src, idx) => {
+                const box = document.createElement('div');
+                box.className = 'image-box';
+                box.innerHTML = `<div class="muted">Crop ${idx + 1}</div><img src="${src}" alt="Crop ${idx + 1}">`;
+                grid.appendChild(box);
+            });
+        }
+
+        function renderRows(rows) {
+            const body = document.getElementById('rowsBody');
+            const note = document.getElementById('rowsNote');
+            body.innerHTML = '';
+            if (!rows.length) {
+                note.textContent = 'No rows extracted.';
+                return;
+            }
+            note.textContent = `Extracted ${rows.length} row(s).`;
+            rows.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${row.day ?? ''}</td>
+                    <td>${row.start_time ?? ''}</td>
+                    <td>${row.end_time ?? ''}</td>
+                    <td>${row.total_hours ?? ''}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        function renderRaw(result) {
+            const pre = document.getElementById('rawJson');
+            pre.textContent = JSON.stringify(result, null, 2);
+        }
+    </script>
+</body>
+</html>

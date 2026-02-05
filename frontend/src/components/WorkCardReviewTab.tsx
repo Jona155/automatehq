@@ -58,11 +58,14 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
+  const [extractionsByCardId, setExtractionsByCardId] = useState<Record<string, WorkCardExtraction | null>>({});
   const [isTriggering, setIsTriggering] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const requestedExtractionsRef = useRef<Set<string>>(new Set());
+  const selectedCardIdRef = useRef<string | null>(null);
   const { showToast, ToastContainer } = useToast();
   const { user } = useAuth();
 
@@ -81,34 +84,74 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     return selectedCard.employee.passport_id.trim() !== extraction.extracted_passport_id.trim();
   }, [selectedCard?.employee?.passport_id, extraction?.extracted_passport_id]);
 
+  useEffect(() => {
+    selectedCardIdRef.current = selectedCard?.id ?? null;
+  }, [selectedCard?.id]);
+
+  const fetchWorkCards = useCallback(async () => {
+    setIsLoadingCards(true);
+    setError(null);
+    try {
+      const cards = await getWorkCards({
+        site_id: siteId,
+        processing_month: selectedMonth,
+        include_employee: true,
+      });
+      setWorkCards(cards);
+      // Clear selection when month changes
+      setSelectedCard(null);
+      setImageUrl(null);
+      setDayEntries([]);
+      setExtraction(null);
+      setExtractionsByCardId({});
+      requestedExtractionsRef.current = new Set();
+    } catch (err) {
+      console.error('Failed to fetch work cards:', err);
+      setError('????? ?????? ?????? ??????');
+    } finally {
+      setIsLoadingCards(false);
+    }
+  }, [siteId, selectedMonth]);
+
   // Fetch work cards when month changes
   useEffect(() => {
-    const fetchWorkCards = async () => {
-      setIsLoadingCards(true);
-      setError(null);
-      try {
-        const cards = await getWorkCards({
-          site_id: siteId,
-          processing_month: selectedMonth,
-          include_employee: true,
-        });
-        setWorkCards(cards);
-        // Clear selection when month changes
-        setSelectedCard(null);
-        setImageUrl(null);
-        setDayEntries([]);
-      } catch (err) {
-        console.error('Failed to fetch work cards:', err);
-        setError('שגיאה בטעינת כרטיסי העבודה');
-      } finally {
-        setIsLoadingCards(false);
-      }
-    };
-
     if (siteId && selectedMonth) {
       fetchWorkCards();
     }
-  }, [siteId, selectedMonth]);
+  }, [siteId, selectedMonth, fetchWorkCards]);
+
+  // Preload extraction info per card so the sidebar doesn't show "mixed" data
+  useEffect(() => {
+    if (!unassignedCards.length) return;
+
+    let cancelled = false;
+
+    const idsToFetch = unassignedCards
+      .map(card => card.id)
+      .filter(id => !(id in extractionsByCardId) && !requestedExtractionsRef.current.has(id));
+
+    if (!idsToFetch.length) return;
+
+    idsToFetch.forEach(id => requestedExtractionsRef.current.add(id));
+
+    (async () => {
+      const results = await Promise.allSettled(idsToFetch.map(id => getExtraction(id)));
+      if (cancelled) return;
+
+      setExtractionsByCardId(prev => {
+        const next = { ...prev };
+        results.forEach((res, idx) => {
+          const cardId = idsToFetch[idx];
+          next[cardId] = res.status === 'fulfilled' ? res.value : null;
+        });
+        return next;
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [unassignedCards, extractionsByCardId]);
 
   // Fetch employees for assignment modal
   useEffect(() => {
@@ -152,51 +195,58 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     setDayEntries(rows);
   }, [selectedMonth]);
 
-  // Fetch image and day entries when card is selected
+  // Revoke object URLs to avoid leaking memory when switching cards
   useEffect(() => {
-    if (!selectedCard) return;
-
-    // Cleanup previous image URL
-    if (imageUrl) {
-      URL.revokeObjectURL(imageUrl);
-      setImageUrl(null);
-    }
-
-    const fetchCardDetails = async () => {
-      setIsLoadingImage(true);
-      setIsLoadingEntries(true);
-
-      // Fetch image and entries in parallel
-      try {
-        const [blob, entries] = await Promise.all([
-          getWorkCardFile(selectedCard.id),
-          getDayEntries(selectedCard.id),
-        ]);
-
-        // Create image URL
-        const url = URL.createObjectURL(blob);
-        setImageUrl(url);
-
-        // Initialize day entries
-        initializeDayEntries(entries);
-      } catch (err) {
-        console.error('Failed to fetch card details:', err);
-        showToast('שגיאה בטעינת פרטי הכרטיס', 'error');
-      } finally {
-        setIsLoadingImage(false);
-        setIsLoadingEntries(false);
-      }
-    };
-
-    fetchCardDetails();
-
-    // Cleanup on unmount or card change
     return () => {
       if (imageUrl) {
         URL.revokeObjectURL(imageUrl);
       }
     };
-  }, [selectedCard?.id]);
+  }, [imageUrl]);
+
+  // Fetch image and day entries when card is selected
+  useEffect(() => {
+    if (!selectedCard) return;
+
+    let cancelled = false;
+    const cardId = selectedCard.id;
+
+    // Clear previous UI while loading the next card
+    setImageUrl(null);
+
+    const fetchCardDetails = async () => {
+      setIsLoadingImage(true);
+      setIsLoadingEntries(true);
+
+      try {
+        const [blob, entries] = await Promise.all([
+          getWorkCardFile(cardId),
+          getDayEntries(cardId),
+        ]);
+
+        if (cancelled || selectedCardIdRef.current !== cardId) return;
+
+        const url = URL.createObjectURL(blob);
+        setImageUrl(url);
+
+        initializeDayEntries(entries);
+      } catch (err) {
+        console.error('Failed to fetch card details:', err);
+        showToast('שגיאה בטעינת פרטי הכרטיס', 'error');
+      } finally {
+        if (!cancelled && selectedCardIdRef.current === cardId) {
+          setIsLoadingImage(false);
+          setIsLoadingEntries(false);
+        }
+      }
+    };
+
+    fetchCardDetails();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCard?.id, initializeDayEntries, showToast]);
 
   // Fetch extraction status when card is selected
   useEffect(() => {
@@ -205,17 +255,31 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       return;
     }
 
+    let cancelled = false;
+    const cardId = selectedCard.id;
+
+    // Clear previous card extraction immediately to avoid UI mixing between cards
+    setExtraction(null);
+
     const fetchExtraction = async () => {
       try {
-        const extractionData = await getExtraction(selectedCard.id);
+        const extractionData = await getExtraction(cardId);
+        if (cancelled || selectedCardIdRef.current !== cardId) return;
         setExtraction(extractionData);
+        setExtractionsByCardId(prev => ({ ...prev, [cardId]: extractionData }));
       } catch {
+        if (cancelled || selectedCardIdRef.current !== cardId) return;
         // No extraction found - that's OK
         setExtraction(null);
+        setExtractionsByCardId(prev => ({ ...prev, [cardId]: null }));
       }
     };
 
     fetchExtraction();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedCard?.id]);
 
   // Poll extraction status when PENDING or RUNNING
@@ -227,25 +291,62 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     }
 
     // Start polling if extraction is in progress
-    if (extraction && selectedCard && (extraction.status === 'PENDING' || extraction.status === 'RUNNING')) {
-      pollingRef.current = setInterval(async () => {
-        try {
-          const extractionData = await getExtraction(selectedCard.id);
-          setExtraction(extractionData);
-
-          // If extraction completed, refresh day entries
-          if (extractionData.status === 'DONE') {
-            const entries = await getDayEntries(selectedCard.id);
-            initializeDayEntries(entries);
-            showToast('חילוץ הנתונים הסתיים בהצלחה', 'success');
-          } else if (extractionData.status === 'FAILED') {
-            showToast(`חילוץ נכשל: ${extractionData.last_error || 'שגיאה לא ידועה'}`, 'error');
-          }
-        } catch (err) {
-          console.error('Failed to poll extraction status:', err);
-        }
-      }, 3000); // Poll every 3 seconds
+    if (!extraction || !selectedCard || (extraction.status !== 'PENDING' && extraction.status !== 'RUNNING')) {
+      return;
     }
+
+    const cardId = selectedCard.id;
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const extractionData = await getExtraction(cardId);
+
+        // If the user switched cards while we were polling, ignore these results
+        if (selectedCardIdRef.current !== cardId) return;
+
+        setExtraction(extractionData);
+        setExtractionsByCardId(prev => ({ ...prev, [cardId]: extractionData }));
+
+        // If extraction completed, refresh day entries
+        if (extractionData.status === 'DONE') {
+          // Stop polling immediately to avoid duplicate toasts/updates
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+
+          const entries = await getDayEntries(cardId);
+          if (selectedCardIdRef.current !== cardId) return;
+          initializeDayEntries(entries);
+
+          // Refresh cards to reflect auto-assignment after extraction
+          try {
+            const cards = await getWorkCards({
+              site_id: siteId,
+              processing_month: selectedMonth,
+              include_employee: true,
+            });
+            if (selectedCardIdRef.current !== cardId) return;
+            setWorkCards(cards);
+            const refreshed = cards.find(c => c.id === cardId) || null;
+            if (refreshed) {
+              setSelectedCard(prev => (prev?.id === cardId ? refreshed : prev));
+            }
+          } catch (refreshErr) {
+            console.error('Failed to refresh work cards after extraction:', refreshErr);
+          }
+            showToast('חילוץ הנתונים הסתיים בהצלחה', 'success');
+        } else if (extractionData.status === 'FAILED') {
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+            showToast(`חילוץ נכשל: ${extractionData.last_error || 'שגיאה לא ידועה'}`, 'error');
+        }
+      } catch (err) {
+        console.error('Failed to poll extraction status:', err);
+      }
+    }, 3000); // Poll every 3 seconds
 
     return () => {
       if (pollingRef.current) {
@@ -253,7 +354,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
         pollingRef.current = null;
       }
     };
-  }, [extraction?.status, selectedCard?.id, initializeDayEntries, showToast]);
+  }, [extraction?.status, selectedCard?.id, initializeDayEntries, showToast, siteId, selectedMonth]);
 
   // Trigger extraction
   const handleTriggerExtraction = async () => {
@@ -261,8 +362,10 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
 
     setIsTriggering(true);
     try {
-      const extractionData = await triggerExtraction(selectedCard.id);
+      const cardId = selectedCard.id;
+      const extractionData = await triggerExtraction(cardId);
       setExtraction(extractionData);
+      setExtractionsByCardId(prev => ({ ...prev, [cardId]: extractionData }));
       showToast('חילוץ נתונים הופעל', 'info');
     } catch (err) {
       console.error('Failed to trigger extraction:', err);
@@ -456,7 +559,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                         </div>
                         <div className="min-w-0">
                           <div className="font-medium text-slate-900 dark:text-white truncate">
-                            {extraction?.extracted_employee_name || 'עובד לא מזוהה'}
+                            {extractionsByCardId[card.id]?.extracted_employee_name || 'עובד לא מזוהה'}
                           </div>
                           <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
                             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-400">

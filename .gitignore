@@ -34,3 +34,7 @@ mocks/
 
 #poc files
 poc-worker/
+
+#debug app
+.\worker\templates
+worker\debug_app
