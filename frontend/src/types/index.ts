@@ -128,3 +128,28 @@ export interface UploadAccessRequest {
   url?: string;
   employee_name?: string;
 }
+
+export interface DashboardSummary {
+  month: string;
+  generated_at: string;
+  metrics: {
+    sites: number;
+    employees: number;
+    work_cards: number;
+  };
+  sites_table: Array<{
+    site_id: string;
+    site_name: string;
+    employee_count: number;
+  }>;
+  work_card_status: Array<{
+    status: string;
+    count: number;
+  }>;
+  trends: {
+    months: string[];
+    employees: number[];
+    sites: number[];
+    work_cards: number[];
+  };
+}
