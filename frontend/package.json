@@ -20,6 +20,7 @@
     "autoprefixer": "^10.4.23",
     "axios": "^1.13.3",
     "postcss": "^8.5.6",
+    "recharts": "^2.12.7",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-router-dom": "^7.13.0",
