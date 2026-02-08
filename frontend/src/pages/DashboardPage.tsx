@@ -13,6 +13,7 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { getDashboardSummary } from '../api/dashboard';
+import MonthPicker from '../components/MonthPicker';
 import type { DashboardSummary } from '../types';
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -132,17 +133,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex flex-col gap-2 md:items-end">
           <label className="text-xs text-slate-500">בחר חודש</label>
-          <select
-            className="min-w-[210px] px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1a2a35] text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
-            value={selectedMonth}
-            onChange={(event) => setSelectedMonth(event.target.value)}
-          >
-            {monthOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <MonthPicker value={selectedMonth} onChange={setSelectedMonth} storageKey="dashboard_month" />
           {lastUpdated && (
             <span className="text-[11px] text-slate-400">עודכן לאחרונה: {lastUpdated}</span>
           )}
