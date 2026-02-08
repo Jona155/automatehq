@@ -136,7 +136,7 @@ def delete_employee(employee_id):
         return api_response(status_code=404, message="Employee not found", error="Not Found")
     
     try:
-        success = repo.deactivate(employee_id)  # Soft delete via deactivation
+        success = repo.deactivate(employee_id, business_id=g.business_id)  # Soft delete via deactivation
         if not success:
             return api_response(status_code=404, message="Employee not found", error="Not Found")
             
