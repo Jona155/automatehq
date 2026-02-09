@@ -86,6 +86,10 @@ export default function Sidebar() {
               <span className="material-symbols-outlined text-[20px] shrink-0">person</span>
               {!collapsed && <span>משתמשים</span>}
             </NavLink>
+            <NavLink to={`${base}/employee-imports`} className={linkClass} title={collapsed ? 'עדכון עובדים ואתרים' : undefined}>
+              <span className="material-symbols-outlined text-[20px] shrink-0">file_upload</span>
+              {!collapsed && <span>עדכון עובדים ואתרים</span>}
+            </NavLink>
           </div>
         )}
       </nav>

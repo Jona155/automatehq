@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 employees_bp = Blueprint('employees', __name__, url_prefix='/api/employees')
 repo = EmployeeRepository()
 
+EMPLOYEE_STATUS_VALUES = {
+    'ACTIVE',
+    'REPORTED_IN_SPARK',
+    'REPORTED_RETURNED_FROM_ESCAPE'
+}
+
 @employees_bp.route('', methods=['GET'])
 @token_required
 def get_employees():
@@ -65,14 +71,15 @@ def create_employee():
             return api_response(status_code=400, message="Full name is required", error="Bad Request")
         if not data.get('passport_id'):
             return api_response(status_code=400, message="Passport ID is required", error="Bad Request")
-        if not data.get('phone_number'):
-            return api_response(status_code=400, message="Phone number is required", error="Bad Request")
-        if not data.get('site_id'):
-            return api_response(status_code=400, message="Site is required", error="Bad Request")
+        # phone_number is optional
+        # site_id is optional
 
-        # Check passport uniqueness (globally unique)
-        if repo.get_by_passport(data['passport_id']):
+        # Check passport uniqueness (scoped to business)
+        if repo.get_by_passport(data['passport_id'], business_id=g.business_id):
             return api_response(status_code=409, message="Employee with this passport ID already exists", error="Conflict")
+
+        if data.get('status') and data['status'] not in EMPLOYEE_STATUS_VALUES:
+            return api_response(status_code=400, message="Invalid status value", error="Bad Request")
 
         # Inject business_id from context
         data['business_id'] = g.business_id
@@ -112,11 +119,14 @@ def update_employee(employee_id):
         data.pop('business_id', None)
         data.pop('id', None)
         
-        # Check passport uniqueness (globally unique) if changed
+        # Check passport uniqueness (scoped to business) if changed
         if data.get('passport_id'):
-            existing = repo.get_by_passport(data['passport_id'])
+            existing = repo.get_by_passport(data['passport_id'], business_id=g.business_id)
             if existing and str(existing.id) != str(employee_id):
                 return api_response(status_code=409, message="Employee with this passport ID already exists", error="Conflict")
+
+        if data.get('status') and data['status'] not in EMPLOYEE_STATUS_VALUES:
+            return api_response(status_code=400, message="Invalid status value", error="Bad Request")
 
         updated_employee = repo.update(employee_id, **data)
             

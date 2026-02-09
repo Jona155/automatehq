@@ -30,6 +30,8 @@ export interface Site {
   responsible_employee_id?: string | null;
 }
 
+export type EmployeeStatus = 'ACTIVE' | 'REPORTED_IN_SPARK' | 'REPORTED_RETURNED_FROM_ESCAPE';
+
 export interface Employee {
   id: string;
   business_id: string;
@@ -37,11 +39,42 @@ export interface Employee {
   full_name: string;
   passport_id: string;
   phone_number: string;
+  status?: EmployeeStatus | null;
   external_employee_id?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
   site?: Site;
+}
+
+export interface EmployeeImportRow {
+  row_number: number | null;
+  passport_id: string | null;
+  full_name: string | null;
+  phone_number: string | null;
+  site_name: string | null;
+  site_id: string | null;
+  status_raw: string | null;
+  status: EmployeeStatus | null;
+  action: 'create' | 'update' | 'no_change' | 'error';
+  changes: Array<{ field: string; from: string | null; to: string | null }>;
+  errors: Array<string | { code: string; details?: any }>;
+  warnings: Array<string | { code: string; details?: any }>;
+  current?: {
+    full_name: string | null;
+    phone_number: string | null;
+    site_id: string | null;
+    site_name: string | null;
+    status: EmployeeStatus | null;
+  } | null;
+}
+
+export interface EmployeeImportSummary {
+  create: number;
+  update: number;
+  no_change: number;
+  error: number;
+  total: number;
 }
 
 export interface AuthResponse {

@@ -65,6 +65,18 @@ class SiteRepository(BaseRepository[Site]):
         if business_id:
             query = query.filter_by(business_id=business_id)
         return query.all()
+
+    def get_all_for_business(self, business_id: UUID) -> List[Site]:
+        """
+        Get all sites for a business.
+
+        Args:
+            business_id: The business UUID
+
+        Returns:
+            List of Site instances
+        """
+        return self.session.query(Site).filter_by(business_id=business_id).all()
     
     def get_with_employee_count(self, business_id: Optional[UUID] = None) -> List[Dict[str, Any]]:
         """
