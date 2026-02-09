@@ -33,10 +33,19 @@ class Employee(db.Model):
 
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     business_id = db.Column(UUID(as_uuid=True), db.ForeignKey('businesses.id'), nullable=False)
-    site_id = db.Column(UUID(as_uuid=True), db.ForeignKey('sites.id'), nullable=False)
+    site_id = db.Column(UUID(as_uuid=True), db.ForeignKey('sites.id'), nullable=True)
     full_name = db.Column(db.Text, nullable=False)
     passport_id = db.Column(db.Text, nullable=True)
-    phone_number = db.Column(db.Text, nullable=False)
+    phone_number = db.Column(db.Text, nullable=True)
+    status = db.Column(
+        db.Enum(
+            'ACTIVE',
+            'REPORTED_IN_SPARK',
+            'REPORTED_RETURNED_FROM_ESCAPE',
+            name='employee_status_enum'
+        ),
+        nullable=True
+    )
     external_employee_id = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)

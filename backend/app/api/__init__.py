@@ -7,6 +7,7 @@ from .work_cards import work_cards_bp
 from .auth import auth_bp
 from .public_portal import public_portal_bp
 from .dashboard import dashboard_bp
+from .employee_imports import employee_imports_bp
 
 def register_blueprints(app: Flask):
     """Register all API blueprints."""
@@ -18,3 +19,4 @@ def register_blueprints(app: Flask):
     app.register_blueprint(auth_bp)
     app.register_blueprint(public_portal_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(employee_imports_bp)

@@ -43,6 +43,24 @@ class EmployeeRepository(BaseRepository[Employee]):
         if business_id:
             query = query.filter_by(business_id=business_id)
         return query.first()
+
+    def get_by_passports(self, passports: List[str], business_id: UUID) -> List[Employee]:
+        """
+        Get employees by a list of passport IDs scoped to a business.
+
+        Args:
+            passports: List of passport IDs
+            business_id: The business UUID
+
+        Returns:
+            List of Employee instances
+        """
+        if not passports:
+            return []
+        return self.session.query(Employee).filter(
+            Employee.passport_id.in_(passports),
+            Employee.business_id == business_id
+        ).all()
     
     def get_by_external_id(self, external_id: str, business_id: UUID) -> Optional[Employee]:
         """
