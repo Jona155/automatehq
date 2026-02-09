@@ -49,7 +49,7 @@ export default function Modal({ isOpen, onClose, title, children, maxWidth = 'md
       <div className="absolute inset-0" onClick={onClose} />
 
       {/* Modal */}
-      <div className={`relative bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full ${maxWidthClasses[maxWidth]} overflow-hidden`}>
+      <div className={`relative bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full ${maxWidthClasses[maxWidth]} max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col`}>
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
           <h2 className="text-xl font-bold text-slate-900 dark:text-white">{title}</h2>
@@ -63,7 +63,7 @@ export default function Modal({ isOpen, onClose, title, children, maxWidth = 'md
         </div>
 
         {/* Content */}
-        <div className="p-6">
+        <div className="p-6 overflow-y-auto">
           {children}
         </div>
       </div>
