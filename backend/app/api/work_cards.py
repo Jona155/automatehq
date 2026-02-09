@@ -1,7 +1,11 @@
 from flask import Blueprint, request, g, send_file
 from datetime import datetime, time
 from werkzeug.utils import secure_filename
-from io import BytesIO
+from io import BytesIO, StringIO
+import csv
+import zipfile
+import unicodedata
+from uuid import UUID
 import re
 from ..repositories.work_card_repository import WorkCardRepository
 from ..repositories.work_card_file_repository import WorkCardFileRepository
@@ -9,6 +13,8 @@ from ..repositories.work_card_extraction_repository import WorkCardExtractionRep
 from ..repositories.work_card_day_entry_repository import WorkCardDayEntryRepository
 from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required
+from ..extensions import db
+from ..models.sites import Site
 
 work_cards_bp = Blueprint('work_cards', __name__, url_prefix='/api/work_cards')
 repo = WorkCardRepository()
@@ -195,6 +201,178 @@ def get_work_card_file(card_id):
         )
     except Exception as e:
         return api_response(status_code=500, message="Failed to retrieve file", error=str(e))
+
+@work_cards_bp.route('/export', methods=['GET'])
+@token_required
+def export_work_cards():
+    """Export work cards for a site and month as a ZIP file."""
+    site_id = request.args.get('site_id')
+    month_str = request.args.get('month') # YYYY-MM-DD
+    status_str = request.args.get('status')
+    employee_ids_str = request.args.get('employee_ids')
+    include_unassigned = request.args.get('include_unassigned', 'true').lower() == 'true'
+    include_metadata = request.args.get('include_metadata', 'true').lower() == 'true'
+    include_day_entries = request.args.get('include_day_entries', 'false').lower() == 'true'
+
+    if not site_id or not month_str:
+        return api_response(status_code=400, message="site_id and month are required", error="Bad Request")
+
+    try:
+        month = datetime.strptime(month_str, '%Y-%m-%d').date()
+    except ValueError:
+        return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
+
+    def parse_list(value: str) -> list:
+        if not value:
+            return []
+        return [item.strip() for item in value.split(',') if item.strip()]
+
+    statuses = parse_list(status_str)
+    employee_ids = parse_list(employee_ids_str)
+
+    # Convert to UUIDs where possible
+    parsed_employee_ids = []
+    for emp_id in employee_ids:
+        try:
+            parsed_employee_ids.append(UUID(emp_id))
+        except ValueError:
+            return api_response(status_code=400, message="Invalid employee_id format", error="Bad Request")
+
+    cards = repo.get_for_export(
+        site_id=site_id,
+        month=month,
+        business_id=g.business_id,
+        statuses=statuses if statuses else None,
+        employee_ids=parsed_employee_ids if parsed_employee_ids else None,
+        include_unassigned=include_unassigned,
+        include_employee=True,
+        include_day_entries=include_day_entries
+    )
+
+    def safe_label(value: str) -> str:
+        if not value:
+            return ''
+        # Normalize and keep unicode letters/numbers, replace the rest with underscore
+        normalized = unicodedata.normalize('NFKC', value)
+        cleaned = []
+        for ch in normalized:
+            cat = unicodedata.category(ch)
+            if cat[0] in {'L', 'N'}:
+                cleaned.append(ch)
+            else:
+                cleaned.append('_')
+        label = ''.join(cleaned).strip('_')
+        label = '_'.join(filter(None, label.split('_')))
+        return label
+
+    site = db.session.query(Site).filter_by(id=site_id, business_id=g.business_id).first()
+    site_label = safe_label(site.site_name) if site else str(site_id)
+    folder_name = f"{site_label}_{month.strftime('%Y-%m')}_work_cards"
+
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        metadata_rows = []
+        day_entries_rows = []
+
+        for card in cards:
+            employee_folder = 'unassigned'
+            employee_name = None
+            employee_id = None
+            if card.employee:
+                employee_name = card.employee.full_name
+                employee_id = str(card.employee.id)
+                safe_name = safe_label(employee_name) or f"employee_{employee_id}"
+                employee_folder = safe_name
+
+            if card.files and card.files.image_bytes:
+                original_name = card.files.file_name or card.original_filename or f"{card.id}"
+                safe_original = secure_filename(original_name) or str(card.id)
+                extension = ''
+                if '.' in safe_original:
+                    extension = f".{safe_original.rsplit('.', 1)[-1]}"
+
+                employee_label = 'unassigned'
+                if card.employee:
+                    id_number = card.employee.passport_id or str(card.employee.id)
+                    safe_employee = safe_label(card.employee.full_name) or str(card.employee.id)
+                    safe_id_number = safe_label(id_number) or str(card.employee.id)
+                    employee_label = f"{safe_employee}_{safe_id_number}"
+                    file_name = f"{employee_label}{extension}"
+                else:
+                    file_name = f"unassigned_{card.id}{extension}"
+
+                file_path = f"{folder_name}/{file_name}"
+                zipf.writestr(file_path, card.files.image_bytes)
+
+            if include_metadata:
+                metadata_rows.append({
+                    'work_card_id': str(card.id),
+                    'site_id': str(card.site_id),
+                    'employee_id': employee_id,
+                    'employee_name': employee_name,
+                    'review_status': card.review_status,
+                    'processing_month': str(card.processing_month),
+                    'original_filename': card.original_filename,
+                    'uploaded_at': card.created_at.isoformat() if card.created_at else None,
+                    'approved_at': card.approved_at.isoformat() if card.approved_at else None,
+                    'notes': card.notes
+                })
+
+            if include_day_entries and card.day_entries:
+                for entry in card.day_entries:
+                    day_entries_rows.append({
+                        'work_card_id': str(card.id),
+                        'employee_id': employee_id,
+                        'day_of_month': entry.day_of_month,
+                        'from_time': entry.from_time.isoformat() if entry.from_time else None,
+                        'to_time': entry.to_time.isoformat() if entry.to_time else None,
+                        'total_hours': str(entry.total_hours) if entry.total_hours is not None else None,
+                        'is_valid': entry.is_valid
+                    })
+
+        if include_metadata:
+            metadata_headers = [
+                'work_card_id',
+                'site_id',
+                'employee_id',
+                'employee_name',
+                'review_status',
+                'processing_month',
+                'original_filename',
+                'uploaded_at',
+                'approved_at',
+                'notes'
+            ]
+            metadata_csv = StringIO()
+            writer = csv.DictWriter(metadata_csv, fieldnames=metadata_headers)
+            writer.writeheader()
+            writer.writerows(metadata_rows)
+            zipf.writestr('metadata.csv', metadata_csv.getvalue().encode('utf-8'))
+
+        if include_day_entries:
+            day_entries_headers = [
+                'work_card_id',
+                'employee_id',
+                'day_of_month',
+                'from_time',
+                'to_time',
+                'total_hours',
+                'is_valid'
+            ]
+            day_entries_csv = StringIO()
+            writer = csv.DictWriter(day_entries_csv, fieldnames=day_entries_headers)
+            writer.writeheader()
+            writer.writerows(day_entries_rows)
+            zipf.writestr('day_entries.csv', day_entries_csv.getvalue().encode('utf-8'))
+
+    zip_buffer.seek(0)
+    download_name = f"work_cards_{site_id}_{month.strftime('%Y-%m')}.zip"
+    return send_file(
+        zip_buffer,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=download_name
+    )
 
 @work_cards_bp.route('/<uuid:card_id>/day-entries', methods=['GET'])
 @token_required

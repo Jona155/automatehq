@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { Site, Employee } from '../types';
 import { getSite, updateSite } from '../api/sites';
@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import UploadWorkCardModal from '../components/UploadWorkCardModal';
 import BatchUploadModal from '../components/BatchUploadModal';
+import WorkCardExportModal from '../components/WorkCardExportModal';
 import WorkCardReviewTab from '../components/WorkCardReviewTab';
 import MonthlySummaryTab from '../components/MonthlySummaryTab';
 import AccessLinksManager from '../components/AccessLinksManager';
@@ -35,12 +36,15 @@ export default function SiteDetailsPage() {
   const [employeesError, setEmployeesError] = useState<string | null>(null);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [batchUploadModalOpen, setBatchUploadModalOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('employees');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => getPreviousMonth());
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [responsibleEmployeeId, setResponsibleEmployeeId] = useState<string>('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
 
@@ -109,6 +113,17 @@ export default function SiteDetailsPage() {
       abortController.abort();
     };
   }, [isAuthenticated, siteId]);
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const handleOutside = (event: MouseEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(event.target as Node)) {
+        setActionsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [actionsOpen]);
 
   const handleBack = () => {
     navigate(`/${user?.business?.code}/sites`);
@@ -198,22 +213,49 @@ export default function SiteDetailsPage() {
           <h2 className="text-[#111518] dark:text-white text-3xl font-bold">{site.site_name}</h2>
           <p className="text-[#617989] dark:text-slate-400 mt-1">קוד אתר: {site.site_code || 'לא הוגדר'}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="relative" ref={actionsRef} dir="rtl">
           <button
-            onClick={handleOpenSettings}
-            className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
-            title="הגדרות אתר"
-            aria-label="הגדרות אתר"
+            onClick={() => setActionsOpen((prev) => !prev)}
+            className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors font-medium text-sm"
           >
-            <span className="material-symbols-outlined text-lg">settings</span>
+            <span className="material-symbols-outlined text-lg">more_horiz</span>
+            <span>{"\u05e4\u05e2\u05d5\u05dc\u05d5\u05ea \u05d1\u05d0\u05ea\u05e8"}</span>
           </button>
-          <button
-            onClick={() => setBatchUploadModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium text-sm"
-          >
-            <span className="material-symbols-outlined text-lg">cloud_upload</span>
-            <span>העלאה מרובה</span>
-          </button>
+
+          {actionsOpen && (
+            <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden z-50" dir="rtl">
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  handleOpenSettings();
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">settings</span>
+                <span>{"\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea \u05d0\u05ea\u05e8"}</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  setExportModalOpen(true);
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">download</span>
+                <span>{"\u05d4\u05d5\u05e8\u05d3\u05ea \u05db\u05e8\u05d8\u05d9\u05e1\u05d9\u05dd"}</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  setBatchUploadModalOpen(true);
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">cloud_upload</span>
+                <span>{"\u05d4\u05e2\u05dc\u05d0\u05d4 \u05de\u05e8\u05d5\u05d1\u05d4"}</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -421,6 +463,14 @@ export default function SiteDetailsPage() {
         onUploadComplete={() => {
           showToast('הקבצים הועלו בהצלחה והועברו לעיבוד', 'success');
         }}
+      />
+
+      <WorkCardExportModal
+        isOpen={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        siteId={siteId!}
+        siteName={site.site_name}
+        employees={employees}
       />
     </div>
   );

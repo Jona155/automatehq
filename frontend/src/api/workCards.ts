@@ -22,6 +22,16 @@ export interface GetWorkCardsParams {
   include_employee?: boolean;
 }
 
+export interface WorkCardExportParams {
+  site_id: string;
+  processing_month: string;
+  statuses: string[];
+  employee_ids?: string[];
+  include_unassigned?: boolean;
+  include_metadata?: boolean;
+  include_day_entries?: boolean;
+}
+
 export interface UpdateDayEntriesRequest {
   entries: Array<{
     day_of_month: number;
@@ -130,6 +140,27 @@ export const uploadBatchWorkCards = async (siteId: string, processingMonth: stri
 // Get work card image file as blob
 export const getWorkCardFile = async (cardId: string): Promise<Blob> => {
   const response = await client.get(`/work_cards/${cardId}/file`, {
+    responseType: 'blob',
+  });
+  return response.data;
+};
+
+// Export work cards as a ZIP
+export const downloadWorkCardsExport = async (params: WorkCardExportParams): Promise<Blob> => {
+  const queryParams: Record<string, string> = {
+    site_id: params.site_id,
+    month: normalizeMonthFormat(params.processing_month),
+    status: params.statuses.join(','),
+    include_unassigned: params.include_unassigned ? 'true' : 'false',
+    include_metadata: params.include_metadata ? 'true' : 'false',
+    include_day_entries: params.include_day_entries ? 'true' : 'false',
+  };
+  if (params.employee_ids && params.employee_ids.length > 0) {
+    queryParams.employee_ids = params.employee_ids.join(',');
+  }
+
+  const response = await client.get('/work_cards/export', {
+    params: queryParams,
     responseType: 'blob',
   });
   return response.data;

@@ -2,6 +2,7 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import date
 from sqlalchemy.orm import joinedload
+from sqlalchemy import or_
 from .base import BaseRepository
 from ..models.work_cards import WorkCard
 from ..models.sites import Employee
@@ -230,6 +231,51 @@ class WorkCardRepository(BaseRepository[WorkCard]):
             joinedload(WorkCard.day_entries),
             joinedload(WorkCard.files)
         ).filter_by(id=card_id, business_id=business_id).first()
+
+    def get_for_export(
+        self,
+        site_id: UUID,
+        month: date,
+        business_id: UUID,
+        statuses: Optional[List[str]] = None,
+        employee_ids: Optional[List[UUID]] = None,
+        include_unassigned: bool = True,
+        include_employee: bool = True,
+        include_day_entries: bool = False
+    ) -> List[WorkCard]:
+        """
+        Get work cards for export with optional filters and eager loading.
+        """
+        query = self.session.query(WorkCard).options(
+            joinedload(WorkCard.files)
+        )
+
+        if include_employee:
+            query = query.options(joinedload(WorkCard.employee))
+        if include_day_entries:
+            query = query.options(joinedload(WorkCard.day_entries))
+
+        query = query.filter(
+            WorkCard.site_id == site_id,
+            WorkCard.processing_month == month,
+            WorkCard.business_id == business_id
+        )
+
+        if statuses:
+            query = query.filter(WorkCard.review_status.in_(statuses))
+
+        if employee_ids:
+            if include_unassigned:
+                query = query.filter(
+                    or_(WorkCard.employee_id.in_(employee_ids), WorkCard.employee_id.is_(None))
+                )
+            else:
+                query = query.filter(WorkCard.employee_id.in_(employee_ids))
+        else:
+            if not include_unassigned:
+                query = query.filter(WorkCard.employee_id.isnot(None))
+
+        return query.order_by(WorkCard.created_at.desc()).all()
     
     def update_review_status(self, card_id: UUID, status: str, business_id: UUID) -> Optional[WorkCard]:
         """
