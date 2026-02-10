@@ -22,7 +22,7 @@ export default function SitesPage() {
   const [sortField, setSortField] = useState<SortField>('site_name');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize] = useState(10);
   const navigate = useNavigate();
 
   const fetchSites = async () => {
