@@ -29,6 +29,10 @@ export default function EmployeesPage() {
   const [sortField, setSortField] = useState<SortField>('full_name');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
   // Form State
   const [formData, setFormData] = useState({
     full_name: '',
@@ -83,9 +87,13 @@ export default function EmployeesPage() {
   // Filtering logic
   const filteredEmployees = useMemo(() => {
     return employees.filter((emp) => {
-      const matchesName = !filterName || emp.full_name.toLowerCase().includes(filterName.toLowerCase());
-      const matchesPassport = !filterPassport || emp.passport_id.toLowerCase().includes(filterPassport.toLowerCase());
-      const matchesPhone = !filterPhone || emp.phone_number.includes(filterPhone);
+      const name = emp.full_name ?? '';
+      const passportId = emp.passport_id ?? '';
+      const phoneNumber = emp.phone_number ?? '';
+
+      const matchesName = !filterName || name.toLowerCase().includes(filterName.toLowerCase());
+      const matchesPassport = !filterPassport || passportId.toLowerCase().includes(filterPassport.toLowerCase());
+      const matchesPhone = !filterPhone || phoneNumber.includes(filterPhone);
       const matchesSite = !filterSiteId || emp.site_id === filterSiteId;
       
       return matchesName && matchesPassport && matchesPhone && matchesSite;
@@ -103,8 +111,8 @@ export default function EmployeesPage() {
         aVal = getSiteName(a.site_id);
         bVal = getSiteName(b.site_id);
       } else {
-        aVal = a[sortField];
-        bVal = b[sortField];
+        aVal = a[sortField] ?? '';
+        bVal = b[sortField] ?? '';
       }
 
       const comparison = aVal.localeCompare(bVal, 'he');
@@ -112,6 +120,24 @@ export default function EmployeesPage() {
     });
     return sorted;
   }, [filteredEmployees, sortField, sortOrder, sites]);
+
+  const totalEmployees = sortedEmployees.length;
+  const totalPages = Math.max(1, Math.ceil(totalEmployees / pageSize));
+
+  const paginatedEmployees = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return sortedEmployees.slice(startIndex, startIndex + pageSize);
+  }, [sortedEmployees, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterName, filterPassport, filterPhone, filterSiteId, sortField, sortOrder, pageSize]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -283,11 +309,11 @@ export default function EmployeesPage() {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
               סינון לפי אתר
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <select
                 value={filterSiteId}
                 onChange={(e) => setFilterSiteId(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm"
+                className="flex-1 min-w-0 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm"
               >
                 <option value="">כל האתרים</option>
                 {sites.map((site) => (
@@ -361,7 +387,7 @@ export default function EmployeesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                {sortedEmployees.map((employee) => (
+                {paginatedEmployees.map((employee) => (
                   <tr key={employee.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                     <td className="px-6 py-5">
                       <div className="flex items-center gap-2">
@@ -415,6 +441,43 @@ export default function EmployeesPage() {
                 )}
               </tbody>
             </table>
+            {sortedEmployees.length > 0 && (
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-6 py-4 border-t border-slate-100 dark:border-slate-700/50 bg-slate-50/60 dark:bg-slate-900/40">
+                <div className="text-sm text-slate-600 dark:text-slate-400">
+                  Page {currentPage} of {totalPages}
+                </div>
+                <div className="flex items-center gap-2 justify-end">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    First
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    Prev
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    Next
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    Last
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
