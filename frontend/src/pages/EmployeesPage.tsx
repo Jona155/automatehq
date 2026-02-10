@@ -31,7 +31,7 @@ export default function EmployeesPage() {
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize] = useState(10);
 
   // Form State
   const [formData, setFormData] = useState({
