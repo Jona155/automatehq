@@ -49,3 +49,8 @@ export const revokeAccessLink = async (siteId: string, requestId: string) => {
   const response = await client.post(`/sites/${siteId}/access-link/${requestId}/revoke`);
   return response.data;
 };
+
+export const sendAccessLinkToWhatsapp = async (siteId: string, requestId: string) => {
+  const response = await client.post<{ message: string }>(`/sites/${siteId}/access-link/${requestId}/whatsapp`);
+  return response.data;
+};

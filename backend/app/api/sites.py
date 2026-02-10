@@ -1,4 +1,5 @@
 from flask import Blueprint, request, g
+import os
 import uuid
 import traceback
 import logging
@@ -6,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from sqlalchemy import and_, or_, func, case
 from sqlalchemy.orm import joinedload
+from twilio.rest import Client
 from ..repositories.site_repository import SiteRepository
 from ..repositories.employee_repository import EmployeeRepository
 from ..repositories.work_card_repository import WorkCardRepository
@@ -13,6 +15,7 @@ from ..repositories.work_card_extraction_repository import WorkCardExtractionRep
 from ..repositories.upload_access_request_repository import UploadAccessRequestRepository
 from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required
+from ..utils import normalize_phone
 from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
 from ..models.sites import Employee
 from ..extensions import db
@@ -433,6 +436,63 @@ def list_access_links(site_id):
         data.append(link_dict)
 
     return api_response(data=data)
+
+
+@sites_bp.route('/<uuid:site_id>/access-link/<uuid:request_id>/whatsapp', methods=['POST'])
+@token_required
+def send_whatsapp_link(site_id, request_id):
+    """Send an access link via WhatsApp to the employee."""
+    site = repo.get_by_id(site_id)
+    if not site or site.business_id != g.business_id:
+        return api_response(status_code=404, message="Site not found", error="Not Found")
+
+    access_request = access_repo.get_by_id(request_id)
+    if not access_request or access_request.business_id != g.business_id:
+        return api_response(status_code=404, message="Access link not found", error="Not Found")
+
+    employee = employee_repo.get_by_id(access_request.employee_id)
+    if not employee or not employee.phone_number:
+        return api_response(status_code=400, message="Employee has no phone number", error="Bad Request")
+
+    raw_phone = normalize_phone(employee.phone_number)
+    if not raw_phone:
+        return api_response(status_code=400, message="Invalid phone number format", error="Bad Request")
+
+    if raw_phone.startswith('0'):
+        formatted_phone = '+972' + raw_phone[1:]
+    else:
+        formatted_phone = '+' + raw_phone
+
+    try:
+        account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+        auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+        from_number = os.environ.get('TWILIO_WHATSAPP_NUMBER')
+
+        if not all([account_sid, auth_token, from_number]):
+            logger.error("Twilio credentials missing")
+            return api_response(status_code=500, message="Server configuration error", error="Twilio config missing")
+
+        client = Client(account_sid, auth_token)
+
+        url = f"{request.host_url.rstrip('/')}/portal/{access_request.token}"
+        message_body = (
+            f"שלום {employee.full_name},\n"
+            f"להלן הקישור להעלאת כרטיסי העבודה עבור חודש {access_request.processing_month.strftime('%m/%Y')}:\n"
+            f"{url}"
+        )
+
+        message = client.messages.create(
+            from_=from_number,
+            body=message_body,
+            to=f"whatsapp:{formatted_phone}"
+        )
+
+        logger.info(f"WhatsApp sent to {formatted_phone}: {message.sid}")
+        return api_response(message="WhatsApp sent successfully")
+
+    except Exception as e:
+        logger.exception(f"Twilio error for request {request_id}")
+        return api_response(status_code=500, message="Failed to send WhatsApp message", error=str(e))
 
 
 @sites_bp.route('/<uuid:site_id>/access-link/<uuid:request_id>/revoke', methods=['POST'])

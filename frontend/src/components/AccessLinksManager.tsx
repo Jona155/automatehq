@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Employee, UploadAccessRequest } from '../types';
 import MonthPicker from './MonthPicker';
-import { createAccessLink, getAccessLinks, revokeAccessLink } from '../api/sites';
+import { createAccessLink, getAccessLinks, revokeAccessLink, sendAccessLinkToWhatsapp } from '../api/sites';
 import { useToast } from '../hooks/useToast';
 
 interface AccessLinksManagerProps {
@@ -40,6 +40,7 @@ export default function AccessLinksManager({
   const [links, setLinks] = useState<UploadAccessRequest[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [sendingWhatsappId, setSendingWhatsappId] = useState<string | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [selectedMonth, setSelectedMonth] = useState(getDefaultMonth());
   const [error, setError] = useState<string | null>(null);
@@ -115,6 +116,22 @@ export default function AccessLinksManager({
     }
   };
 
+  const handleSendWhatsapp = async (requestId: string) => {
+    if (sendingWhatsappId === requestId) return;
+    setSendingWhatsappId(requestId);
+    try {
+      await sendAccessLinkToWhatsapp(siteId, requestId);
+      showToast('הקישור נוצר בהצלחה', 'success');
+    } catch (err: any) {
+      console.error('Failed to send WhatsApp:', err);
+      const msg = err?.response?.data?.message || 'שגיאה בשליחת הודעה';
+      showToast(msg, 'error');
+    } finally {
+      setSendingWhatsappId(null);
+    }
+  };
+
+
   return (
     <div className="px-6 py-6 border-b border-slate-200 dark:border-slate-700">
       <ToastContainer />
@@ -166,7 +183,7 @@ export default function AccessLinksManager({
             <h4 className="font-medium text-slate-800 dark:text-slate-200">קישורים פעילים</h4>
             <button
               onClick={fetchLinks}
-              className="text-sm text-primary hover:text-primary/80 transition-colors"
+              className="text-sm text-primary hover:text-primary/80 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               disabled={isLoading}
             >
               רענן
@@ -183,7 +200,7 @@ export default function AccessLinksManager({
             <div className="overflow-x-auto">
               <table className="w-full text-right text-sm">
                 <thead>
-                  <tr className="bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                  <tr className="bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 uppercase text-[11px] tracking-wide">
                     <th className="px-4 py-3 font-medium">עובד</th>
                     <th className="px-4 py-3 font-medium">חודש</th>
                     <th className="px-4 py-3 font-medium">נוצר</th>
@@ -202,15 +219,28 @@ export default function AccessLinksManager({
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleCopy(link.url)}
-                            className="px-3 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+                            className="px-3 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors active:scale-[0.98]"
                           >
                             העתק
                           </button>
                           <button
                             onClick={() => handleRevoke(link.id)}
-                            className="px-3 py-1 text-xs rounded-lg border border-red-200 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+                            className="px-3 py-1 text-xs rounded-lg border border-red-200 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors active:scale-[0.98]"
                           >
                             בטל
+                          </button>
+                          <button
+                            onClick={() => handleSendWhatsapp(link.id)}
+                            disabled={sendingWhatsappId === link.id}
+                            className="px-3 py-1 text-xs rounded-lg border border-green-200 text-green-700 hover:bg-green-50 dark:hover:bg-green-900/30 dark:border-green-800 dark:text-green-400 flex items-center gap-1 transition-colors active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+                            title="שלח בוואטסאפ"
+                          >
+                            {sendingWhatsappId === link.id ? (
+                              <span className="h-3 w-3 rounded-full border-2 border-green-400 border-t-transparent animate-spin" />
+                            ) : (
+                              <span className="material-symbols-outlined text-[16px]">chat</span>
+                            )}
+                            <span className="hidden sm:inline">WhatsApp</span>
                           </button>
                         </div>
                         {link.url && (
