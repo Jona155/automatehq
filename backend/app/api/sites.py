@@ -29,6 +29,25 @@ work_card_repo = WorkCardRepository()
 extraction_repo = WorkCardExtractionRepository()
 access_repo = UploadAccessRequestRepository()
 
+def _generate_access_token():
+    token = None
+    for _ in range(5):
+        candidate = secrets.token_urlsafe(32)
+        if not access_repo.token_exists(candidate):
+            token = candidate
+            break
+    return token
+
+def _format_whatsapp_number(raw_phone: str):
+    if not raw_phone:
+        return None
+    if raw_phone.startswith('0'):
+        return '+972' + raw_phone[1:]
+    return '+' + raw_phone
+
+def _build_access_link_url(token: str):
+    return f"{request.host_url.rstrip('/')}/portal/{token}"
+
 @sites_bp.route('', methods=['GET'])
 @token_required
 def get_sites():
@@ -389,12 +408,7 @@ def create_access_link(site_id):
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
 
     # Generate unique token
-    token = None
-    for _ in range(5):
-        candidate = secrets.token_urlsafe(32)
-        if not access_repo.token_exists(candidate):
-            token = candidate
-            break
+    token = _generate_access_token()
     if not token:
         return api_response(status_code=500, message="Failed to generate access token", error="Server Error")
 
@@ -411,7 +425,7 @@ def create_access_link(site_id):
         is_active=True
     )
 
-    url = f"{request.host_url.rstrip('/')}/portal/{token}"
+    url = _build_access_link_url(token)
     data = model_to_dict(access_request)
     data['url'] = url
     data['employee_name'] = employee.full_name
@@ -458,10 +472,9 @@ def send_whatsapp_link(site_id, request_id):
     if not raw_phone:
         return api_response(status_code=400, message="Invalid phone number format", error="Bad Request")
 
-    if raw_phone.startswith('0'):
-        formatted_phone = '+972' + raw_phone[1:]
-    else:
-        formatted_phone = '+' + raw_phone
+    formatted_phone = _format_whatsapp_number(raw_phone)
+    if not formatted_phone:
+        return api_response(status_code=400, message="Invalid phone number format", error="Bad Request")
 
     try:
         account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
@@ -474,7 +487,7 @@ def send_whatsapp_link(site_id, request_id):
 
         client = Client(account_sid, auth_token)
 
-        url = f"{request.host_url.rstrip('/')}/portal/{access_request.token}"
+        url = _build_access_link_url(access_request.token)
         message_body = (
             f"שלום {employee.full_name},\n"
             f"להלן הקישור להעלאת כרטיסי העבודה עבור חודש {access_request.processing_month.strftime('%m/%Y')}:\n"
@@ -493,6 +506,206 @@ def send_whatsapp_link(site_id, request_id):
     except Exception as e:
         logger.exception(f"Twilio error for request {request_id}")
         return api_response(status_code=500, message="Failed to send WhatsApp message", error=str(e))
+
+
+@sites_bp.route('/access-links/whatsapp-batch', methods=['POST'])
+@token_required
+def send_whatsapp_links_batch():
+    """Create access links and send them via WhatsApp for multiple sites."""
+    payload = request.get_json() or {}
+    site_ids = payload.get('site_ids') or []
+    processing_month = payload.get('processing_month')
+
+    if not site_ids or not isinstance(site_ids, list):
+        return api_response(status_code=400, message="site_ids must be a non-empty list", error="Bad Request")
+    if not processing_month:
+        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
+
+    try:
+        month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+
+    account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+    auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+    from_number = os.environ.get('TWILIO_WHATSAPP_NUMBER')
+    if not all([account_sid, auth_token, from_number]):
+        logger.error("Twilio credentials missing")
+        return api_response(status_code=500, message="Server configuration error", error="Twilio config missing")
+
+    client = Client(account_sid, auth_token)
+
+    results = []
+    sent_count = 0
+    failed_count = 0
+    skipped_count = 0
+
+    for site_id in site_ids:
+        site_id_str = str(site_id)
+        site = None
+        try:
+            site_uuid = uuid.UUID(site_id_str)
+        except ValueError:
+            skipped_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'status': 'skipped',
+                'reason': 'Invalid site_id format'
+            })
+            continue
+
+        site = repo.get_by_id(site_uuid)
+        if not site or site.business_id != g.business_id:
+            skipped_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'status': 'skipped',
+                'reason': 'Site not found'
+            })
+            continue
+
+        if not site.responsible_employee_id:
+            skipped_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'site_name': site.site_name,
+                'status': 'skipped',
+                'reason': 'No responsible employee'
+            })
+            continue
+
+        employee = employee_repo.get_by_id(site.responsible_employee_id)
+        if not employee or employee.business_id != g.business_id or str(employee.site_id) != str(site.id):
+            skipped_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'site_name': site.site_name,
+                'employee_id': str(site.responsible_employee_id),
+                'status': 'skipped',
+                'reason': 'Responsible employee not found for site'
+            })
+            continue
+
+        if not employee.is_active:
+            skipped_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'site_name': site.site_name,
+                'employee_id': str(employee.id),
+                'employee_name': employee.full_name,
+                'status': 'skipped',
+                'reason': 'Responsible employee is not active'
+            })
+            continue
+
+        if not employee.phone_number:
+            skipped_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'site_name': site.site_name,
+                'employee_id': str(employee.id),
+                'employee_name': employee.full_name,
+                'status': 'skipped',
+                'reason': 'Employee has no phone number'
+            })
+            continue
+
+        raw_phone = normalize_phone(employee.phone_number)
+        if not raw_phone:
+            skipped_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'site_name': site.site_name,
+                'employee_id': str(employee.id),
+                'employee_name': employee.full_name,
+                'status': 'skipped',
+                'reason': 'Invalid phone number format'
+            })
+            continue
+
+        formatted_phone = _format_whatsapp_number(raw_phone)
+        if not formatted_phone:
+            skipped_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'site_name': site.site_name,
+                'employee_id': str(employee.id),
+                'employee_name': employee.full_name,
+                'status': 'skipped',
+                'reason': 'Invalid phone number format'
+            })
+            continue
+
+        token = _generate_access_token()
+        if not token:
+            failed_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'site_name': site.site_name,
+                'employee_id': str(employee.id),
+                'employee_name': employee.full_name,
+                'status': 'failed',
+                'reason': 'Failed to generate access token'
+            })
+            continue
+
+        expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+
+        access_request = access_repo.create(
+            token=token,
+            business_id=g.business_id,
+            site_id=site.id,
+            employee_id=employee.id,
+            processing_month=month,
+            created_by_user_id=g.current_user.id,
+            expires_at=expires_at,
+            is_active=True
+        )
+
+        url = _build_access_link_url(token)
+        message_body = (
+            f"שלום {employee.full_name},\n"
+            f"להלן הקישור להעלאת כרטיסי העבודה עבור חודש {month.strftime('%m/%Y')}:\n"
+            f"{url}"
+        )
+
+        try:
+            message = client.messages.create(
+                from_=from_number,
+                body=message_body,
+                to=f"whatsapp:{formatted_phone}"
+            )
+            logger.info(f"WhatsApp sent to {formatted_phone}: {message.sid}")
+            sent_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'site_name': site.site_name,
+                'employee_id': str(employee.id),
+                'employee_name': employee.full_name,
+                'request_id': str(access_request.id),
+                'status': 'sent'
+            })
+        except Exception as e:
+            logger.exception(f"Twilio error for site {site.id}")
+            failed_count += 1
+            results.append({
+                'site_id': site_id_str,
+                'site_name': site.site_name,
+                'employee_id': str(employee.id),
+                'employee_name': employee.full_name,
+                'request_id': str(access_request.id),
+                'status': 'failed',
+                'reason': str(e)
+            })
+
+    return api_response(data={
+        'total_requested': len(site_ids),
+        'processing_month': processing_month,
+        'sent_count': sent_count,
+        'failed_count': failed_count,
+        'skipped_count': skipped_count,
+        'results': results
+    }, message="Batch WhatsApp processed")
 
 
 @sites_bp.route('/<uuid:site_id>/access-link/<uuid:request_id>/revoke', methods=['POST'])

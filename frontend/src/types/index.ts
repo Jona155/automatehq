@@ -163,6 +163,27 @@ export interface UploadAccessRequest {
   employee_name?: string;
 }
 
+export type WhatsappBatchStatus = 'sent' | 'skipped' | 'failed';
+
+export interface WhatsappBatchResultItem {
+  site_id: string;
+  site_name?: string;
+  employee_id?: string;
+  employee_name?: string;
+  request_id?: string;
+  status: WhatsappBatchStatus;
+  reason?: string;
+}
+
+export interface WhatsappBatchResponse {
+  total_requested: number;
+  processing_month: string;
+  sent_count: number;
+  failed_count: number;
+  skipped_count: number;
+  results: WhatsappBatchResultItem[];
+}
+
 export interface DashboardSummary {
   month: string;
   generated_at: string;

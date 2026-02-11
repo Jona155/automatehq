@@ -1,11 +1,22 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Site } from '../types';
-import { getSites, createSite } from '../api/sites';
+import { getSites, createSite, sendAccessLinksBatchToWhatsapp } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../hooks/useToast';
+import MonthPicker from '../components/MonthPicker';
+import Modal from '../components/Modal';
 
 type SortField = 'site_name' | 'site_code' | 'employee_count' | 'is_active';
 type SortOrder = 'asc' | 'desc';
+
+const getDefaultMonth = () => {
+  const now = new Date();
+  const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const year = currentMonth.getFullYear();
+  const month = String(currentMonth.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+};
 
 export default function SitesPage() {
   const { isAuthenticated, user } = useAuth();
@@ -23,7 +34,17 @@ export default function SitesPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(10);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [batchSearch, setBatchSearch] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [selectedSiteIds, setSelectedSiteIds] = useState<string[]>([]);
+  const [isBatchSending, setIsBatchSending] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchMonth, setBatchMonth] = useState(getDefaultMonth());
   const navigate = useNavigate();
+  const { showToast, ToastContainer } = useToast();
 
   const fetchSites = async () => {
     setIsLoading(true);
@@ -44,6 +65,17 @@ export default function SitesPage() {
 
     fetchSites();
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const handleOutside = (event: MouseEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(event.target as Node)) {
+        setActionsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [actionsOpen]);
 
   const filteredSites = useMemo(() => {
     return sites.filter((site) => {
@@ -116,6 +148,69 @@ export default function SitesPage() {
     setIsModalOpen(true);
   };
 
+  const eligibleSites = useMemo(() => sites.filter((site) => !!site.responsible_employee_id), [sites]);
+  const eligibleSitesSorted = useMemo(() => {
+    const sorted = [...eligibleSites];
+    sorted.sort((a, b) => a.site_name.localeCompare(b.site_name, 'he'));
+    return sorted;
+  }, [eligibleSites]);
+  const filteredEligibleSites = useMemo(() => {
+    const query = batchSearch.trim().toLowerCase();
+    if (!query) return eligibleSitesSorted;
+    return eligibleSitesSorted.filter((site) => site.site_name.toLowerCase().includes(query));
+  }, [eligibleSitesSorted, batchSearch]);
+
+  const handleOpenBatch = () => {
+    setBatchError(null);
+    setBatchSearch('');
+    setShowAdvanced(false);
+    setSelectedSiteIds(eligibleSites.map((site) => site.id));
+    setBatchModalOpen(true);
+  };
+
+  const handleToggleSite = (siteId: string) => {
+    setSelectedSiteIds((prev) =>
+      prev.includes(siteId) ? prev.filter((id) => id !== siteId) : [...prev, siteId]
+    );
+  };
+
+  const handleSelectAllSites = () => {
+    setSelectedSiteIds(eligibleSites.map((site) => site.id));
+  };
+
+  const handleClearAllSites = () => {
+    setSelectedSiteIds([]);
+  };
+
+  const handleSendBatch = async () => {
+    if (selectedSiteIds.length === 0) {
+      setBatchError('יש לבחור לפחות אתר אחד לשליחה.');
+      return;
+    }
+    if (!batchMonth) {
+      setBatchError('יש לבחור חודש לשליחה.');
+      return;
+    }
+
+    setIsBatchSending(true);
+    setBatchError(null);
+    try {
+      const processingMonth = `${batchMonth}-01`;
+      const response = await sendAccessLinksBatchToWhatsapp({
+        site_ids: selectedSiteIds,
+        processing_month: processingMonth,
+      });
+      const summary = `נשלחו ${response.sent_count} הודעות. דולגו ${response.skipped_count}. נכשלו ${response.failed_count}.`;
+      showToast(summary, response.failed_count > 0 ? 'error' : 'success');
+      setBatchModalOpen(false);
+    } catch (err: any) {
+      console.error('Failed to send batch WhatsApp:', err);
+      setBatchError(err?.response?.data?.message || 'שגיאה בשליחת הודעות וואטסאפ');
+    } finally {
+      setIsBatchSending(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.site_name.trim()) {
@@ -156,18 +251,46 @@ export default function SitesPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <ToastContainer />
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
         <div>
           <h2 className="text-[#111518] dark:text-white text-3xl font-bold">ניהול אתרים</h2>
           <p className="text-[#617989] dark:text-slate-400 mt-1">נהל את אתרי העבודה שלך בארגון</p>
         </div>
-        <button
-          onClick={handleOpenCreate}
-          className="bg-primary hover:bg-primary/90 text-white font-bold py-3 px-6 rounded-lg shadow-lg shadow-primary/30 transition-all flex items-center justify-center gap-2"
-        >
-          <span className="material-symbols-outlined">add</span>
-          <span>צור אתר</span>
-        </button>
+        <div className="relative" ref={actionsRef} dir="rtl">
+          <button
+            onClick={() => setActionsOpen((prev) => !prev)}
+            className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors font-medium text-sm bg-white dark:bg-transparent"
+          >
+            <span className="material-symbols-outlined text-lg">more_horiz</span>
+            <span>פעולות באתרים</span>
+          </button>
+
+          {actionsOpen && (
+            <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden z-50" dir="rtl">
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  handleOpenCreate();
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">add</span>
+                <span>יצירת אתר</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  handleOpenBatch();
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">chat</span>
+                <span>שליחת הודעות וואטסאפ</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 p-4">
@@ -347,6 +470,139 @@ export default function SitesPage() {
           </div>
         )}
       </div>
+      <Modal
+        isOpen={batchModalOpen}
+        onClose={() => setBatchModalOpen(false)}
+        title="שליחת הודעות וואטסאפ לעובדים אחראים"
+        maxWidth="lg"
+      >
+        <div className="flex flex-col gap-6" dir="rtl">
+          {batchError && (
+            <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
+              {batchError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-5 items-start">
+            <div className="order-2 lg:order-1">
+              <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
+                חודש לשליחה
+              </label>
+              <div className="inline-flex">
+                <MonthPicker
+                  value={batchMonth}
+                  onChange={setBatchMonth}
+                  storageKey="sites_whatsapp_month"
+                />
+              </div>
+            </div>
+
+            <div className="order-1 lg:order-2 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+              <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">סטטוס בחירה</h4>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-slate-900 dark:text-white">{selectedSiteIds.length}</span>
+                <span className="text-sm text-slate-600 dark:text-slate-400">
+                  מתוך {eligibleSites.length} אתרים עם עובד אחראי
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-500 mt-2">
+                דולגו {Math.max(0, sites.length - eligibleSites.length)} אתרים ללא עובד אחראי.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setShowAdvanced((prev) => !prev)}
+            className="text-sm text-primary hover:text-primary/80 transition-colors w-fit font-semibold"
+            type="button"
+          >
+            {showAdvanced ? 'הסתר אפשרויות מתקדמות' : 'אפשרויות מתקדמות'}
+          </button>
+
+          {showAdvanced && (
+            <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-4 space-y-4 bg-white/70 dark:bg-slate-900/30">
+              <div className="flex flex-col lg:flex-row lg:items-center gap-3 justify-between">
+                <div className="relative w-full lg:max-w-sm">
+                  <span className="material-symbols-outlined text-[18px] text-slate-400 absolute right-3 top-1/2 -translate-y-1/2">
+                    search
+                  </span>
+                  <input
+                    type="text"
+                    value={batchSearch}
+                    onChange={(e) => setBatchSearch(e.target.value)}
+                    className="w-full px-9 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm"
+                    placeholder="חיפוש לפי שם אתר..."
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSelectAllSites}
+                    type="button"
+                    className="px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    בחר הכל
+                  </button>
+                  <button
+                    onClick={handleClearAllSites}
+                    type="button"
+                    className="px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    נקה בחירה
+                  </button>
+                </div>
+              </div>
+
+              {filteredEligibleSites.length === 0 ? (
+                <div className="text-sm text-slate-500">לא נמצאו אתרים תואמים לחיפוש.</div>
+              ) : (
+                <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl bg-white dark:bg-slate-900/40">
+                  {filteredEligibleSites.map((site) => (
+                    <label
+                      key={site.id}
+                      className="flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4"
+                          checked={selectedSiteIds.includes(site.id)}
+                          onChange={() => handleToggleSite(site.id)}
+                        />
+                        <span className="text-slate-800 dark:text-slate-200">{site.site_name}</span>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${site.is_active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+                        {site.is_active ? 'פעיל' : 'לא פעיל'}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              נשלחות הודעות רק לעובדים אחראים עם מספר וואטסאפ תקין.
+            </div>
+            <button
+              type="button"
+              onClick={() => setBatchModalOpen(false)}
+              className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
+              disabled={isBatchSending}
+            >
+              ביטול
+            </button>
+            <button
+              type="button"
+              onClick={handleSendBatch}
+              disabled={isBatchSending}
+              className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
+            >
+              {isBatchSending ? 'שולח...' : 'שלח הודעות'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Create Site Modal */}
       {isModalOpen && (

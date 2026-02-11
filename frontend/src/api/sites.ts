@@ -1,5 +1,5 @@
 import client from './client';
-import type { Site, UploadAccessRequest } from '../types';
+import type { Site, UploadAccessRequest, WhatsappBatchResponse } from '../types';
 
 export interface GetSitesParams {
   active?: boolean;
@@ -53,4 +53,9 @@ export const revokeAccessLink = async (siteId: string, requestId: string) => {
 export const sendAccessLinkToWhatsapp = async (siteId: string, requestId: string) => {
   const response = await client.post<{ message: string }>(`/sites/${siteId}/access-link/${requestId}/whatsapp`);
   return response.data;
+};
+
+export const sendAccessLinksBatchToWhatsapp = async (data: { site_ids: string[]; processing_month: string }) => {
+  const response = await client.post<{ data: WhatsappBatchResponse }>('/sites/access-links/whatsapp-batch', data);
+  return response.data.data;
 };
