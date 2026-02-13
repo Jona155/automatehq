@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Site } from '../types';
-import { getSites, createSite, sendAccessLinksBatchToWhatsapp } from '../api/sites';
+import { getSites, createSite, sendAccessLinksBatchToWhatsapp, downloadMonthlySummaryBatch } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import MonthPicker from '../components/MonthPicker';
@@ -43,6 +43,10 @@ export default function SitesPage() {
   const [isBatchSending, setIsBatchSending] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
   const [batchMonth, setBatchMonth] = useState(getDefaultMonth());
+  const [summaryExportOpen, setSummaryExportOpen] = useState(false);
+  const [summaryExportMonth, setSummaryExportMonth] = useState(getDefaultMonth());
+  const [isSummaryExporting, setIsSummaryExporting] = useState(false);
+  const [summaryExportError, setSummaryExportError] = useState<string | null>(null);
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
 
@@ -211,6 +215,42 @@ export default function SitesPage() {
     }
   };
 
+  const handleOpenSummaryExport = () => {
+    setSummaryExportError(null);
+    setSummaryExportMonth(getDefaultMonth());
+    setSummaryExportOpen(true);
+  };
+
+  const handleDownloadSummaryBatch = async () => {
+    if (!summaryExportMonth) {
+      setSummaryExportError('יש לבחור חודש לייצוא.');
+      return;
+    }
+    setIsSummaryExporting(true);
+    setSummaryExportError(null);
+    try {
+      const blob = await downloadMonthlySummaryBatch(summaryExportMonth, {
+        approved_only: false,
+        include_inactive: false,
+        include_inactive_sites: true,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `monthly_summary_all_sites_${summaryExportMonth}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setSummaryExportOpen(false);
+    } catch (err: any) {
+      console.error('Failed to export summary batch:', err);
+      setSummaryExportError(err?.response?.data?.message || 'שגיאה בהורדת הסיכום');
+    } finally {
+      setIsSummaryExporting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.site_name.trim()) {
@@ -281,6 +321,16 @@ export default function SitesPage() {
               <button
                 onClick={() => {
                   setActionsOpen(false);
+                  handleOpenSummaryExport();
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">table_view</span>
+                <span>הורדת סיכום אתרים (Excel)</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
                   handleOpenBatch();
                 }}
                 className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
@@ -292,6 +342,50 @@ export default function SitesPage() {
           )}
         </div>
       </div>
+      <Modal
+        isOpen={summaryExportOpen}
+        onClose={() => setSummaryExportOpen(false)}
+        title="הורדת סיכום אתרים (Excel)"
+        maxWidth="sm"
+      >
+        <div className="flex flex-col gap-4" dir="rtl">
+          {summaryExportError && (
+            <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
+              {summaryExportError}
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
+              חודש לייצוא
+            </label>
+            <div className="inline-flex">
+              <MonthPicker
+                value={summaryExportMonth}
+                onChange={setSummaryExportMonth}
+                storageKey="sites_summary_export_month"
+              />
+            </div>
+          </div>
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setSummaryExportOpen(false)}
+              className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
+              disabled={isSummaryExporting}
+            >
+              ביטול
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadSummaryBatch}
+              disabled={isSummaryExporting}
+              className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
+            >
+              {isSummaryExporting ? 'מוריד...' : 'הורד Excel'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 p-4">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">

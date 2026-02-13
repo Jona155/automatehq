@@ -1,10 +1,15 @@
-from flask import Blueprint, request, g
+from flask import Blueprint, request, g, send_file
 import os
 import uuid
 import traceback
 import logging
 from datetime import datetime, timedelta, timezone
 import secrets
+import csv
+import calendar
+from io import BytesIO, StringIO
+import unicodedata
+import pandas as pd
 from sqlalchemy import and_, or_, func, case
 from sqlalchemy.orm import joinedload
 from twilio.rest import Client
@@ -29,6 +34,14 @@ work_card_repo = WorkCardRepository()
 extraction_repo = WorkCardExtractionRepository()
 access_repo = UploadAccessRequestRepository()
 
+STATUS_LABELS = {
+    'APPROVED': 'מאושר',
+    'NEEDS_REVIEW': 'ממתין לסקירה',
+    'NEEDS_ASSIGNMENT': 'ממתין לשיוך',
+    'REJECTED': 'נדחה',
+    'NO_UPLOAD': 'ללא העלאה',
+}
+
 def _generate_access_token():
     token = None
     for _ in range(5):
@@ -47,6 +60,123 @@ def _format_whatsapp_number(raw_phone: str):
 
 def _build_access_link_url(token: str):
     return f"{request.host_url.rstrip('/')}/portal/{token}"
+
+def _safe_label(value: str) -> str:
+    if not value:
+        return ''
+    normalized = unicodedata.normalize('NFKC', value)
+    cleaned = []
+    for ch in normalized:
+        cat = unicodedata.category(ch)
+        if cat[0] in {'L', 'N'}:
+            cleaned.append(ch)
+        else:
+            cleaned.append('_')
+    label = ''.join(cleaned).strip('_')
+    label = '_'.join(filter(None, label.split('_')))
+    return label
+
+def _safe_sheet_name(value: str, existing: set) -> str:
+    if not value:
+        base = 'Site'
+    else:
+        base = value
+    invalid = ['\\', '/', '*', '[', ']', ':', '?']
+    for ch in invalid:
+        base = base.replace(ch, ' ')
+    base = ' '.join(base.split()).strip()
+    if not base:
+        base = 'Site'
+    base = base[:31]
+    candidate = base
+    counter = 2
+    while candidate in existing:
+        suffix = f" {counter}"
+        candidate = (base[:31 - len(suffix)] + suffix).rstrip()
+        counter += 1
+    existing.add(candidate)
+    return candidate
+
+def _load_hours_matrix(site_id, processing_month, approved_only, include_inactive):
+    month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+
+    if include_inactive:
+        employees = employee_repo.get_by_site(site_id, g.business_id)
+    else:
+        employees = employee_repo.get_active_by_site(site_id, g.business_id)
+
+    matrix = {}
+    status_map = {}
+
+    ranked_cards = db.session.query(
+        WorkCard.id.label('work_card_id'),
+        WorkCard.employee_id,
+        WorkCard.review_status,
+        func.row_number().over(
+            partition_by=WorkCard.employee_id,
+            order_by=[
+                case(
+                    (WorkCard.review_status == 'APPROVED', 1),
+                    else_=2
+                ),
+                WorkCard.created_at.desc()
+            ]
+        ).label('rank')
+    ).filter(
+        WorkCard.business_id == g.business_id,
+        WorkCard.site_id == site_id,
+        WorkCard.processing_month == month,
+        WorkCard.employee_id.isnot(None)
+    )
+
+    if approved_only:
+        ranked_cards = ranked_cards.filter(WorkCard.review_status == 'APPROVED')
+
+    ranked_cards = ranked_cards.subquery()
+
+    best_cards = db.session.query(
+        ranked_cards.c.work_card_id
+    ).filter(
+        ranked_cards.c.rank == 1
+    ).subquery()
+
+    day_entries = db.session.query(
+        WorkCardDayEntry.work_card_id,
+        WorkCardDayEntry.day_of_month,
+        WorkCardDayEntry.total_hours
+    ).join(
+        WorkCard,
+        WorkCard.id == WorkCardDayEntry.work_card_id
+    ).filter(
+        WorkCardDayEntry.work_card_id.in_(db.session.query(best_cards.c.work_card_id))
+    ).all()
+
+    work_card_to_employee = {}
+    cards_query = db.session.query(
+        WorkCard.id,
+        WorkCard.employee_id,
+        WorkCard.review_status
+    ).filter(
+        WorkCard.id.in_(db.session.query(best_cards.c.work_card_id))
+    ).all()
+
+    for card_id, employee_id, review_status in cards_query:
+        employee_id_str = str(employee_id)
+        work_card_to_employee[str(card_id)] = employee_id_str
+        status_map[employee_id_str] = review_status
+
+    for entry in day_entries:
+        work_card_id_str = str(entry.work_card_id)
+        employee_id = work_card_to_employee.get(work_card_id_str)
+
+        if employee_id:
+            if employee_id not in matrix:
+                matrix[employee_id] = {}
+
+            if entry.total_hours is not None:
+                matrix[employee_id][entry.day_of_month] = float(entry.total_hours)
+
+    return employees, matrix, status_map, month
 
 @sites_bp.route('', methods=['GET'])
 @token_required
@@ -278,97 +408,13 @@ def get_hours_matrix(site_id):
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
     
     try:
-        # Parse processing_month
-        month = datetime.strptime(processing_month, '%Y-%m-%d').date()
-        
-        # Get employees for this site
-        if include_inactive:
-            employees = employee_repo.get_by_site(site_id, g.business_id)
-        else:
-            employees = employee_repo.get_active_by_site(site_id, g.business_id)
-        
-        # Build matrix structure
-        matrix = {}
-        status_map = {}  # employee_id -> review_status
-        
-        # For performance, fetch all relevant work cards and day entries in a single query
-        # We'll use a subquery to get the "best" work card for each employee
-        # (latest APPROVED if available, else latest NEEDS_REVIEW)
-        
-        # Subquery to rank work cards by preference
-        ranked_cards = db.session.query(
-            WorkCard.id.label('work_card_id'),
-            WorkCard.employee_id,
-            WorkCard.review_status,
-            func.row_number().over(
-                partition_by=WorkCard.employee_id,
-                order_by=[
-                    case(
-                        (WorkCard.review_status == 'APPROVED', 1),
-                        else_=2
-                    ),
-                    WorkCard.created_at.desc()
-                ]
-            ).label('rank')
-        ).filter(
-            WorkCard.business_id == g.business_id,
-            WorkCard.site_id == site_id,
-            WorkCard.processing_month == month,
-            WorkCard.employee_id.isnot(None)
+        employees, matrix, status_map, _ = _load_hours_matrix(
+            site_id,
+            processing_month,
+            approved_only,
+            include_inactive
         )
-        
-        if approved_only:
-            ranked_cards = ranked_cards.filter(WorkCard.review_status == 'APPROVED')
-        
-        ranked_cards = ranked_cards.subquery()
-        
-        # Get the top-ranked card for each employee
-        best_cards = db.session.query(
-            ranked_cards.c.work_card_id
-        ).filter(
-            ranked_cards.c.rank == 1
-        ).subquery()
-        
-        # Fetch day entries for the best cards
-        day_entries = db.session.query(
-            WorkCardDayEntry.work_card_id,
-            WorkCardDayEntry.day_of_month,
-            WorkCardDayEntry.total_hours
-        ).join(
-            WorkCard,
-            WorkCard.id == WorkCardDayEntry.work_card_id
-        ).filter(
-            WorkCardDayEntry.work_card_id.in_(db.session.query(best_cards.c.work_card_id))
-        ).all()
-        
-        # Build a lookup: work_card_id -> (employee_id, review_status)
-        work_card_to_employee = {}
-        cards_query = db.session.query(
-            WorkCard.id,
-            WorkCard.employee_id,
-            WorkCard.review_status
-        ).filter(
-            WorkCard.id.in_(db.session.query(best_cards.c.work_card_id))
-        ).all()
-        
-        for card_id, employee_id, review_status in cards_query:
-            employee_id_str = str(employee_id)
-            work_card_to_employee[str(card_id)] = employee_id_str
-            status_map[employee_id_str] = review_status
-        
-        # Build matrix from day entries
-        for entry in day_entries:
-            work_card_id_str = str(entry.work_card_id)
-            employee_id = work_card_to_employee.get(work_card_id_str)
-            
-            if employee_id:
-                if employee_id not in matrix:
-                    matrix[employee_id] = {}
-                
-                if entry.total_hours is not None:
-                    matrix[employee_id][entry.day_of_month] = float(entry.total_hours)
-        
-        # Return employees, matrix, and status_map
+
         return api_response(data={
             'employees': models_to_list(employees),
             'matrix': matrix,
@@ -380,6 +426,190 @@ def get_hours_matrix(site_id):
         logger.exception(f"Failed to get hours matrix for site {site_id}")
         traceback.print_exc()
         return api_response(status_code=500, message="Failed to get hours matrix", error=str(e))
+
+@sites_bp.route('/<uuid:site_id>/summary/export', methods=['GET'])
+@token_required
+def export_monthly_summary(site_id):
+    """Export monthly summary matrix as a CSV file."""
+    site = repo.get_by_id(site_id)
+    if not site or site.business_id != g.business_id:
+        return api_response(status_code=404, message="Site not found", error="Not Found")
+
+    processing_month = request.args.get('processing_month')
+    if not processing_month:
+        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
+
+    approved_only = request.args.get('approved_only', 'false').lower() == 'true'
+    include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
+
+    try:
+        employees, matrix, status_map, month = _load_hours_matrix(
+            site_id,
+            processing_month,
+            approved_only,
+            include_inactive
+        )
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to export hours matrix for site {site_id}")
+        traceback.print_exc()
+        return api_response(status_code=500, message="Failed to export summary", error=str(e))
+
+    days_in_month = calendar.monthrange(month.year, month.month)[1]
+    day_headers = [str(day) for day in range(1, days_in_month + 1)]
+    headers = ['employee_name', 'employee_id', 'status', *day_headers, 'total_hours']
+
+    csv_buffer = StringIO()
+    writer = csv.writer(csv_buffer)
+    writer.writerow(headers)
+
+    for employee in employees:
+        employee_id_str = str(employee.id)
+        employee_days = matrix.get(employee_id_str, {})
+        total_hours = sum(employee_days.values()) if employee_days else 0
+        status_key = status_map.get(employee_id_str) or 'NO_UPLOAD'
+        status_label = STATUS_LABELS.get(status_key, status_key)
+
+        day_values = []
+        for day in range(1, days_in_month + 1):
+            hours = employee_days.get(day)
+            if hours is None:
+                day_values.append('')
+            else:
+                day_values.append(f"{hours:.1f}")
+
+        writer.writerow([
+            employee.full_name,
+            employee_id_str,
+            status_label,
+            *day_values,
+            f"{total_hours:.1f}" if total_hours > 0 else ''
+        ])
+
+    day_totals = []
+    for day in range(1, days_in_month + 1):
+        day_total = sum(matrix.get(str(employee.id), {}).get(day, 0) for employee in employees)
+        day_totals.append(f"{day_total:.1f}" if day_total > 0 else '')
+
+    grand_total = sum(
+        matrix.get(str(employee.id), {}).get(day, 0)
+        for employee in employees
+        for day in range(1, days_in_month + 1)
+    )
+
+    writer.writerow(['TOTAL', '', '', *day_totals, f"{grand_total:.1f}" if grand_total > 0 else ''])
+
+    csv_bytes = csv_buffer.getvalue().encode('utf-8-sig')
+    output = BytesIO(csv_bytes)
+    output.seek(0)
+
+    site_label = _safe_label(site.site_name) or str(site_id)
+    download_name = f"monthly_summary_{site_label}_{month.strftime('%Y-%m')}.csv"
+
+    return send_file(
+        output,
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=download_name
+    )
+
+@sites_bp.route('/summary/export-batch', methods=['GET'])
+@token_required
+def export_monthly_summary_batch():
+    """Export monthly summary matrix for all sites as an Excel file (one sheet per site)."""
+    processing_month = request.args.get('processing_month')
+    if not processing_month:
+        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
+
+    approved_only = request.args.get('approved_only', 'false').lower() == 'true'
+    include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
+    include_inactive_sites = request.args.get('include_inactive_sites', 'true').lower() == 'true'
+
+    try:
+        month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+
+    sites = repo.get_all_for_business(g.business_id)
+    if not include_inactive_sites:
+        sites = [site for site in sites if site.is_active]
+
+    days_in_month = calendar.monthrange(month.year, month.month)[1]
+    day_headers = [str(day) for day in range(1, days_in_month + 1)]
+    headers = ['employee_name', 'employee_id', 'status', *day_headers, 'total_hours']
+
+    output = BytesIO()
+    used_sheet_names = set()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        for site in sites:
+            try:
+                employees, matrix, status_map, _ = _load_hours_matrix(
+                    site.id,
+                    processing_month,
+                    approved_only,
+                    include_inactive
+                )
+            except Exception:
+                logger.exception(f"Failed to build summary for site {site.id}")
+                continue
+
+            rows = []
+            for employee in employees:
+                employee_id_str = str(employee.id)
+                employee_days = matrix.get(employee_id_str, {})
+                total_hours = sum(employee_days.values()) if employee_days else 0
+                status_key = status_map.get(employee_id_str) or 'NO_UPLOAD'
+                status_label = STATUS_LABELS.get(status_key, status_key)
+
+                day_values = []
+                for day in range(1, days_in_month + 1):
+                    hours = employee_days.get(day)
+                    if hours is None:
+                        day_values.append('')
+                    else:
+                        day_values.append(f"{hours:.1f}")
+
+                rows.append({
+                    'employee_name': employee.full_name,
+                    'employee_id': employee_id_str,
+                    'status': status_label,
+                    **{day_headers[idx]: day_values[idx] for idx in range(days_in_month)},
+                    'total_hours': f"{total_hours:.1f}" if total_hours > 0 else ''
+                })
+
+            day_totals = []
+            for day in range(1, days_in_month + 1):
+                day_total = sum(matrix.get(str(employee.id), {}).get(day, 0) for employee in employees)
+                day_totals.append(f"{day_total:.1f}" if day_total > 0 else '')
+
+            grand_total = sum(
+                matrix.get(str(employee.id), {}).get(day, 0)
+                for employee in employees
+                for day in range(1, days_in_month + 1)
+            )
+
+            total_row = {
+                'employee_name': 'TOTAL',
+                'employee_id': '',
+                'status': '',
+                **{day_headers[idx]: day_totals[idx] for idx in range(days_in_month)},
+                'total_hours': f"{grand_total:.1f}" if grand_total > 0 else ''
+            }
+            rows.append(total_row)
+
+            df = pd.DataFrame(rows, columns=headers)
+            sheet_name = _safe_sheet_name(site.site_name, used_sheet_names)
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    output.seek(0)
+    download_name = f"monthly_summary_all_sites_{month.strftime('%Y-%m')}.xlsx"
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=download_name
+    )
 
 
 @sites_bp.route('/<uuid:site_id>/access-link', methods=['POST'])

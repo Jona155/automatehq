@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { Site, Employee } from '../types';
-import { getSite, updateSite } from '../api/sites';
+import { downloadMonthlySummary, getSite, updateSite } from '../api/sites';
 import { getEmployees } from '../api/employees';
 import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
@@ -25,6 +25,7 @@ function getPreviousMonth(): string {
   return `${year}-${month}`;
 }
 
+
 export default function SiteDetailsPage() {
   const { siteId } = useParams<{ siteId: string }>();
   const { isAuthenticated, user } = useAuth();
@@ -44,6 +45,7 @@ export default function SiteDetailsPage() {
   const [responsibleEmployeeId, setResponsibleEmployeeId] = useState<string>('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
   const actionsRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
@@ -172,6 +174,31 @@ export default function SiteDetailsPage() {
     }
   };
 
+  const handleDownloadSummaryCsv = async () => {
+    if (!siteId || !site) return;
+    if (isDownloadingSummary) return;
+    setIsDownloadingSummary(true);
+    try {
+      const blob = await downloadMonthlySummary(siteId, selectedMonth, {
+        approved_only: false,
+        include_inactive: false,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `monthly_summary_${site.site_name}_${selectedMonth}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('Failed to download summary CSV:', err);
+      showToast(err?.response?.data?.message || 'שגיאה בהורדת הסיכום החודשי', 'error');
+    } finally {
+      setIsDownloadingSummary(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6">
@@ -243,6 +270,17 @@ export default function SiteDetailsPage() {
               >
                 <span className="material-symbols-outlined text-lg">download</span>
                 <span>{"\u05d4\u05d5\u05e8\u05d3\u05ea \u05db\u05e8\u05d8\u05d9\u05e1\u05d9\u05dd"}</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  handleDownloadSummaryCsv();
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+                disabled={isDownloadingSummary}
+              >
+                <span className="material-symbols-outlined text-lg">table_view</span>
+                <span>{isDownloadingSummary ? 'מוריד סיכום (CSV)...' : 'הורדת סיכום (CSV)'}</span>
               </button>
               <button
                 onClick={() => {
