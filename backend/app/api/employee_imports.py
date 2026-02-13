@@ -44,7 +44,7 @@ LAST_NAME_COLUMNS = ['שם משפחה', 'last_name', 'last name']
 FULL_NAME_COLUMNS = ['שם מלא', 'full_name', 'full name']
 SITE_COLUMNS = ['שם הפרויקט הנוכחי', 'אתר', 'site', 'site_name', 'project']
 STATUS_COLUMNS = ['סטטוס נוכחי בעברית', 'status', 'employee_status']
-PHONE_COLUMNS = ['מספר טלפון', 'טלפון', 'phone', 'phone_number', 'מספר פלאפון']
+PHONE_COLUMNS = ['מספר טלפון', 'מספר טלפון ישראלי', 'טלפון', 'phone', 'phone_number', 'מספר פלאפון']
 
 
 def _normalize_cell(value: Any) -> Optional[str]:
