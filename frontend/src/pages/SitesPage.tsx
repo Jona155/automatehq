@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
+import LoadingIndicator from '../components/LoadingIndicator';
 
 type SortField = 'site_name' | 'site_code' | 'employee_count' | 'is_active';
 type SortOrder = 'asc' | 'desc';
@@ -307,7 +308,7 @@ export default function SitesPage() {
           </button>
 
           {actionsOpen && (
-            <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden z-50" dir="rtl">
+            <div className="absolute left-0 mt-2 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden z-50" dir="rtl">
               <button
                 onClick={() => {
                   setActionsOpen(false);
@@ -349,41 +350,50 @@ export default function SitesPage() {
         maxWidth="sm"
       >
         <div className="flex flex-col gap-4" dir="rtl">
-          {summaryExportError && (
+          {summaryExportError && !isSummaryExporting && (
             <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
               {summaryExportError}
             </div>
           )}
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
-              חודש לייצוא
-            </label>
-            <div className="inline-flex">
-              <MonthPicker
-                value={summaryExportMonth}
-                onChange={setSummaryExportMonth}
-                storageKey="sites_summary_export_month"
-              />
-            </div>
-          </div>
-          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => setSummaryExportOpen(false)}
-              className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
-              disabled={isSummaryExporting}
-            >
-              ביטול
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadSummaryBatch}
-              disabled={isSummaryExporting}
-              className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
-            >
-              {isSummaryExporting ? 'מוריד...' : 'הורד Excel'}
-            </button>
-          </div>
+          {isSummaryExporting ? (
+            <LoadingIndicator
+              title="מכין קובץ Excel..."
+              subtitle="התהליך יכול לקחת עד דקה"
+            />
+          ) : (
+            <>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
+                  חודש לייצוא
+                </label>
+                <div className="inline-flex">
+                  <MonthPicker
+                    value={summaryExportMonth}
+                    onChange={setSummaryExportMonth}
+                    storageKey="sites_summary_export_month"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSummaryExportOpen(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
+                  disabled={isSummaryExporting}
+                >
+                  ביטול
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadSummaryBatch}
+                  disabled={isSummaryExporting}
+                  className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
+                >
+                  {isSummaryExporting ? 'מוריד...' : 'הורד Excel'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </Modal>
 

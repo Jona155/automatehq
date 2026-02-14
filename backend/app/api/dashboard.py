@@ -97,7 +97,7 @@ def get_dashboard_summary():
             WorkCard.processing_month == month_start
         ).scalar() or 0
 
-        # Active sites with employee counts
+        # Top 5 active sites by active employee counts
         sites_rows = db.session.query(
             Site.id,
             Site.site_name,
@@ -114,7 +114,10 @@ def get_dashboard_summary():
             Site.is_active.is_(True)
         ).group_by(
             Site.id, Site.site_name
-        ).order_by(Site.site_name.asc()).all()
+        ).order_by(
+            func.count(Employee.id).desc(),
+            Site.site_name.asc()
+        ).limit(5).all()
 
         sites_table = [
             {
