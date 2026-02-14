@@ -109,6 +109,20 @@ export interface DayEntry {
   from_time: string | null;
   to_time: string | null;
   total_hours: number | null;
+  source?: string | null;
+  is_valid?: boolean;
+  has_conflict?: boolean;
+  conflict_type?: 'WITH_APPROVED' | 'WITH_PENDING' | null;
+  is_locked?: boolean;
+  locked_from_previous?: boolean;
+  previous_work_card_id?: string | null;
+  previous_work_card_status?: 'NEEDS_ASSIGNMENT' | 'NEEDS_REVIEW' | 'APPROVED' | 'REJECTED' | null;
+  previous_entry?: {
+    day_of_month: number;
+    from_time: string | null;
+    to_time: string | null;
+    total_hours: number | null;
+  } | null;
   updated_by_user_id: string | null;
   created_at: string;
   updated_at: string;

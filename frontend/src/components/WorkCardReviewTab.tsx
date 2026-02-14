@@ -42,7 +42,16 @@ interface DayEntryRow {
   from_time: string;
   to_time: string;
   total_hours: string;
+  latest_from_time: string;
+  latest_to_time: string;
+  latest_total_hours: string;
+  previousEntry: DayEntry['previous_entry'];
   isDirty: boolean;
+  isLocked: boolean;
+  hasConflict: boolean;
+  conflictType: 'WITH_APPROVED' | 'WITH_PENDING' | null;
+  lockedFromPrevious: boolean;
+  resolvedApprovedConflict: 'KEEP_PREVIOUS' | 'USE_LATEST' | null;
 }
 
 export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey }: WorkCardReviewTabProps) {
@@ -56,6 +65,9 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const [isSaving, setIsSaving] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showConflictModal, setShowConflictModal] = useState(false);
+  const [approvedConflictDecisions, setApprovedConflictDecisions] = useState<Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'>>({});
+  const [draftConflictDecisions, setDraftConflictDecisions] = useState<Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'>>({});
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
   const [extractionsByCardId, setExtractionsByCardId] = useState<Record<string, WorkCardExtraction | null>>({});
@@ -120,6 +132,36 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     const rows = dayEntries.map((entry, index) => ({ entry, index }));
     return showDirtyOnly ? rows.filter(row => row.entry.isDirty) : rows;
   }, [dayEntries, showDirtyOnly]);
+
+  const conflictingEntries = useMemo(
+    () => dayEntries.filter((entry) => entry.conflictType === 'WITH_APPROVED' || entry.conflictType === 'WITH_PENDING'),
+    [dayEntries]
+  );
+
+  const approvedConflictDays = useMemo(
+    () =>
+      dayEntries
+        .filter((entry) => entry.conflictType === 'WITH_APPROVED')
+        .map((entry) => entry.day_of_month),
+    [dayEntries]
+  );
+
+  const conflictDays = useMemo(
+    () => conflictingEntries.map((entry) => entry.day_of_month),
+    [conflictingEntries]
+  );
+
+  const unresolvedConflictDays = useMemo(
+    () => conflictDays.filter((day) => !approvedConflictDecisions[day]),
+    [conflictDays, approvedConflictDecisions]
+  );
+
+  const unresolvedConflictCount = unresolvedConflictDays.length;
+
+  const conflictCount = conflictDays.length;
+
+  const approvedConflictCount = approvedConflictDays.length;
+  const pendingConflictCount = conflictCount - approvedConflictCount;
 
   // Check for identity mismatch between extracted passport and assigned employee
   const hasIdentityMismatch = useMemo(() => {
@@ -238,10 +280,22 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
         from_time: existing?.from_time || '',
         to_time: existing?.to_time || '',
         total_hours: existing?.total_hours?.toString() || '',
+        latest_from_time: existing?.from_time || '',
+        latest_to_time: existing?.to_time || '',
+        latest_total_hours: existing?.total_hours?.toString() || '',
+        previousEntry: existing?.previous_entry || null,
         isDirty: false,
+        isLocked: !!existing?.is_locked,
+        hasConflict: !!existing?.has_conflict,
+        conflictType: existing?.conflict_type || null,
+        lockedFromPrevious: !!existing?.locked_from_previous,
+        resolvedApprovedConflict: null,
       });
     }
     setDayEntries(rows);
+    setApprovedConflictDecisions({});
+    setDraftConflictDecisions({});
+    setShowConflictModal(false);
   }, [selectedMonth]);
 
   // Revoke object URLs to avoid leaking memory when switching cards
@@ -428,6 +482,9 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const handleEntryChange = (dayIndex: number, field: 'from_time' | 'to_time' | 'total_hours', value: string) => {
     setDayEntries(prev => {
       const updated = [...prev];
+      if (updated[dayIndex].isLocked) {
+        return prev;
+      }
       updated[dayIndex] = {
         ...updated[dayIndex],
         [field]: value,
@@ -452,7 +509,9 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const handleSave = async () => {
     if (!selectedCard) return;
 
-    const dirtyEntries = dayEntries.filter(e => e.isDirty && (e.from_time || e.to_time || e.total_hours));
+    const dirtyEntries = dayEntries.filter(
+      e => !e.isLocked && e.isDirty && (e.from_time || e.to_time || e.total_hours)
+    );
     
     if (dirtyEntries.length === 0) {
       showToast('אין שינויים לשמירה', 'info');
@@ -469,9 +528,8 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       }));
 
       await updateDayEntries(selectedCard.id, { entries });
-      
-      // Mark entries as not dirty
-      setDayEntries(prev => prev.map(e => ({ ...e, isDirty: false })));
+      const refreshedEntries = await getDayEntries(selectedCard.id);
+      initializeDayEntries(refreshedEntries);
       
       showToast('הנתונים נשמרו בהצלחה', 'success');
     } catch (err) {
@@ -484,19 +542,120 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
 
   const handleApprove = async () => {
     if (!selectedCard || !user) return;
+
+    if (hasUnsavedChanges) {
+      showToast('יש לשמור שינויים לפני אישור הכרטיס', 'info');
+      return;
+    }
+
+    if (conflictCount > 0 && unresolvedConflictCount > 0) {
+      openConflictModal();
+      showToast('יש לעבור על ההתנגשויות ולהחיל החלטות לפני אישור', 'info');
+      return;
+    }
     try {
-      await approveWorkCard(selectedCard.id, user.id);
+      if (approvedConflictDays.length > 0) {
+        const overrideDays = approvedConflictDays.filter((day) => approvedConflictDecisions[day] === 'USE_LATEST');
+        if (overrideDays.length > 0) {
+          await approveWorkCard(selectedCard.id, user.id, {
+            override_conflict_days: overrideDays,
+            confirm_override_approved: true,
+          });
+        } else {
+          await approveWorkCard(selectedCard.id, user.id);
+        }
+      } else {
+        await approveWorkCard(selectedCard.id, user.id);
+      }
       showToast('הכרטיס אושר בהצלחה', 'success');
-      
+
       // Update local state
-      setWorkCards(prev => prev.map(c => 
+      setWorkCards(prev => prev.map(c =>
         c.id === selectedCard.id ? { ...c, review_status: 'APPROVED' } : c
       ));
       setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
+      const refreshedEntries = await getDayEntries(selectedCard.id);
+      initializeDayEntries(refreshedEntries);
     } catch (err) {
       console.error('Failed to approve card:', err);
       showToast('שגיאה באישור הכרטיס', 'error');
     }
+  };
+
+  const formatConflictValue = (
+    from: string | null | undefined,
+    to: string | null | undefined,
+    total: string | number | null | undefined
+  ) => {
+    const fromDisplay = from || '--:--';
+    const toDisplay = to || '--:--';
+    const totalDisplay = total === '' || total === null || typeof total === 'undefined' ? '--' : String(total);
+    return `${fromDisplay} - ${toDisplay} (${totalDisplay} ש')`;
+  };
+
+  const openConflictModal = () => {
+    const initialDecisions: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...approvedConflictDecisions };
+    for (const row of dayEntries) {
+      if ((row.conflictType === 'WITH_APPROVED' || row.conflictType === 'WITH_PENDING') && row.resolvedApprovedConflict) {
+        initialDecisions[row.day_of_month] = row.resolvedApprovedConflict;
+      }
+      if ((row.conflictType === 'WITH_APPROVED' || row.conflictType === 'WITH_PENDING') && !initialDecisions[row.day_of_month]) {
+        initialDecisions[row.day_of_month] = row.conflictType === 'WITH_APPROVED' ? 'KEEP_PREVIOUS' : 'USE_LATEST';
+      }
+    }
+    setDraftConflictDecisions(initialDecisions);
+    setShowConflictModal(true);
+  };
+
+  const applyConflictDecisions = () => {
+    const unresolvedDays = conflictDays.filter((day) => !draftConflictDecisions[day]);
+    if (unresolvedDays.length > 0) {
+      showToast(`יש לבחור החלטה לכל ההתנגשויות (נותרו ${unresolvedDays.length})`, 'error');
+      return;
+    }
+
+    setApprovedConflictDecisions(draftConflictDecisions);
+    setDayEntries((prev) =>
+      prev.map((entry) => {
+        if (entry.conflictType !== 'WITH_APPROVED' && entry.conflictType !== 'WITH_PENDING') return entry;
+
+        const decision = draftConflictDecisions[entry.day_of_month];
+        if (!decision) return entry;
+
+        if (decision === 'KEEP_PREVIOUS' && entry.previousEntry) {
+          const nextFrom = entry.previousEntry.from_time || '';
+          const nextTo = entry.previousEntry.to_time || '';
+          const nextTotal = entry.previousEntry.total_hours?.toString() || '';
+          const changed = entry.from_time !== nextFrom || entry.to_time !== nextTo || entry.total_hours !== nextTotal;
+          return {
+            ...entry,
+            from_time: nextFrom,
+            to_time: nextTo,
+            total_hours: nextTotal,
+            hasConflict: false,
+            conflictType: entry.conflictType,
+            isLocked: entry.conflictType === 'WITH_APPROVED',
+            isDirty: entry.conflictType === 'WITH_PENDING' ? changed : false,
+            resolvedApprovedConflict: decision,
+          };
+        }
+
+        return {
+          ...entry,
+          from_time: entry.latest_from_time,
+          to_time: entry.latest_to_time,
+          total_hours: entry.latest_total_hours,
+          hasConflict: false,
+          conflictType: entry.conflictType,
+          isLocked: entry.conflictType === 'WITH_APPROVED',
+          isDirty: false,
+          resolvedApprovedConflict: decision,
+        };
+      })
+    );
+
+    setShowConflictModal(false);
+    showToast('החלטות ההתנגשות הוחלו על הטבלה. אם בחרת בערכים קודמים בהתנגשות לא מאושרת, יש לשמור לפני אישור.', 'success');
   };
 
   const handleReject = async () => {
@@ -965,6 +1124,15 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                       <div className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-full">
                         סה"כ {totalHours.toFixed(2)} שעות
                       </div>
+                      {conflictCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={openConflictModal}
+                          className="text-xs text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/30 px-2 py-1 rounded-full hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                        >
+                          {conflictCount} התנגשויות{unresolvedConflictCount > 0 ? ` (${unresolvedConflictCount} דורשות החלטה)` : ''}
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1038,17 +1206,43 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                             <tr
                               key={entry.day_of_month}
                               className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
-                                entry.isDirty ? 'bg-yellow-50 dark:bg-yellow-900/10' : ''
+                                entry.isLocked
+                                  ? 'bg-slate-100 dark:bg-slate-800/40'
+                                  : entry.hasConflict
+                                  ? 'bg-red-50 dark:bg-red-900/10'
+                                  : entry.isDirty
+                                  ? 'bg-yellow-50 dark:bg-yellow-900/10'
+                                  : ''
                               }`}
                             >
                               <td className="px-3 py-2 text-center font-medium text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-700">
-                                {entry.day_of_month}
+                                <div className="flex items-center justify-center gap-1">
+                                  <span>{entry.day_of_month}</span>
+                                  {entry.isLocked && (
+                                    <span className="material-symbols-outlined text-xs text-slate-500">lock</span>
+                                  )}
+                                  {entry.hasConflict && (
+                                    <span className="material-symbols-outlined text-xs text-red-500">warning</span>
+                                  )}
+                                  {entry.resolvedApprovedConflict && (
+                                    <span
+                                      className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                                        entry.resolvedApprovedConflict === 'USE_LATEST'
+                                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                                          : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                                      }`}
+                                    >
+                                      {entry.resolvedApprovedConflict === 'USE_LATEST' ? 'חדש' : 'קודם'}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
                                 <input
                                   type="time"
                                   value={entry.from_time}
                                   onChange={(e) => handleEntryChange(index, 'from_time', e.target.value)}
+                                  disabled={entry.isLocked}
                                   className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                                 />
                               </td>
@@ -1057,6 +1251,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                                   type="time"
                                   value={entry.to_time}
                                   onChange={(e) => handleEntryChange(index, 'to_time', e.target.value)}
+                                  disabled={entry.isLocked}
                                   className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                                 />
                               </td>
@@ -1068,6 +1263,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                                   max="24"
                                   value={entry.total_hours}
                                   onChange={(e) => handleEntryChange(index, 'total_hours', e.target.value)}
+                                  disabled={entry.isLocked}
                                   className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                                   placeholder="0"
                                 />
@@ -1111,6 +1307,166 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
             >
               <span className="material-symbols-outlined text-lg">delete</span>
               <span>דחה ומחק</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showConflictModal}
+        onClose={() => setShowConflictModal(false)}
+        title="פתרון התנגשויות"
+        maxWidth="xl"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20">
+            <span className="material-symbols-outlined text-amber-700 dark:text-amber-300">rule</span>
+            <div className="text-sm text-amber-800 dark:text-amber-200 space-y-1">
+              <p>עברו על כל יום עם התנגשות ובחרו איזה ערך יישמר.</p>
+              <p>ברירת מחדל: מול נתון מאושר נשמר הקודם, מול נתון לא מאושר נשמר החדש.</p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-full">
+              {approvedConflictCount} מול מאושר | {pendingConflictCount} מול לא מאושר
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const allLatest: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...draftConflictDecisions };
+                  conflictDays.forEach((day) => {
+                    allLatest[day] = 'USE_LATEST';
+                  });
+                  setDraftConflictDecisions(allLatest);
+                }}
+                className={`px-2.5 py-1.5 text-xs rounded border transition-colors ${
+                  conflictDays.every((day) => draftConflictDecisions[day] === 'USE_LATEST')
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                }`}
+              >
+                בחר חדש לכולם
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const allPrevious: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...draftConflictDecisions };
+                  conflictDays.forEach((day) => {
+                    allPrevious[day] = 'KEEP_PREVIOUS';
+                  });
+                  setDraftConflictDecisions(allPrevious);
+                }}
+                className={`px-2.5 py-1.5 text-xs rounded border transition-colors ${
+                  conflictDays.every((day) => draftConflictDecisions[day] === 'KEEP_PREVIOUS')
+                    ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100'
+                    : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                }`}
+              >
+                בחר קודם לכולם
+              </button>
+            </div>
+          </div>
+
+          {conflictingEntries.length === 0 ? (
+            <div className="text-sm text-slate-500 dark:text-slate-400">לא נמצאו התנגשויות בכרטיס זה.</div>
+          ) : (
+            <div className="border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-200 dark:divide-slate-700 max-h-[50vh] overflow-y-auto">
+              {conflictingEntries.map((entry) => {
+                const draftDecision = draftConflictDecisions[entry.day_of_month];
+                return (
+                  <div key={entry.day_of_month} className="p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                        יום {entry.day_of_month}
+                      </div>
+                      <span
+                        className={`text-[11px] px-2 py-1 rounded-full ${
+                          entry.conflictType === 'WITH_APPROVED'
+                            ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                        }`}
+                      >
+                        {entry.conflictType === 'WITH_APPROVED' ? 'התנגשות מול נתון מאושר' : 'התנגשות מול נתון קודם'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="p-2 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
+                        <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">ערך קודם</div>
+                        <div className="text-sm text-slate-800 dark:text-slate-200">
+                          {formatConflictValue(
+                            entry.previousEntry?.from_time,
+                            entry.previousEntry?.to_time,
+                            entry.previousEntry?.total_hours
+                          )}
+                        </div>
+                      </div>
+                      <div className="p-2 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
+                        <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">ערך חדש</div>
+                        <div className="text-sm text-slate-800 dark:text-slate-200">
+                          {formatConflictValue(entry.latest_from_time, entry.latest_to_time, entry.latest_total_hours)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDraftConflictDecisions((prev) => ({ ...prev, [entry.day_of_month]: 'KEEP_PREVIOUS' }))
+                        }
+                        className={`px-2.5 py-1.5 text-xs rounded border ${
+                          draftDecision === 'KEEP_PREVIOUS'
+                            ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100'
+                            : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        שמור את הקודם
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDraftConflictDecisions((prev) => ({ ...prev, [entry.day_of_month]: 'USE_LATEST' }))
+                        }
+                        className={`px-2.5 py-1.5 text-xs rounded border ${
+                          draftDecision === 'USE_LATEST'
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        שמור את החדש
+                      </button>
+                      {!draftDecision && (
+                        <span className="text-xs text-red-600 dark:text-red-300">נדרשת בחירה</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400">
+                      {entry.conflictType === 'WITH_APPROVED'
+                        ? 'השפעה: בחירה ב"חדש" תדרוס נתון שאושר בעבר.'
+                        : 'השפעה: בחירה ב"קודם" תעדכן את הטבלה לערך קודם. כדי שהבחירה תישמר בשרת יש לבצע שמירה לפני אישור.'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowConflictModal(false)}
+              className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm"
+            >
+              ביטול
+            </button>
+            <button
+              type="button"
+              onClick={applyConflictDecisions}
+              className="px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 text-sm"
+            >
+              החל החלטות
             </button>
           </div>
         </div>
@@ -1209,3 +1565,4 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     </div>
   );
 }
+

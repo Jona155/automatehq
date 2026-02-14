@@ -69,7 +69,45 @@ class WorkCardRepository(BaseRepository[WorkCard]):
             employee_id=employee_id,
             processing_month=month,
             business_id=business_id
-        ).all()
+        ).order_by(WorkCard.created_at.desc()).all()
+
+    def get_previous_card_for_employee_month(
+        self,
+        employee_id: UUID,
+        month: date,
+        business_id: UUID,
+        current_card_id: UUID,
+        site_id: Optional[UUID] = None,
+        include_day_entries: bool = False
+    ) -> Optional[WorkCard]:
+        """
+        Get the immediate previous work card for an employee/month in a business.
+
+        Args:
+            employee_id: Employee UUID
+            month: Processing month
+            business_id: Business UUID
+            current_card_id: Current card UUID to exclude from lookup
+            site_id: Optional site UUID filter
+            include_day_entries: Whether to eager load day_entries
+
+        Returns:
+            Previous WorkCard instance or None
+        """
+        query = self.session.query(WorkCard).filter(
+            WorkCard.employee_id == employee_id,
+            WorkCard.processing_month == month,
+            WorkCard.business_id == business_id,
+            WorkCard.id != current_card_id
+        )
+
+        if site_id:
+            query = query.filter(WorkCard.site_id == site_id)
+
+        if include_day_entries:
+            query = query.options(joinedload(WorkCard.day_entries))
+
+        return query.order_by(WorkCard.created_at.desc()).first()
     
     def get_by_review_status(self, status: str, business_id: UUID) -> List[WorkCard]:
         """
