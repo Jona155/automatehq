@@ -250,7 +250,7 @@ export default function SiteDetailsPage() {
           </button>
 
           {actionsOpen && (
-            <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden z-50" dir="rtl">
+            <div className="absolute left-0 mt-2 w-56 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden z-50" dir="rtl">
               <button
                 onClick={() => {
                   setActionsOpen(false);

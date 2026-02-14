@@ -9,7 +9,6 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend,
   CartesianGrid,
 } from 'recharts';
 import { getDashboardSummary } from '../api/dashboard';
@@ -102,6 +101,16 @@ export default function DashboardPage() {
     return base.map((item) => ({ ...item, count: map.get(item.status) ?? 0 }));
   }, [summary]);
 
+  const statusTotal = useMemo(() => statusData.reduce((sum, item) => sum + item.count, 0), [statusData]);
+  const statusChartData = useMemo(() => statusData.filter((item) => item.count > 0), [statusData]);
+  const statusDonutData = useMemo(
+    () =>
+      statusChartData.length > 0
+        ? statusChartData
+        : [{ status: 'EMPTY', label: 'ללא נתונים', count: 1, color: '#e2e8f0' }],
+    [statusChartData]
+  );
+
   const trendData = useMemo(() => {
     if (!summary) return [];
     return summary.trends.months.map((month, index) => ({
@@ -155,7 +164,7 @@ export default function DashboardPage() {
             ))}
           </section>
 
-          <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <section className="grid grid-cols-1 xl:grid-cols-3 gap-6 xl:items-start">
             <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
               <div className="h-4 w-40 bg-slate-200 dark:bg-slate-700 rounded" />
               <div className="h-52 w-full bg-slate-200 dark:bg-slate-700 rounded-xl mt-6" />
@@ -221,26 +230,55 @@ export default function DashboardPage() {
           </section>
 
           <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">סטטוסים בכרטיסי עבודה</h2>
-                <span className="text-xs text-slate-400">{formatMonthTitle(summary.month)}</span>
+            <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 xl:self-start">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">התפלגות סטטוסים בכרטיסי עבודה</h2>
+                  <p className="text-xs text-slate-400 mt-1">חלוקה לפי מצב טיפול בכרטיסים לחודש הנבחר</p>
+                </div>
+                <span className="text-[11px] font-medium text-slate-500 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full shrink-0">
+                  {formatMonthTitle(summary.month)}
+                </span>
               </div>
-              <div className="h-[260px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={statusData} dataKey="count" nameKey="label" innerRadius={60} outerRadius={90}>
-                      {statusData.map((entry) => (
-                        <Cell key={entry.status} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value) => formatNumber(Number(value))}
-                      contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 12px 24px rgba(15,23,42,0.12)' }}
-                    />
-                    <Legend verticalAlign="bottom" height={48} formatter={(value) => <span className="text-xs text-slate-500">{value}</span>} />
-                  </PieChart>
-                </ResponsiveContainer>
+
+              <div className="mt-5 rounded-xl bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/80 dark:border-slate-700/60 p-4">
+                <div className="relative h-[190px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={statusDonutData}
+                        dataKey="count"
+                        nameKey="label"
+                        innerRadius={52}
+                        outerRadius={76}
+                        paddingAngle={1}
+                        cornerRadius={6}
+                        stroke="none"
+                      >
+                        {statusDonutData.map((entry) => (
+                          <Cell key={entry.status} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      {statusTotal > 0 && (
+                        <Tooltip
+                          formatter={(value, _name, item) => {
+                            const count = Number(value);
+                            const percent = statusTotal > 0 ? Math.round((count / statusTotal) * 100) : 0;
+                            return [`${formatNumber(count)} (${percent}%)`, item?.payload?.label ?? 'סטטוס'];
+                          }}
+                          contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 12px 24px rgba(15,23,42,0.12)' }}
+                        />
+                      )}
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">סה"כ כרטיסים</span>
+                    <span className="text-3xl font-bold text-slate-900 dark:text-white leading-none mt-1">{formatNumber(statusTotal)}</span>
+                  </div>
+                </div>
+                <p className="mt-3 text-center text-[11px] text-slate-500 dark:text-slate-400">
+                  העבר עכבר על כל פלח להצגת סטטוס, כמות ואחוז
+                </p>
               </div>
             </div>
 
@@ -290,8 +328,8 @@ export default function DashboardPage() {
           <section className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">אתרים פעילים ועובדים</h2>
-                <p className="text-xs text-slate-400 mt-1">מספר עובדים לפי אתר</p>
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">5 האתרים המובילים לפי עובדים פעילים</h2>
+                <p className="text-xs text-slate-400 mt-1">מוצגים רק חמשת האתרים עם מספר העובדים הפעילים הגבוה ביותר</p>
               </div>
               <span className="text-xs text-slate-400">{formatMonthTitle(summary.month)}</span>
             </div>
