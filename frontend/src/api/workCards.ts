@@ -87,8 +87,16 @@ export const updateWorkCard = async (cardId: string, data: { employee_id?: strin
 };
 
 // Approve work card
-export const approveWorkCard = async (cardId: string, userId: string) => {
-  const response = await client.post<{ data: WorkCard }>(`/work_cards/${cardId}/approve`, { user_id: userId });
+export interface ApproveWorkCardOptions {
+  override_conflict_days?: number[];
+  confirm_override_approved?: boolean;
+}
+
+export const approveWorkCard = async (cardId: string, userId: string, options?: ApproveWorkCardOptions) => {
+  const response = await client.post<{ data: WorkCard }>(`/work_cards/${cardId}/approve`, {
+    user_id: userId,
+    ...(options || {}),
+  });
   return response.data.data;
 };
 

@@ -19,7 +19,7 @@ import uuid
 import logging
 import traceback
 from datetime import time as dt_time
-from typing import Optional
+from typing import Optional, Any, Dict, Tuple
 
 # Load env before any other imports
 from dotenv import load_dotenv
@@ -85,6 +85,58 @@ def parse_time(time_str: Optional[str]) -> Optional[dt_time]:
     except (ValueError, TypeError):
         pass
     return None
+
+
+def _normalized_entry_values(
+    from_time: Optional[Any],
+    to_time: Optional[Any],
+    total_hours: Optional[Any]
+) -> Tuple[Optional[str], Optional[str], Optional[float]]:
+    """Normalize day entry values for reliable comparisons."""
+    def normalize_time(value: Optional[Any]) -> Optional[str]:
+        if value is None:
+            return None
+        if hasattr(value, 'hour') and hasattr(value, 'minute'):
+            return f"{int(value.hour):02d}:{int(value.minute):02d}"
+        raw = str(value).strip()
+        if not raw:
+            return None
+        parts = raw.split(':')
+        if len(parts) < 2:
+            return raw
+        try:
+            return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+        except ValueError:
+            return raw
+
+    def normalize_hours(value: Optional[Any]) -> Optional[float]:
+        if value is None or value == '':
+            return None
+        try:
+            return round(float(value), 2)
+        except (TypeError, ValueError):
+            return None
+
+    return (
+        normalize_time(from_time),
+        normalize_time(to_time),
+        normalize_hours(total_hours),
+    )
+
+
+def _entry_differs_from_previous(extracted_entry: Dict[str, Any], previous_entry: Any) -> bool:
+    """Return True when extracted day values differ from previous card values."""
+    new_values = _normalized_entry_values(
+        parse_time(extracted_entry.get('start_time')),
+        parse_time(extracted_entry.get('end_time')),
+        extracted_entry.get('total_hours'),
+    )
+    prev_values = _normalized_entry_values(
+        previous_entry.from_time,
+        previous_entry.to_time,
+        previous_entry.total_hours,
+    )
+    return new_values != prev_values
 
 
 def process_job(
@@ -156,6 +208,24 @@ def process_job(
             logger.info(f"Matched employee {matched_employee_id} via {match_method}")
         else:
             logger.info("No employee match found")
+
+        effective_employee_id = work_card.employee_id or matched_employee_id
+        previous_entries_by_day = {}
+        if effective_employee_id:
+            previous_card = work_card_repo.get_previous_card_for_employee_month(
+                employee_id=effective_employee_id,
+                month=work_card.processing_month,
+                business_id=work_card.business_id,
+                current_card_id=work_card.id,
+                site_id=work_card.site_id,
+                include_day_entries=True
+            )
+            if previous_card:
+                previous_entries_by_day = {entry.day_of_month: entry for entry in previous_card.day_entries}
+                logger.info(
+                    f"Comparing against previous card {previous_card.id} "
+                    f"with {len(previous_entries_by_day)} day entries"
+                )
         
         # Identity validation for single uploads (Case B: employee_id is already set)
         identity_mismatch = False
@@ -173,8 +243,9 @@ def process_job(
                 else:
                     logger.info(f"Identity validated: passport IDs match for employee {assigned_employee.full_name}")
         
-        # Create day entries
+        # Create day entries incrementally: add only new/different slots.
         day_entries_created = 0
+        day_entries_skipped_as_duplicate = 0
         for entry in entries:
             day = entry.get('day')
             if day is None or day < 1 or day > 31:
@@ -184,6 +255,12 @@ def process_job(
             existing = day_entry_repo.get_by_day(job.work_card_id, day)
             if existing:
                 logger.debug(f"Day {day} entry already exists, skipping")
+                continue
+
+            previous_entry = previous_entries_by_day.get(day)
+            if previous_entry and not _entry_differs_from_previous(entry, previous_entry):
+                day_entries_skipped_as_duplicate += 1
+                logger.debug(f"Day {day} duplicates previous card, skipping")
                 continue
             
             try:
@@ -200,7 +277,10 @@ def process_job(
             except Exception as e:
                 logger.warning(f"Failed to create day entry for day {day}: {e}")
         
-        logger.info(f"Created {day_entries_created} day entries")
+        logger.info(
+            f"Created {day_entries_created} day entries "
+            f"(skipped {day_entries_skipped_as_duplicate} duplicates)"
+        )
         
         # Update work card with matched employee (if found and not already assigned)
         if matched_employee_id and not work_card.employee_id:

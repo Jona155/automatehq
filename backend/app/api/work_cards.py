@@ -7,6 +7,7 @@ import zipfile
 import unicodedata
 from uuid import UUID
 import re
+from typing import Any, Dict, Optional, Set, Tuple
 from ..repositories.work_card_repository import WorkCardRepository
 from ..repositories.work_card_file_repository import WorkCardFileRepository
 from ..repositories.work_card_extraction_repository import WorkCardExtractionRepository
@@ -21,6 +22,63 @@ repo = WorkCardRepository()
 file_repo = WorkCardFileRepository()
 extraction_repo = WorkCardExtractionRepository()
 day_entry_repo = WorkCardDayEntryRepository()
+
+
+def _normalize_time_value(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if hasattr(value, 'hour') and hasattr(value, 'minute'):
+        return f"{int(value.hour):02d}:{int(value.minute):02d}"
+    raw = str(value).strip()
+    if not raw:
+        return None
+    parts = raw.split(':')
+    if len(parts) < 2:
+        return raw
+    try:
+        return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    except ValueError:
+        return raw
+
+
+def _normalize_hours_value(value: Any) -> Optional[float]:
+    if value is None or value == '':
+        return None
+    try:
+        return round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _entry_signature(from_time: Any, to_time: Any, total_hours: Any) -> Tuple[Optional[str], Optional[str], Optional[float]]:
+    return (
+        _normalize_time_value(from_time),
+        _normalize_time_value(to_time),
+        _normalize_hours_value(total_hours),
+    )
+
+
+def _entries_equal(a: Any, b: Any) -> bool:
+    return _entry_signature(a.from_time, a.to_time, a.total_hours) == _entry_signature(
+        b.from_time, b.to_time, b.total_hours
+    )
+
+
+def _get_previous_card_context(card: Any) -> Tuple[Optional[Any], Dict[int, Any]]:
+    if not card.employee_id:
+        return None, {}
+    previous_card = repo.get_previous_card_for_employee_month(
+        employee_id=card.employee_id,
+        month=card.processing_month,
+        business_id=card.business_id,
+        current_card_id=card.id,
+        site_id=card.site_id,
+        include_day_entries=True,
+    )
+    if not previous_card:
+        return None, {}
+    previous_entries_by_day = {entry.day_of_month: entry for entry in previous_card.day_entries}
+    return previous_card, previous_entries_by_day
 
 @work_cards_bp.route('', methods=['GET'])
 @token_required
@@ -141,13 +199,98 @@ def approve_work_card(card_id):
     if not card or card.business_id != g.business_id:
         return api_response(status_code=404, message="Work card not found", error="Not Found")
     
-    data = request.get_json()
+    data = request.get_json() or {}
     user_id = data.get('user_id')
+    override_conflict_days = data.get('override_conflict_days') or []
+    confirm_override_approved = bool(data.get('confirm_override_approved', False))
     
     if not user_id:
         return api_response(status_code=400, message="User ID is required for approval", error="Bad Request")
-        
+
+    if not isinstance(override_conflict_days, list):
+        return api_response(status_code=400, message="override_conflict_days must be an array", error="Bad Request")
+
+    override_days: Set[int] = set()
+    for item in override_conflict_days:
+        if not isinstance(item, int) or item < 1 or item > 31:
+            return api_response(
+                status_code=400,
+                message="override_conflict_days must contain integers between 1 and 31",
+                error="Bad Request"
+            )
+        override_days.add(item)
+
     try:
+        previous_card, previous_entries_by_day = _get_previous_card_context(card)
+        current_entries = day_entry_repo.get_by_work_card(card.id)
+        current_entries_by_day = {entry.day_of_month: entry for entry in current_entries}
+
+        approved_conflict_days = set()
+        if previous_card:
+            for day, previous_entry in previous_entries_by_day.items():
+                current_entry = current_entries_by_day.get(day)
+                if current_entry and not _entries_equal(current_entry, previous_entry):
+                    if previous_card.review_status == 'APPROVED':
+                        approved_conflict_days.add(day)
+
+        requested_approved_overrides = override_days.intersection(approved_conflict_days)
+        if requested_approved_overrides and not confirm_override_approved:
+            return api_response(
+                status_code=409,
+                message=(
+                    "Overriding approved previous data requires explicit confirmation. "
+                    "Resubmit with confirm_override_approved=true."
+                ),
+                error="Conflict",
+                data={
+                    'approved_conflict_days': sorted(list(approved_conflict_days))
+                }
+            )
+
+        # Resolve previous-vs-latest day slot outcomes before approving this card.
+        if previous_card:
+            for day, previous_entry in previous_entries_by_day.items():
+                current_entry = current_entries_by_day.get(day)
+
+                if current_entry:
+                    values_differ = not _entries_equal(current_entry, previous_entry)
+                    if not values_differ:
+                        continue
+
+                    if previous_card.review_status == 'APPROVED':
+                        if day in override_days:
+                            # Admin explicitly chose latest over approved previous value.
+                            day_entry_repo.delete(previous_entry.id)
+                        else:
+                            # Default behavior: keep approved previous value.
+                            day_entry_repo.delete(current_entry.id)
+                            current_entries_by_day.pop(day, None)
+                            cloned = day_entry_repo.create(
+                                work_card_id=card.id,
+                                day_of_month=day,
+                                from_time=previous_entry.from_time,
+                                to_time=previous_entry.to_time,
+                                total_hours=previous_entry.total_hours,
+                                source='CARRIED_FORWARD',
+                                is_valid=True
+                            )
+                            current_entries_by_day[day] = cloned
+                    else:
+                        # Nothing approved yet: default winner is latest value.
+                        day_entry_repo.delete(previous_entry.id)
+                else:
+                    # Carry forward previous values so approved latest card has full month snapshot.
+                    cloned = day_entry_repo.create(
+                        work_card_id=card.id,
+                        day_of_month=day,
+                        from_time=previous_entry.from_time,
+                        to_time=previous_entry.to_time,
+                        total_hours=previous_entry.total_hours,
+                        source='CARRIED_FORWARD',
+                        is_valid=True
+                    )
+                    current_entries_by_day[day] = cloned
+
         approved_card = repo.approve_card(card_id, user_id, g.business_id)
         if not approved_card:
             return api_response(status_code=404, message="Work card not found", error="Not Found")
@@ -385,7 +528,54 @@ def get_day_entries(card_id):
     
     try:
         entries = day_entry_repo.get_by_work_card(card_id)
-        return api_response(data=models_to_list(entries))
+        previous_card, previous_entries_by_day = _get_previous_card_context(card)
+        current_entries_by_day = {entry.day_of_month: entry for entry in entries}
+        data = []
+
+        for entry in entries:
+            row = model_to_dict(entry)
+            row['has_conflict'] = False
+            row['conflict_type'] = None
+            row['is_locked'] = False
+            row['previous_work_card_id'] = None
+            row['previous_work_card_status'] = None
+            row['previous_entry'] = None
+            row['locked_from_previous'] = False
+
+            previous_entry = previous_entries_by_day.get(entry.day_of_month)
+            if previous_card and previous_entry and not _entries_equal(entry, previous_entry):
+                row['has_conflict'] = True
+                row['conflict_type'] = 'WITH_APPROVED' if previous_card.review_status == 'APPROVED' else 'WITH_PENDING'
+                row['is_locked'] = previous_card.review_status == 'APPROVED'
+                row['previous_work_card_id'] = str(previous_card.id)
+                row['previous_work_card_status'] = previous_card.review_status
+                row['previous_entry'] = model_to_dict(previous_entry)
+
+            data.append(row)
+
+        # Show previous slots even if not present in latest card so review has full-month context.
+        if previous_card:
+            for day, previous_entry in previous_entries_by_day.items():
+                if day in current_entries_by_day:
+                    continue
+                row = model_to_dict(previous_entry)
+                row['work_card_id'] = str(card.id)
+                row['source'] = (
+                    'LOCKED_PREVIOUS_APPROVED'
+                    if previous_card.review_status == 'APPROVED'
+                    else 'PREVIOUS_CARRIED_CONTEXT'
+                )
+                row['has_conflict'] = False
+                row['conflict_type'] = None
+                row['is_locked'] = previous_card.review_status == 'APPROVED'
+                row['locked_from_previous'] = previous_card.review_status == 'APPROVED'
+                row['previous_work_card_id'] = str(previous_card.id)
+                row['previous_work_card_status'] = previous_card.review_status
+                row['previous_entry'] = model_to_dict(previous_entry)
+                data.append(row)
+
+        data.sort(key=lambda item: item.get('day_of_month') or 0)
+        return api_response(data=data)
     except Exception as e:
         return api_response(status_code=500, message="Failed to retrieve day entries", error=str(e))
 
@@ -464,10 +654,35 @@ def update_day_entries(card_id):
         )
     
     try:
+        previous_card, previous_entries_by_day = _get_previous_card_context(card)
+        approved_previous_days = set(previous_entries_by_day.keys()) if previous_card and previous_card.review_status == 'APPROVED' else set()
+
         # Update or create entries
         updated_entries = []
         for entry in entries_data:
             day = entry['day_of_month']
+            incoming_signature = _entry_signature(
+                entry.get('from_time'),
+                entry.get('to_time'),
+                entry.get('total_hours')
+            )
+
+            # Approved values from previous card are locked from silent overwrites.
+            if day in approved_previous_days:
+                previous_signature = _entry_signature(
+                    previous_entries_by_day[day].from_time,
+                    previous_entries_by_day[day].to_time,
+                    previous_entries_by_day[day].total_hours
+                )
+                if incoming_signature != previous_signature:
+                    return api_response(
+                        status_code=409,
+                        message=(
+                            f"Day {day} is locked because it was approved in a previous card. "
+                            "Resolve conflict at approval time to override."
+                        ),
+                        error="Conflict"
+                    )
             
             # Get existing entry for this day
             existing = day_entry_repo.get_by_day(card_id, day)
