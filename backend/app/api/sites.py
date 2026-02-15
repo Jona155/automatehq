@@ -15,7 +15,7 @@ from pathlib import Path
 from copy import copy
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_, or_, func, case
 from sqlalchemy.orm import joinedload
 from twilio.rest import Client
 from ..repositories.site_repository import SiteRepository
@@ -32,6 +32,7 @@ from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
 from ..models.sites import Employee
 from ..extensions import db
 from ..services.hours_matrix_service import load_hours_matrix_rows, build_matrix_and_status_map
+from ..observability import QueryCounter, sites_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -842,62 +843,84 @@ def export_monthly_summary_batch():
             )
         )
 
-    template_ws = workbook.worksheets[0]
-    style_header = copy(template_ws['B1']._style)
-    style_body = copy(template_ws['B3']._style)
-    style_total = copy(template_ws['A34']._style)
+        try:
+            template_path = _resolve_summary_template_path()
+            workbook = load_workbook(template_path)
+        except Exception as e:
+            logger.exception("Failed to load summary export template")
+            return api_response(status_code=500, message="Failed to load export template", error=str(e))
 
-    for ws in workbook.worksheets[1:]:
-        workbook.remove(ws)
+        template_ws = workbook.worksheets[0]
+        style_header = copy(template_ws['B1']._style)
+        style_body = copy(template_ws['B3']._style)
+        style_total = copy(template_ws['A34']._style)
 
-    site_matrices = load_hours_matrix_for_sites(
-        site_ids=[site.id for site in sites],
-        processing_month=processing_month,
-        approved_only=approved_only,
-        include_inactive=include_inactive,
-        business_id=g.business_id,
-    )
+        for ws in workbook.worksheets[1:]:
+            workbook.remove(ws)
 
-    used_sheet_names = set()
-    for site in sites:
-        site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
-
-        ws = workbook.copy_worksheet(template_ws)
-        ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
-        _populate_template_core_sheet(
-            ws,
-            site_data['employees'],
-            site_data['matrix'],
-            month,
-            style_header=style_header,
-            style_body=style_body,
-            style_total=style_total,
+        site_matrices = load_hours_matrix_for_sites(
+            site_ids=[site.id for site in sites],
+            processing_month=processing_month,
+            approved_only=approved_only,
+            include_inactive=include_inactive,
+            business_id=g.business_id,
         )
+
+        used_sheet_names = set()
+        for site in sites:
+            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
+            total_employee_count += len(site_data['employees'])
+
+            ws = workbook.copy_worksheet(template_ws)
+            ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
+            _populate_template_core_sheet(
+                ws,
+                site_data['employees'],
+                site_data['matrix'],
+                month,
+                style_header=style_header,
+                style_body=style_body,
+                style_total=style_total,
+            )
+
+        if workbook.worksheets and len(workbook.worksheets) > 1:
+            workbook.remove(template_ws)
+        else:
+            _populate_template_core_sheet(
+                template_ws,
+                [],
+                {},
+                month,
+                style_header=style_header,
+                style_body=style_body,
+                style_total=style_total,
+            )
+            template_ws.title = 'Sites'
 
         output = BytesIO()
         workbook.save(output)
         output.seek(0)
 
-        duration_s = time.perf_counter() - started_at
-        sites_metrics.observe_export_generation_latency(duration_s, output_type='xlsx', endpoint='summary_export_batch')
-        logger.info(
-            "sites.export_batch_route",
-            extra={
-                'duration_ms': round(duration_s * 1000, 2),
-                'site_count': len(sites),
-                'employee_count': total_employee_count,
-                'query_count': query_counter.count,
-                'output_type': 'xlsx',
-            }
-        )
+    duration_s = time.perf_counter() - started_at
+    sites_metrics.observe_export_generation_latency(duration_s, output_type='xlsx', endpoint='summary_export_batch')
+    logger.info(
+        "sites.export_batch_route",
+        extra={
+            'duration_ms': round(duration_s * 1000, 2),
+            'site_count': len(sites),
+            'employee_count': total_employee_count,
+            'query_count': query_counter.count,
+            'output_type': 'xlsx',
+        }
+    )
 
-        download_name = f"monthly_summary_all_sites_{month.strftime('%Y-%m')}.xlsx"
-        return send_file(
-            output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name=download_name
-        )
+    download_name = f"monthly_summary_all_sites_{month.strftime('%Y-%m')}.xlsx"
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=download_name
+    )
 
 @sites_bp.route('/<uuid:site_id>/salary-template/export', methods=['GET'])
 @token_required
@@ -966,50 +989,20 @@ def export_salary_template_batch():
     except ValueError as e:
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
 
-    sites = repo.get_all_for_business(g.business_id)
-    if not include_inactive_sites:
-        sites = [site for site in sites if site.is_active]
-    sites = sorted(
-        sites,
-        key=lambda s: (
-            (s.site_name or '').strip().lower(),
-            (s.site_code or '').strip().lower(),
-            str(s.id)
+    started_at = time.perf_counter()
+    total_employee_count = 0
+    with QueryCounter(db.engine) as query_counter:
+        sites = repo.get_all_for_business(g.business_id)
+        if not include_inactive_sites:
+            sites = [site for site in sites if site.is_active]
+        sites = sorted(
+            sites,
+            key=lambda s: (
+                (s.site_name or '').strip().lower(),
+                (s.site_code or '').strip().lower(),
+                str(s.id)
+            )
         )
-    )
-
-    try:
-        template_path = _resolve_salary_template_path(month)
-        workbook = load_workbook(template_path)
-    except Exception as e:
-        logger.exception("Failed to load salary export template")
-        return api_response(status_code=500, message="Failed to load salary template", error=str(e))
-
-    template_ws = workbook.worksheets[0]
-    for ws in workbook.worksheets[1:]:
-        workbook.remove(ws)
-
-    site_matrices = load_hours_matrix_for_sites(
-        site_ids=[site.id for site in sites],
-        processing_month=processing_month,
-        approved_only=False,
-        include_inactive=include_inactive,
-        business_id=g.business_id,
-    )
-
-    used_sheet_names = set()
-    populated_count = 0
-    for site in sites:
-        site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
-
-        ws = workbook.copy_worksheet(template_ws)
-        ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
-        try:
-            _populate_salary_template_sheet(ws, site_data['employees'], site_data['matrix'], month)
-            populated_count += 1
-        except ValueError as e:
-            logger.exception(f"Invalid salary template format for site {site.id}")
-            return api_response(status_code=500, message="Invalid salary template format", error=str(e))
 
         try:
             template_path = _resolve_salary_template_path(month)
@@ -1022,25 +1015,24 @@ def export_salary_template_batch():
         for ws in workbook.worksheets[1:]:
             workbook.remove(ws)
 
+        site_matrices = load_hours_matrix_for_sites(
+            site_ids=[site.id for site in sites],
+            processing_month=processing_month,
+            approved_only=False,
+            include_inactive=include_inactive,
+            business_id=g.business_id,
+        )
+
         used_sheet_names = set()
         populated_count = 0
         for site in sites:
-            try:
-                employees, matrix, _, _ = _load_hours_matrix(
-                    site.id,
-                    processing_month,
-                    approved_only=False,
-                    include_inactive=include_inactive
-                )
-                total_employee_count += len(employees)
-            except Exception:
-                logger.exception(f"Failed to build salary matrix for site {site.id}")
-                continue
+            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
+            total_employee_count += len(site_data['employees'])
 
             ws = workbook.copy_worksheet(template_ws)
             ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
             try:
-                _populate_salary_template_sheet(ws, employees, matrix, month)
+                _populate_salary_template_sheet(ws, site_data['employees'], site_data['matrix'], month)
                 populated_count += 1
             except ValueError as e:
                 logger.exception(f"Invalid salary template format for site {site.id}")
@@ -1059,26 +1051,26 @@ def export_salary_template_batch():
         workbook.save(output)
         output.seek(0)
 
-        duration_s = time.perf_counter() - started_at
-        sites_metrics.observe_export_generation_latency(duration_s, output_type='xlsx', endpoint='salary_export_batch')
-        logger.info(
-            "sites.salary_export_batch_route",
-            extra={
-                'duration_ms': round(duration_s * 1000, 2),
-                'site_count': len(sites),
-                'employee_count': total_employee_count,
-                'query_count': query_counter.count,
-                'output_type': 'xlsx',
-            }
-        )
+    duration_s = time.perf_counter() - started_at
+    sites_metrics.observe_export_generation_latency(duration_s, output_type='xlsx', endpoint='salary_export_batch')
+    logger.info(
+        "sites.salary_export_batch_route",
+        extra={
+            'duration_ms': round(duration_s * 1000, 2),
+            'site_count': len(sites),
+            'employee_count': total_employee_count,
+            'query_count': query_counter.count,
+            'output_type': 'xlsx',
+        }
+    )
 
-        download_name = f"salary_template_all_sites_{month.strftime('%Y-%m')}.xlsx"
-        return send_file(
-            output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name=download_name
-        )
+    download_name = f"salary_template_all_sites_{month.strftime('%Y-%m')}.xlsx"
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=download_name
+    )
 
 
 @sites_bp.route('/<uuid:site_id>/access-link', methods=['POST'])
