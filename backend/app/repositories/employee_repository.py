@@ -144,6 +144,26 @@ class EmployeeRepository(BaseRepository[Employee]):
         """
         return self.session.query(Employee).filter_by(business_id=business_id).all()
     
+
+    def get_by_ids_for_business(self, employee_ids: List[UUID], business_id: UUID) -> List[Employee]:
+        """
+        Get employees by IDs scoped to a business in a single query.
+
+        Args:
+            employee_ids: Employee UUIDs to fetch
+            business_id: The business UUID
+
+        Returns:
+            List of Employee instances
+        """
+        if not employee_ids:
+            return []
+
+        return self.session.query(Employee).filter(
+            Employee.id.in_(employee_ids),
+            Employee.business_id == business_id
+        ).all()
+
     def deactivate(self, employee_id: UUID, business_id: UUID) -> bool:
         """
         Deactivate an employee.

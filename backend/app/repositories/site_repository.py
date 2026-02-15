@@ -77,6 +77,25 @@ class SiteRepository(BaseRepository[Site]):
             List of Site instances
         """
         return self.session.query(Site).filter_by(business_id=business_id).all()
+
+    def get_by_ids_for_business(self, site_ids: List[UUID], business_id: UUID) -> List[Site]:
+        """
+        Get sites by IDs for a business in a single query.
+
+        Args:
+            site_ids: Site UUIDs to fetch
+            business_id: The business UUID
+
+        Returns:
+            List of Site instances
+        """
+        if not site_ids:
+            return []
+
+        return self.session.query(Site).filter(
+            Site.id.in_(site_ids),
+            Site.business_id == business_id
+        ).all()
     
     def get_with_employee_count(self, business_id: Optional[UUID] = None) -> List[Dict[str, Any]]:
         """
