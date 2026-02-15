@@ -14,6 +14,8 @@ import MonthlySummaryTab from '../components/MonthlySummaryTab';
 import AccessLinksManager from '../components/AccessLinksManager';
 import Modal from '../components/Modal';
 import MonthPicker from '../components/MonthPicker';
+import { useOnClickOutside } from '../hooks/useOnClickOutside';
+import { downloadBlobFile } from '../utils/fileDownload';
 
 type TabType = 'employees' | 'review' | 'summary';
 
@@ -123,16 +125,7 @@ export default function SiteDetailsPage() {
     };
   }, [isAuthenticated, siteId]);
 
-  useEffect(() => {
-    if (!actionsOpen) return;
-    const handleOutside = (event: MouseEvent) => {
-      if (actionsRef.current && !actionsRef.current.contains(event.target as Node)) {
-        setActionsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutside);
-    return () => document.removeEventListener('mousedown', handleOutside);
-  }, [actionsOpen]);
+  useOnClickOutside(actionsRef, () => setActionsOpen(false), actionsOpen);
 
   const handleBack = () => {
     navigate(`/${user?.business?.code}/sites`);
@@ -190,14 +183,7 @@ export default function SiteDetailsPage() {
         approved_only: false,
         include_inactive: false,
       });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `monthly_summary_${site.site_name}_${selectedMonth}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      downloadBlobFile(blob, `monthly_summary_${site.site_name}_${selectedMonth}.csv`);
     } catch (err: any) {
       console.error('Failed to download summary CSV:', err);
       showToast(err?.response?.data?.message || 'שגיאה בהורדת הסיכום החודשי', 'error');
@@ -252,14 +238,10 @@ export default function SiteDetailsPage() {
       const blob = await downloadSalaryTemplate(salaryExportSiteId, salaryExportMonth, {
         include_inactive: false,
       });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `salary_template_${selectedSite?.site_name || 'site'}_${salaryExportMonth}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      downloadBlobFile(
+        blob,
+        `salary_template_${selectedSite?.site_name || 'site'}_${salaryExportMonth}.xlsx`
+      );
       setSalaryModalOpen(false);
     } catch (err: any) {
       console.error('Failed to download salary template:', err);

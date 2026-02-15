@@ -13,6 +13,8 @@ import { useToast } from '../hooks/useToast';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
 import LoadingIndicator from '../components/LoadingIndicator';
+import { useOnClickOutside } from '../hooks/useOnClickOutside';
+import { downloadBlobFile } from '../utils/fileDownload';
 
 type SortField = 'site_name' | 'site_code' | 'employee_count' | 'is_active';
 type SortOrder = 'asc' | 'desc';
@@ -81,16 +83,7 @@ export default function SitesPage() {
     fetchSites();
   }, [isAuthenticated]);
 
-  useEffect(() => {
-    if (!actionsOpen) return;
-    const handleOutside = (event: MouseEvent) => {
-      if (actionsRef.current && !actionsRef.current.contains(event.target as Node)) {
-        setActionsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutside);
-    return () => document.removeEventListener('mousedown', handleOutside);
-  }, [actionsOpen]);
+  useOnClickOutside(actionsRef, () => setActionsOpen(false), actionsOpen);
 
   const filteredSites = useMemo(() => {
     return sites.filter((site) => {
@@ -245,14 +238,7 @@ export default function SitesPage() {
         include_inactive: false,
         include_inactive_sites: false,
       });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `monthly_summary_all_sites_${summaryExportMonth}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      downloadBlobFile(blob, `monthly_summary_all_sites_${summaryExportMonth}.xlsx`);
       setSummaryExportOpen(false);
     } catch (err: any) {
       console.error('Failed to export summary batch:', err);
@@ -280,14 +266,7 @@ export default function SitesPage() {
         include_inactive: false,
         include_inactive_sites: false,
       });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `salary_template_all_sites_${salaryExportMonth}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      downloadBlobFile(blob, `salary_template_all_sites_${salaryExportMonth}.xlsx`);
       setSalaryExportOpen(false);
     } catch (err: any) {
       console.error('Failed to export salary batch:', err);
