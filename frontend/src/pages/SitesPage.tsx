@@ -1,7 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Site } from '../types';
-import { getSites, createSite, sendAccessLinksBatchToWhatsapp, downloadMonthlySummaryBatch } from '../api/sites';
+import {
+  getSites,
+  createSite,
+  sendAccessLinksBatchToWhatsapp,
+  downloadMonthlySummaryBatch,
+  downloadSalaryTemplateBatch,
+} from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import MonthPicker from '../components/MonthPicker';
@@ -48,6 +54,10 @@ export default function SitesPage() {
   const [summaryExportMonth, setSummaryExportMonth] = useState(getDefaultMonth());
   const [isSummaryExporting, setIsSummaryExporting] = useState(false);
   const [summaryExportError, setSummaryExportError] = useState<string | null>(null);
+  const [salaryExportOpen, setSalaryExportOpen] = useState(false);
+  const [salaryExportMonth, setSalaryExportMonth] = useState(getDefaultMonth());
+  const [isSalaryExporting, setIsSalaryExporting] = useState(false);
+  const [salaryExportError, setSalaryExportError] = useState<string | null>(null);
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
 
@@ -252,6 +262,43 @@ export default function SitesPage() {
     }
   };
 
+  const handleOpenSalaryExport = () => {
+    setSalaryExportError(null);
+    setSalaryExportMonth(getDefaultMonth());
+    setSalaryExportOpen(true);
+  };
+
+  const handleDownloadSalaryBatch = async () => {
+    if (!salaryExportMonth) {
+      setSalaryExportError('\u05d9\u05e9 \u05dc\u05d1\u05d7\u05d5\u05e8 \u05d7\u05d5\u05d3\u05e9 \u05dc\u05d9\u05d9\u05e6\u05d5\u05d0.');
+      return;
+    }
+    setIsSalaryExporting(true);
+    setSalaryExportError(null);
+    try {
+      const blob = await downloadSalaryTemplateBatch(salaryExportMonth, {
+        include_inactive: false,
+        include_inactive_sites: false,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `salary_template_all_sites_${salaryExportMonth}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setSalaryExportOpen(false);
+    } catch (err: any) {
+      console.error('Failed to export salary batch:', err);
+      setSalaryExportError(
+        err?.response?.data?.message || '\u05e9\u05d2\u05d9\u05d0\u05d4 \u05d1\u05d4\u05d5\u05e8\u05d3\u05ea \u05e7\u05d5\u05d1\u05e5 \u05e9\u05db\u05e8'
+      );
+    } finally {
+      setIsSalaryExporting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.site_name.trim()) {
@@ -332,6 +379,16 @@ export default function SitesPage() {
               <button
                 onClick={() => {
                   setActionsOpen(false);
+                  handleOpenSalaryExport();
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">request_quote</span>
+                <span>{"\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave"}</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
                   handleOpenBatch();
                 }}
                 className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
@@ -390,6 +447,61 @@ export default function SitesPage() {
                   className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
                 >
                   {isSummaryExporting ? 'מוריד...' : 'הורד Excel'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
+      <Modal
+        isOpen={salaryExportOpen}
+        onClose={() => setSalaryExportOpen(false)}
+        title={"\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave"}
+        maxWidth="sm"
+      >
+        <div className="flex flex-col gap-4" dir="rtl">
+          {salaryExportError && !isSalaryExporting && (
+            <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
+              {salaryExportError}
+            </div>
+          )}
+          {isSalaryExporting ? (
+            <LoadingIndicator
+              title={"\u05de\u05db\u05d9\u05df \u05e7\u05d5\u05d1\u05e5 \u05e9\u05db\u05e8..."}
+              subtitle={"\u05d4\u05ea\u05d4\u05dc\u05d9\u05da \u05d9\u05db\u05d5\u05dc \u05dc\u05e7\u05d7\u05ea \u05e2\u05d3 \u05d3\u05e7\u05d4"}
+            />
+          ) : (
+            <>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
+                  {"\u05d7\u05d5\u05d3\u05e9 \u05dc\u05d9\u05d9\u05e6\u05d5\u05d0"}
+                </label>
+                <div className="inline-flex">
+                  <MonthPicker
+                    value={salaryExportMonth}
+                    onChange={setSalaryExportMonth}
+                    storageKey="sites_salary_export_month"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSalaryExportOpen(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
+                  disabled={isSalaryExporting}
+                >
+                  {"\u05d1\u05d9\u05d8\u05d5\u05dc"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadSalaryBatch}
+                  disabled={isSalaryExporting}
+                  className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
+                >
+                  {isSalaryExporting
+                    ? '\u05de\u05d5\u05e8\u05d9\u05d3 \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave...'
+                    : '\u05d4\u05d5\u05e8\u05d3 \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave'}
                 </button>
               </div>
             </>

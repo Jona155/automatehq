@@ -3,6 +3,7 @@ import os
 import uuid
 import traceback
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 import secrets
 import csv
@@ -112,6 +113,191 @@ def _resolve_summary_template_path() -> Path:
     if not candidates:
         raise FileNotFoundError('No Excel template found in backend/excel_extraction_example')
     return candidates[0]
+
+def _resolve_salary_template_path(month_date) -> Path:
+    """Resolve salary export template for a month from employee_sheet_extraction."""
+    root_dir = Path(__file__).resolve().parents[3]
+    templates_dir = root_dir / 'employee_sheet_extraction'
+    if not templates_dir.exists():
+        raise FileNotFoundError('Template folder employee_sheet_extraction was not found')
+
+    month_token = f"{month_date.month:02d}_{month_date.year}"
+    month_candidates = []
+    generic_candidates = []
+
+    for candidate in sorted(templates_dir.glob('*.xlsx')):
+        stem = candidate.stem.lower()
+        if 'worker_new_hours_template' not in stem:
+            continue
+        generic_candidates.append(candidate)
+        if month_token in stem or f"{month_date.month}_{month_date.year}" in stem:
+            month_candidates.append(candidate)
+
+    if month_candidates:
+        return month_candidates[-1]
+    if generic_candidates:
+        return generic_candidates[-1]
+
+    raise FileNotFoundError(
+        f'No salary template found in {templates_dir} for {month_date.strftime("%Y-%m")}'
+    )
+
+
+def _extract_salary_day_columns_map(ws, month_date):
+    """
+    Parse row-1 day headers in salary template and return {day_number: column_index}.
+    Expected header format per day column: "D.MM", e.g. "1.02".
+    """
+    day_columns = {}
+    observed_months = set()
+    pattern = re.compile(r'^\s*(\d{1,2})\.(\d{1,2})\s*$')
+
+    for col in range(2, ws.max_column + 1):
+        value = ws.cell(row=1, column=col).value
+        if value is None:
+            continue
+        match = pattern.match(str(value))
+        if not match:
+            continue
+        day = int(match.group(1))
+        month = int(match.group(2))
+        if day < 1 or day > 31:
+            continue
+        observed_months.add(month)
+        day_columns[day] = col
+
+    if not day_columns:
+        raise ValueError('Invalid salary template format: missing day columns on header row')
+    return day_columns
+
+
+def _copy_salary_column_template(ws, source_col, target_col):
+    """Copy style and width from one column to another across the worksheet."""
+    source_letter = get_column_letter(source_col)
+    target_letter = get_column_letter(target_col)
+    ws.column_dimensions[target_letter].width = ws.column_dimensions[source_letter].width
+
+    for row in range(1, ws.max_row + 1):
+        source_cell = ws.cell(row=row, column=source_col)
+        target_cell = ws.cell(row=row, column=target_col)
+        target_cell._style = copy(source_cell._style)
+        target_cell.number_format = source_cell.number_format
+        target_cell.font = copy(source_cell.font)
+        target_cell.fill = copy(source_cell.fill)
+        target_cell.border = copy(source_cell.border)
+        target_cell.alignment = copy(source_cell.alignment)
+        target_cell.protection = copy(source_cell.protection)
+        target_cell.value = source_cell.value
+
+
+def _ensure_salary_template_month_columns(ws, month_date):
+    """
+    Ensure the salary sheet day columns match the requested month:
+    - adjust number of day columns (insert/delete at the end of the day range)
+    - rewrite header values to D.MM for requested month
+    """
+    parsed = _extract_salary_day_columns_map(ws, month_date)
+    day_start_col = min(parsed.values())
+    existing_days = max(parsed.keys())
+    target_days = calendar.monthrange(month_date.year, month_date.month)[1]
+
+    if existing_days < target_days:
+        cols_to_add = target_days - existing_days
+        insert_at = day_start_col + existing_days
+        ws.insert_cols(insert_at, cols_to_add)
+        for offset in range(cols_to_add):
+            col_index = insert_at + offset
+            _copy_salary_column_template(ws, insert_at - 1, col_index)
+    elif existing_days > target_days:
+        delete_start = day_start_col + target_days
+        delete_count = existing_days - target_days
+        ws.delete_cols(delete_start, delete_count)
+
+    day_columns = {}
+    for day in range(1, target_days + 1):
+        col = day_start_col + day - 1
+        ws.cell(row=1, column=col, value=f'{day}.{month_date.month:02d}')
+        day_columns[day] = col
+    return day_columns
+
+
+def _find_salary_instruction_row(ws):
+    """Find first row that starts the instructions block (contains 'הוראות' in column A)."""
+    for row in range(2, ws.max_row + 1):
+        cell_value = ws.cell(row=row, column=1).value
+        if cell_value is None:
+            continue
+        if 'הוראות' in str(cell_value):
+            return row
+    raise ValueError('Invalid salary template format: could not find instructions row')
+
+
+def _copy_salary_row_template(ws, source_row, target_row):
+    """Copy style and baseline values from one template row to another."""
+    for col in range(1, ws.max_column + 1):
+        source_cell = ws.cell(row=source_row, column=col)
+        target_cell = ws.cell(row=target_row, column=col)
+        target_cell._style = copy(source_cell._style)
+        target_cell.number_format = source_cell.number_format
+        target_cell.font = copy(source_cell.font)
+        target_cell.fill = copy(source_cell.fill)
+        target_cell.border = copy(source_cell.border)
+        target_cell.alignment = copy(source_cell.alignment)
+        target_cell.protection = copy(source_cell.protection)
+        target_cell.value = source_cell.value
+
+    ws.row_dimensions[target_row].height = ws.row_dimensions[source_row].height
+
+
+def _populate_salary_template_sheet(ws, employees, matrix, month_date):
+    """
+    Populate salary template:
+    - Row 1 remains as header (passport/day columns).
+    - Employee rows start at row 2 and continue until instructions row.
+    - Column A contains employee passport/ID.
+    - Day columns contain numeric hours when available, otherwise remain blank
+      (except prefilled 'שבת' values are preserved).
+    """
+    ws.sheet_view.rightToLeft = True
+    day_columns = _ensure_salary_template_month_columns(ws, month_date)
+    days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
+    employee_start_row = 2
+    instruction_row = _find_salary_instruction_row(ws)
+    base_template_row = max(employee_start_row, instruction_row - 1)
+    available_rows = max(0, instruction_row - employee_start_row)
+    needed_rows = len(employees)
+
+    if needed_rows > available_rows:
+        rows_to_insert = needed_rows - available_rows
+        ws.insert_rows(instruction_row, rows_to_insert)
+        for row in range(instruction_row, instruction_row + rows_to_insert):
+            _copy_salary_row_template(ws, base_template_row, row)
+        instruction_row += rows_to_insert
+
+    def clear_row(row_index):
+        ws.cell(row=row_index, column=1, value=None)
+        for day, col in day_columns.items():
+            cell = ws.cell(row=row_index, column=col)
+            is_saturday = day <= days_in_month and datetime(month_date.year, month_date.month, day).weekday() == 5
+            cell.value = 'שבת' if is_saturday else None
+
+    for idx, employee in enumerate(employees):
+        row_index = employee_start_row + idx
+        employee_id_value = (employee.passport_id or '').strip() if employee.passport_id else ''
+        ws.cell(row=row_index, column=1, value=employee_id_value)
+
+        employee_days = matrix.get(str(employee.id), {})
+        for day, col in day_columns.items():
+            hours = employee_days.get(day)
+            cell = ws.cell(row=row_index, column=col)
+            if hours is None:
+                is_saturday = day <= days_in_month and datetime(month_date.year, month_date.month, day).weekday() == 5
+                cell.value = 'שבת' if is_saturday else None
+            else:
+                cell.value = round(float(hours), 2)
+
+    for row_index in range(employee_start_row + needed_rows, instruction_row):
+        clear_row(row_index)
 
 
 def _sort_employees_for_export(employees):
@@ -696,6 +882,140 @@ def export_monthly_summary_batch():
     output.seek(0)
 
     download_name = f"monthly_summary_all_sites_{month.strftime('%Y-%m')}.xlsx"
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=download_name
+    )
+
+@sites_bp.route('/<uuid:site_id>/salary-template/export', methods=['GET'])
+@token_required
+def export_salary_template_site(site_id):
+    """Export salary template workbook for a single site."""
+    site = repo.get_by_id(site_id)
+    if not site or site.business_id != g.business_id:
+        return api_response(status_code=404, message="Site not found", error="Not Found")
+
+    processing_month = request.args.get('processing_month')
+    if not processing_month:
+        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
+
+    include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
+
+    try:
+        month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+
+    try:
+        employees, matrix, _, _ = _load_hours_matrix(
+            site_id,
+            processing_month,
+            approved_only=False,
+            include_inactive=include_inactive
+        )
+
+        template_path = _resolve_salary_template_path(month)
+        workbook = load_workbook(template_path)
+        ws = workbook.worksheets[0]
+        _populate_salary_template_sheet(ws, employees, matrix, month)
+        ws.title = _safe_sheet_name(site.site_name, set())
+    except ValueError as e:
+        return api_response(status_code=500, message="Invalid salary template format", error=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to export salary template for site {site_id}")
+        return api_response(status_code=500, message="Failed to export salary template", error=str(e))
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    site_label = _safe_label(site.site_name) or str(site.id)
+    download_name = f"salary_template_{site_label}_{month.strftime('%Y-%m')}.xlsx"
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=download_name
+    )
+
+@sites_bp.route('/salary-template/export-batch', methods=['GET'])
+@token_required
+def export_salary_template_batch():
+    """Export salary template workbook for all sites (one sheet per site)."""
+    processing_month = request.args.get('processing_month')
+    if not processing_month:
+        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
+
+    include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
+    include_inactive_sites = request.args.get('include_inactive_sites', 'false').lower() == 'true'
+
+    try:
+        month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+
+    sites = repo.get_all_for_business(g.business_id)
+    if not include_inactive_sites:
+        sites = [site for site in sites if site.is_active]
+    sites = sorted(
+        sites,
+        key=lambda s: (
+            (s.site_name or '').strip().lower(),
+            (s.site_code or '').strip().lower(),
+            str(s.id)
+        )
+    )
+
+    try:
+        template_path = _resolve_salary_template_path(month)
+        workbook = load_workbook(template_path)
+    except Exception as e:
+        logger.exception("Failed to load salary export template")
+        return api_response(status_code=500, message="Failed to load salary template", error=str(e))
+
+    template_ws = workbook.worksheets[0]
+    for ws in workbook.worksheets[1:]:
+        workbook.remove(ws)
+
+    used_sheet_names = set()
+    populated_count = 0
+    for site in sites:
+        try:
+            employees, matrix, _, _ = _load_hours_matrix(
+                site.id,
+                processing_month,
+                approved_only=False,
+                include_inactive=include_inactive
+            )
+        except Exception:
+            logger.exception(f"Failed to build salary matrix for site {site.id}")
+            continue
+
+        ws = workbook.copy_worksheet(template_ws)
+        ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
+        try:
+            _populate_salary_template_sheet(ws, employees, matrix, month)
+            populated_count += 1
+        except ValueError as e:
+            logger.exception(f"Invalid salary template format for site {site.id}")
+            return api_response(status_code=500, message="Invalid salary template format", error=str(e))
+
+    if populated_count > 0 and len(workbook.worksheets) > 1:
+        workbook.remove(template_ws)
+    else:
+        try:
+            _populate_salary_template_sheet(template_ws, [], {}, month)
+            template_ws.title = 'Sites'
+        except ValueError as e:
+            return api_response(status_code=500, message="Invalid salary template format", error=str(e))
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    download_name = f"salary_template_all_sites_{month.strftime('%Y-%m')}.xlsx"
     return send_file(
         output,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

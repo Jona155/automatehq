@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { Site, Employee } from '../types';
-import { downloadMonthlySummary, getSite, updateSite } from '../api/sites';
+import { downloadMonthlySummary, downloadSalaryTemplate, getSite, getSites, updateSite } from '../api/sites';
 import { getEmployees } from '../api/employees';
 import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
@@ -13,6 +13,7 @@ import WorkCardReviewTab from '../components/WorkCardReviewTab';
 import MonthlySummaryTab from '../components/MonthlySummaryTab';
 import AccessLinksManager from '../components/AccessLinksManager';
 import Modal from '../components/Modal';
+import MonthPicker from '../components/MonthPicker';
 
 type TabType = 'employees' | 'review' | 'summary';
 
@@ -46,6 +47,12 @@ export default function SiteDetailsPage() {
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
+  const [isDownloadingSalaryTemplate, setIsDownloadingSalaryTemplate] = useState(false);
+  const [salaryModalOpen, setSalaryModalOpen] = useState(false);
+  const [salaryExportMonth, setSalaryExportMonth] = useState<string>(() => getPreviousMonth());
+  const [salaryExportSiteId, setSalaryExportSiteId] = useState<string>('');
+  const [salarySites, setSalarySites] = useState<Site[]>([]);
+  const [salaryModalError, setSalaryModalError] = useState<string | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
@@ -199,6 +206,69 @@ export default function SiteDetailsPage() {
     }
   };
 
+  useEffect(() => {
+    if (!salaryModalOpen || !isAuthenticated) return;
+    let active = true;
+
+    const fetchSalarySites = async () => {
+      try {
+        const allSites = await getSites({ active: false });
+        if (!active) return;
+        setSalarySites(allSites);
+      } catch (err) {
+        if (!active) return;
+        console.error('Failed to fetch sites for salary export:', err);
+        setSalaryModalError('שגיאה בטעינת רשימת אתרים');
+      }
+    };
+
+    fetchSalarySites();
+    return () => {
+      active = false;
+    };
+  }, [salaryModalOpen, isAuthenticated]);
+
+  const handleOpenSalaryModal = () => {
+    setSalaryModalError(null);
+    setSalaryExportMonth(selectedMonth);
+    setSalaryExportSiteId(siteId || '');
+    setSalaryModalOpen(true);
+  };
+
+  const handleDownloadSalaryTemplate = async () => {
+    if (!salaryExportSiteId) {
+      setSalaryModalError('יש לבחור אתר');
+      return;
+    }
+    if (!salaryExportMonth) {
+      setSalaryModalError('יש לבחור חודש');
+      return;
+    }
+    if (isDownloadingSalaryTemplate) return;
+    setIsDownloadingSalaryTemplate(true);
+    setSalaryModalError(null);
+    try {
+      const selectedSite = salarySites.find((item) => item.id === salaryExportSiteId) || site;
+      const blob = await downloadSalaryTemplate(salaryExportSiteId, salaryExportMonth, {
+        include_inactive: false,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `salary_template_${selectedSite?.site_name || 'site'}_${salaryExportMonth}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setSalaryModalOpen(false);
+    } catch (err: any) {
+      console.error('Failed to download salary template:', err);
+      showToast(err?.response?.data?.message || '\u05e9\u05d2\u05d9\u05d0\u05d4 \u05d1\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8', 'error');
+    } finally {
+      setIsDownloadingSalaryTemplate(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6">
@@ -281,6 +351,21 @@ export default function SiteDetailsPage() {
               >
                 <span className="material-symbols-outlined text-lg">table_view</span>
                 <span>{isDownloadingSummary ? 'מוריד סיכום (CSV)...' : 'הורדת סיכום (CSV)'}</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  handleOpenSalaryModal();
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+                disabled={isDownloadingSalaryTemplate}
+              >
+                <span className="material-symbols-outlined text-lg">request_quote</span>
+                <span>
+                  {isDownloadingSalaryTemplate
+                    ? '\u05de\u05d5\u05e8\u05d9\u05d3 \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave...'
+                    : '\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave'}
+                </span>
               </button>
               <button
                 onClick={() => {
@@ -436,6 +521,75 @@ export default function SiteDetailsPage() {
       </div>
 
 
+      <Modal
+        isOpen={salaryModalOpen}
+        onClose={() => setSalaryModalOpen(false)}
+        title={"\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave"}
+        maxWidth="sm"
+      >
+        <div className="flex flex-col gap-4" dir="rtl">
+          {salaryModalError && !isDownloadingSalaryTemplate && (
+            <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
+              {salaryModalError}
+            </div>
+          )}
+          {isDownloadingSalaryTemplate ? (
+            <div className="p-4 text-sm text-slate-600 dark:text-slate-300">
+              {"\u05de\u05db\u05d9\u05df \u05e7\u05d5\u05d1\u05e5 \u05e9\u05db\u05e8..."}
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                  {"\u05d0\u05ea\u05e8"}
+                </label>
+                <select
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  value={salaryExportSiteId}
+                  onChange={(event) => setSalaryExportSiteId(event.target.value)}
+                >
+                  {salarySites.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.site_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
+                  {"\u05d7\u05d5\u05d3\u05e9 \u05dc\u05d9\u05d9\u05e6\u05d5\u05d0"}
+                </label>
+                <div className="inline-flex">
+                  <MonthPicker
+                    value={salaryExportMonth}
+                    onChange={setSalaryExportMonth}
+                    storageKey={`site_salary_export_month_${siteId}`}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSalaryModalOpen(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
+                  disabled={isDownloadingSalaryTemplate}
+                >
+                  {"\u05d1\u05d9\u05d8\u05d5\u05dc"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadSalaryTemplate}
+                  disabled={isDownloadingSalaryTemplate}
+                  className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
+                >
+                  {"\u05d4\u05d5\u05e8\u05d3 \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
+
       {/* Site Settings Modal */}
       <Modal
         isOpen={settingsModalOpen}
@@ -513,3 +667,4 @@ export default function SiteDetailsPage() {
     </div>
   );
 }
+

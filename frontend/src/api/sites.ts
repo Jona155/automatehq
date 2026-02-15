@@ -101,3 +101,33 @@ export const downloadMonthlySummaryBatch = async (
   });
   return response.data as Blob;
 };
+
+export const downloadSalaryTemplate = async (
+  siteId: string,
+  processingMonth: string,
+  options?: { include_inactive?: boolean }
+) => {
+  const response = await client.get(`/sites/${siteId}/salary-template/export`, {
+    params: {
+      processing_month: normalizeMonthFormat(processingMonth),
+      include_inactive: options?.include_inactive === false ? 'false' : 'true',
+    },
+    responseType: 'blob',
+  });
+  return response.data as Blob;
+};
+
+export const downloadSalaryTemplateBatch = async (
+  processingMonth: string,
+  options?: { include_inactive?: boolean; include_inactive_sites?: boolean }
+) => {
+  const response = await client.get('/sites/salary-template/export-batch', {
+    params: {
+      processing_month: normalizeMonthFormat(processingMonth),
+      include_inactive: options?.include_inactive === false ? 'false' : 'true',
+      include_inactive_sites: options?.include_inactive_sites ? 'true' : 'false',
+    },
+    responseType: 'blob',
+  });
+  return response.data as Blob;
+};
