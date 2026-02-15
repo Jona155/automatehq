@@ -381,25 +381,108 @@ def _populate_template_core_sheet(
 def _load_hours_matrix(site_id, processing_month, approved_only, include_inactive):
     started_at = time.perf_counter()
     month = datetime.strptime(processing_month, '%Y-%m-%d').date()
-
-    if include_inactive:
-        employees = employee_repo.get_by_site(site_id, g.business_id)
-    else:
-        employees = employee_repo.get_active_by_site(site_id, g.business_id)
-
-    rows = load_hours_matrix_rows(
-        session=db.session,
-        business_id=g.business_id,
-        site_id=site_id,
-        processing_month=month,
+    site_results = load_hours_matrix_for_sites(
+        site_ids=[site_id],
+        processing_month=processing_month,
         approved_only=approved_only,
+        include_inactive=include_inactive,
+        business_id=g.business_id,
     )
-    matrix, status_map = build_matrix_and_status_map(rows)
+    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}})
+    return site_data['employees'], site_data['matrix'], site_data['status_map'], month
 
-    employees = _sort_employees_for_export(employees)
-    duration_s = time.perf_counter() - started_at
-    sites_metrics.observe_matrix_build_latency(duration_s, approved_only, include_inactive)
-    return employees, matrix, status_map, month
+
+def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, include_inactive, business_id):
+    """Bulk load employees + best-card hours matrix for multiple sites in a fixed query budget."""
+    month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+    unique_site_ids = list(dict.fromkeys(site_ids or []))
+    if not unique_site_ids:
+        return {}
+
+    site_results = {
+        site_id: {'employees': [], 'matrix': {}, 'status_map': {}}
+        for site_id in unique_site_ids
+    }
+
+    employee_query = db.session.query(Employee).filter(
+        Employee.business_id == business_id,
+        Employee.site_id.in_(unique_site_ids),
+    )
+    if not include_inactive:
+        employee_query = employee_query.filter(Employee.is_active.is_(True))
+
+    employees = employee_query.all()
+    for employee in employees:
+        site_results[employee.site_id]['employees'].append(employee)
+
+    for site_id, site_data in site_results.items():
+        site_data['employees'] = _sort_employees_for_export(site_data['employees'])
+
+    ranked_cards = db.session.query(
+        WorkCard.id.label('work_card_id'),
+        WorkCard.site_id,
+        WorkCard.employee_id,
+        WorkCard.review_status,
+        func.row_number().over(
+            partition_by=WorkCard.employee_id,
+            order_by=[
+                case(
+                    (WorkCard.review_status == 'APPROVED', 1),
+                    else_=2
+                ),
+                WorkCard.created_at.desc()
+            ]
+        ).label('rank')
+    ).filter(
+        WorkCard.business_id == business_id,
+        WorkCard.site_id.in_(unique_site_ids),
+        WorkCard.processing_month == month,
+        WorkCard.employee_id.isnot(None)
+    )
+
+    if approved_only:
+        ranked_cards = ranked_cards.filter(WorkCard.review_status == 'APPROVED')
+
+    ranked_cards = ranked_cards.subquery()
+
+    best_cards_rows = db.session.query(
+        ranked_cards.c.work_card_id,
+        ranked_cards.c.site_id,
+        ranked_cards.c.employee_id,
+        ranked_cards.c.review_status,
+    ).filter(
+        ranked_cards.c.rank == 1
+    ).all()
+
+    if not best_cards_rows:
+        return site_results
+
+    work_card_ids = [row.work_card_id for row in best_cards_rows]
+    work_card_to_site_employee = {}
+
+    for row in best_cards_rows:
+        employee_id_str = str(row.employee_id)
+        work_card_to_site_employee[str(row.work_card_id)] = (row.site_id, employee_id_str)
+        site_results[row.site_id]['status_map'][employee_id_str] = row.review_status
+
+    day_entries = db.session.query(
+        WorkCardDayEntry.work_card_id,
+        WorkCardDayEntry.day_of_month,
+        WorkCardDayEntry.total_hours
+    ).filter(
+        WorkCardDayEntry.work_card_id.in_(work_card_ids)
+    ).all()
+
+    for entry in day_entries:
+        match = work_card_to_site_employee.get(str(entry.work_card_id))
+        if not match:
+            continue
+        site_id, employee_id_str = match
+
+        if entry.total_hours is not None:
+            site_results[site_id]['matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = float(entry.total_hours)
+
+    return site_results
 
 @sites_bp.route('', methods=['GET'])
 @token_required
@@ -784,60 +867,37 @@ def export_monthly_summary_batch():
             )
         )
 
-        try:
-            template_path = _resolve_summary_template_path()
-            workbook = load_workbook(template_path)
-        except Exception as e:
-            logger.exception("Failed to load summary export template")
-            return api_response(status_code=500, message="Failed to load export template", error=str(e))
+    template_ws = workbook.worksheets[0]
+    style_header = copy(template_ws['B1']._style)
+    style_body = copy(template_ws['B3']._style)
+    style_total = copy(template_ws['A34']._style)
 
-        template_ws = workbook.worksheets[0]
-        style_header = copy(template_ws['B1']._style)
-        style_body = copy(template_ws['B3']._style)
-        style_total = copy(template_ws['A34']._style)
+    for ws in workbook.worksheets[1:]:
+        workbook.remove(ws)
 
-        for ws in workbook.worksheets[1:]:
-            workbook.remove(ws)
+    site_matrices = load_hours_matrix_for_sites(
+        site_ids=[site.id for site in sites],
+        processing_month=processing_month,
+        approved_only=approved_only,
+        include_inactive=include_inactive,
+        business_id=g.business_id,
+    )
 
-        used_sheet_names = set()
-        for site in sites:
-            try:
-                employees, matrix, _, _ = _load_hours_matrix(
-                    site.id,
-                    processing_month,
-                    approved_only,
-                    include_inactive
-                )
-                total_employee_count += len(employees)
-            except Exception:
-                logger.exception(f"Failed to build summary for site {site.id}")
-                continue
+    used_sheet_names = set()
+    for site in sites:
+        site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
 
-            ws = workbook.copy_worksheet(template_ws)
-            ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
-            _populate_template_core_sheet(
-                ws,
-                employees,
-                matrix,
-                month,
-                style_header=style_header,
-                style_body=style_body,
-                style_total=style_total,
-            )
-
-        if workbook.worksheets and len(workbook.worksheets) > 1:
-            workbook.remove(template_ws)
-        else:
-            _populate_template_core_sheet(
-                template_ws,
-                [],
-                {},
-                month,
-                style_header=style_header,
-                style_body=style_body,
-                style_total=style_total,
-            )
-            template_ws.title = 'Sites'
+        ws = workbook.copy_worksheet(template_ws)
+        ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
+        _populate_template_core_sheet(
+            ws,
+            site_data['employees'],
+            site_data['matrix'],
+            month,
+            style_header=style_header,
+            style_body=style_body,
+            style_total=style_total,
+        )
 
         output = BytesIO()
         workbook.save(output)
@@ -931,20 +991,50 @@ def export_salary_template_batch():
     except ValueError as e:
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
 
-    started_at = time.perf_counter()
-    total_employee_count = 0
-    with QueryCounter(db.engine) as query_counter:
-        sites = repo.get_all_for_business(g.business_id)
-        if not include_inactive_sites:
-            sites = [site for site in sites if site.is_active]
-        sites = sorted(
-            sites,
-            key=lambda s: (
-                (s.site_name or '').strip().lower(),
-                (s.site_code or '').strip().lower(),
-                str(s.id)
-            )
+    sites = repo.get_all_for_business(g.business_id)
+    if not include_inactive_sites:
+        sites = [site for site in sites if site.is_active]
+    sites = sorted(
+        sites,
+        key=lambda s: (
+            (s.site_name or '').strip().lower(),
+            (s.site_code or '').strip().lower(),
+            str(s.id)
         )
+    )
+
+    try:
+        template_path = _resolve_salary_template_path(month)
+        workbook = load_workbook(template_path)
+    except Exception as e:
+        logger.exception("Failed to load salary export template")
+        return api_response(status_code=500, message="Failed to load salary template", error=str(e))
+
+    template_ws = workbook.worksheets[0]
+    for ws in workbook.worksheets[1:]:
+        workbook.remove(ws)
+
+    site_matrices = load_hours_matrix_for_sites(
+        site_ids=[site.id for site in sites],
+        processing_month=processing_month,
+        approved_only=False,
+        include_inactive=include_inactive,
+        business_id=g.business_id,
+    )
+
+    used_sheet_names = set()
+    populated_count = 0
+    for site in sites:
+        site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
+
+        ws = workbook.copy_worksheet(template_ws)
+        ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
+        try:
+            _populate_salary_template_sheet(ws, site_data['employees'], site_data['matrix'], month)
+            populated_count += 1
+        except ValueError as e:
+            logger.exception(f"Invalid salary template format for site {site.id}")
+            return api_response(status_code=500, message="Invalid salary template format", error=str(e))
 
         try:
             template_path = _resolve_salary_template_path(month)
