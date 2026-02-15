@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 sites_bp = Blueprint('sites', __name__, url_prefix='/api/sites')
 repo = SiteRepository()
 employee_repo = EmployeeRepository()
-work_card_repo = WorkCardRepository()
-extraction_repo = WorkCardExtractionRepository()
 access_repo = UploadAccessRequestRepository()
 
 hours_matrix_service = HoursMatrixService(employee_repo, work_card_repo, extraction_repo)
