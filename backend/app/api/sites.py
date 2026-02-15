@@ -19,9 +19,11 @@ from sqlalchemy.orm import joinedload
 from twilio.rest import Client
 from ..repositories.site_repository import SiteRepository
 from ..repositories.employee_repository import EmployeeRepository
-from ..repositories.work_card_repository import WorkCardRepository
-from ..repositories.work_card_extraction_repository import WorkCardExtractionRepository
 from ..repositories.upload_access_request_repository import UploadAccessRequestRepository
+from ..services.sites.hours_matrix_service import (
+    build_employee_upload_status_map,
+    get_latest_work_card_with_extraction_by_employee,
+)
 from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required
 from ..utils import normalize_phone
@@ -34,8 +36,6 @@ logger = logging.getLogger(__name__)
 sites_bp = Blueprint('sites', __name__, url_prefix='/api/sites')
 repo = SiteRepository()
 employee_repo = EmployeeRepository()
-work_card_repo = WorkCardRepository()
-extraction_repo = WorkCardExtractionRepository()
 access_repo = UploadAccessRequestRepository()
 
 STATUS_LABELS = {
@@ -621,46 +621,21 @@ def get_employee_upload_status(site_id):
         # Parse processing_month
         month = datetime.strptime(processing_month, '%Y-%m-%d').date()
         
-        # Get all employees for this site
-        employees = employee_repo.get_by_site(site_id, g.business_id)
-        
-        # Build result with status for each employee
+        employee_rows = get_latest_work_card_with_extraction_by_employee(
+            business_id=g.business_id,
+            site_id=site_id,
+            processing_month=month,
+        )
+        status_map = build_employee_upload_status_map(employee_rows)
+
         result = []
-        for employee in employees:
-            # Get work cards for this employee and month
-            work_cards = work_card_repo.get_by_employee_month(employee.id, month, g.business_id)
-            
-            # Determine status
-            status = 'NO_UPLOAD'
-            work_card_id = None
-            
-            if work_cards:
-                # Use the latest work card
-                work_card = work_cards[-1]
-                work_card_id = str(work_card.id)
-                
-                # Get extraction status (may be None if user has not triggered extraction)
-                extraction = extraction_repo.get_by_work_card(work_card.id)
-                
-                if extraction:
-                    if extraction.status == 'FAILED':
-                        status = 'FAILED'
-                    elif extraction.status in ['PENDING', 'RUNNING']:
-                        status = 'PENDING'
-                    elif extraction.status == 'DONE':
-                        if work_card.review_status == 'APPROVED':
-                            status = 'APPROVED'
-                        else:
-                            status = 'EXTRACTED'
-                else:
-                    # Work card exists but extraction not yet triggered - show as pending
-                    status = 'PENDING'
-            
+        for employee, _, _, _ in employee_rows:
+            employee_status = status_map.get(str(employee.id), {'status': 'NO_UPLOAD', 'work_card_id': None})
             employee_dict = model_to_dict(employee)
             result.append({
                 'employee': employee_dict,
-                'status': status,
-                'work_card_id': work_card_id
+                'status': employee_status['status'],
+                'work_card_id': employee_status['work_card_id'],
             })
         
         return api_response(data=result)
