@@ -1082,12 +1082,11 @@ def list_access_links(site_id):
     if not site or site.business_id != g.business_id:
         return api_response(status_code=404, message="Site not found", error="Not Found")
 
-    links = access_repo.list_active_for_site(site_id, g.business_id)
+    links_with_employees = access_repo.list_active_for_site_with_employee(site_id, g.business_id)
     data = []
-    for link in links:
+    for link, employee_name in links_with_employees:
         link_dict = model_to_dict(link)
-        employee = employee_repo.get_by_id(link.employee_id)
-        link_dict['employee_name'] = employee.full_name if employee else ''
+        link_dict['employee_name'] = employee_name or ''
         link_dict['url'] = f"{request.host_url.rstrip('/')}/portal/{link.token}"
         data.append(link_dict)
 
@@ -1182,11 +1181,11 @@ def send_whatsapp_links_batch():
     failed_count = 0
     skipped_count = 0
 
+    parsed_site_ids = []
     for site_id in site_ids:
         site_id_str = str(site_id)
-        site = None
         try:
-            site_uuid = uuid.UUID(site_id_str)
+            parsed_site_ids.append((site_id_str, uuid.UUID(site_id_str)))
         except ValueError:
             skipped_count += 1
             results.append({
@@ -1194,10 +1193,27 @@ def send_whatsapp_links_batch():
                 'status': 'skipped',
                 'reason': 'Invalid site_id format'
             })
-            continue
 
-        site = repo.get_by_id(site_uuid)
-        if not site or site.business_id != g.business_id:
+    site_lookup = {
+        str(site.id): site
+        for site in repo.get_by_ids_for_business(
+            [parsed_id for _, parsed_id in parsed_site_ids],
+            g.business_id,
+        )
+    }
+    responsible_employee_ids = [
+        site.responsible_employee_id
+        for site in site_lookup.values()
+        if site.responsible_employee_id
+    ]
+    employee_lookup = {
+        str(employee.id): employee
+        for employee in employee_repo.get_by_ids_for_business(responsible_employee_ids, g.business_id)
+    }
+
+    for site_id_str, site_uuid in parsed_site_ids:
+        site = site_lookup.get(str(site_uuid))
+        if not site:
             skipped_count += 1
             results.append({
                 'site_id': site_id_str,
@@ -1216,7 +1232,7 @@ def send_whatsapp_links_batch():
             })
             continue
 
-        employee = employee_repo.get_by_id(site.responsible_employee_id)
+        employee = employee_lookup.get(str(site.responsible_employee_id))
         if not employee or employee.business_id != g.business_id or str(employee.site_id) != str(site.id):
             skipped_count += 1
             results.append({
