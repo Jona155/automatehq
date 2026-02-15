@@ -378,17 +378,46 @@ def _populate_template_core_sheet(
 
 def _load_hours_matrix(site_id, processing_month, approved_only, include_inactive):
     month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+    site_results = load_hours_matrix_for_sites(
+        site_ids=[site_id],
+        processing_month=processing_month,
+        approved_only=approved_only,
+        include_inactive=include_inactive,
+        business_id=g.business_id,
+    )
+    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}})
+    return site_data['employees'], site_data['matrix'], site_data['status_map'], month
 
-    if include_inactive:
-        employees = employee_repo.get_by_site(site_id, g.business_id)
-    else:
-        employees = employee_repo.get_active_by_site(site_id, g.business_id)
 
-    matrix = {}
-    status_map = {}
+def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, include_inactive, business_id):
+    """Bulk load employees + best-card hours matrix for multiple sites in a fixed query budget."""
+    month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+    unique_site_ids = list(dict.fromkeys(site_ids or []))
+    if not unique_site_ids:
+        return {}
+
+    site_results = {
+        site_id: {'employees': [], 'matrix': {}, 'status_map': {}}
+        for site_id in unique_site_ids
+    }
+
+    employee_query = db.session.query(Employee).filter(
+        Employee.business_id == business_id,
+        Employee.site_id.in_(unique_site_ids),
+    )
+    if not include_inactive:
+        employee_query = employee_query.filter(Employee.is_active.is_(True))
+
+    employees = employee_query.all()
+    for employee in employees:
+        site_results[employee.site_id]['employees'].append(employee)
+
+    for site_id, site_data in site_results.items():
+        site_data['employees'] = _sort_employees_for_export(site_data['employees'])
 
     ranked_cards = db.session.query(
         WorkCard.id.label('work_card_id'),
+        WorkCard.site_id,
         WorkCard.employee_id,
         WorkCard.review_status,
         func.row_number().over(
@@ -402,8 +431,8 @@ def _load_hours_matrix(site_id, processing_month, approved_only, include_inactiv
             ]
         ).label('rank')
     ).filter(
-        WorkCard.business_id == g.business_id,
-        WorkCard.site_id == site_id,
+        WorkCard.business_id == business_id,
+        WorkCard.site_id.in_(unique_site_ids),
         WorkCard.processing_month == month,
         WorkCard.employee_id.isnot(None)
     )
@@ -413,50 +442,44 @@ def _load_hours_matrix(site_id, processing_month, approved_only, include_inactiv
 
     ranked_cards = ranked_cards.subquery()
 
-    best_cards = db.session.query(
-        ranked_cards.c.work_card_id
+    best_cards_rows = db.session.query(
+        ranked_cards.c.work_card_id,
+        ranked_cards.c.site_id,
+        ranked_cards.c.employee_id,
+        ranked_cards.c.review_status,
     ).filter(
         ranked_cards.c.rank == 1
-    ).subquery()
+    ).all()
+
+    if not best_cards_rows:
+        return site_results
+
+    work_card_ids = [row.work_card_id for row in best_cards_rows]
+    work_card_to_site_employee = {}
+
+    for row in best_cards_rows:
+        employee_id_str = str(row.employee_id)
+        work_card_to_site_employee[str(row.work_card_id)] = (row.site_id, employee_id_str)
+        site_results[row.site_id]['status_map'][employee_id_str] = row.review_status
 
     day_entries = db.session.query(
         WorkCardDayEntry.work_card_id,
         WorkCardDayEntry.day_of_month,
         WorkCardDayEntry.total_hours
-    ).join(
-        WorkCard,
-        WorkCard.id == WorkCardDayEntry.work_card_id
     ).filter(
-        WorkCardDayEntry.work_card_id.in_(db.session.query(best_cards.c.work_card_id))
+        WorkCardDayEntry.work_card_id.in_(work_card_ids)
     ).all()
-
-    work_card_to_employee = {}
-    cards_query = db.session.query(
-        WorkCard.id,
-        WorkCard.employee_id,
-        WorkCard.review_status
-    ).filter(
-        WorkCard.id.in_(db.session.query(best_cards.c.work_card_id))
-    ).all()
-
-    for card_id, employee_id, review_status in cards_query:
-        employee_id_str = str(employee_id)
-        work_card_to_employee[str(card_id)] = employee_id_str
-        status_map[employee_id_str] = review_status
 
     for entry in day_entries:
-        work_card_id_str = str(entry.work_card_id)
-        employee_id = work_card_to_employee.get(work_card_id_str)
+        match = work_card_to_site_employee.get(str(entry.work_card_id))
+        if not match:
+            continue
+        site_id, employee_id_str = match
 
-        if employee_id:
-            if employee_id not in matrix:
-                matrix[employee_id] = {}
+        if entry.total_hours is not None:
+            site_results[site_id]['matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = float(entry.total_hours)
 
-            if entry.total_hours is not None:
-                matrix[employee_id][entry.day_of_month] = float(entry.total_hours)
-
-    employees = _sort_employees_for_export(employees)
-    return employees, matrix, status_map, month
+    return site_results
 
 @sites_bp.route('', methods=['GET'])
 @token_required
@@ -838,25 +861,24 @@ def export_monthly_summary_batch():
     for ws in workbook.worksheets[1:]:
         workbook.remove(ws)
 
+    site_matrices = load_hours_matrix_for_sites(
+        site_ids=[site.id for site in sites],
+        processing_month=processing_month,
+        approved_only=approved_only,
+        include_inactive=include_inactive,
+        business_id=g.business_id,
+    )
+
     used_sheet_names = set()
     for site in sites:
-        try:
-            employees, matrix, _, _ = _load_hours_matrix(
-                site.id,
-                processing_month,
-                approved_only,
-                include_inactive
-            )
-        except Exception:
-            logger.exception(f"Failed to build summary for site {site.id}")
-            continue
+        site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
 
         ws = workbook.copy_worksheet(template_ws)
         ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
         _populate_template_core_sheet(
             ws,
-            employees,
-            matrix,
+            site_data['employees'],
+            site_data['matrix'],
             month,
             style_header=style_header,
             style_body=style_body,
@@ -979,24 +1001,23 @@ def export_salary_template_batch():
     for ws in workbook.worksheets[1:]:
         workbook.remove(ws)
 
+    site_matrices = load_hours_matrix_for_sites(
+        site_ids=[site.id for site in sites],
+        processing_month=processing_month,
+        approved_only=False,
+        include_inactive=include_inactive,
+        business_id=g.business_id,
+    )
+
     used_sheet_names = set()
     populated_count = 0
     for site in sites:
-        try:
-            employees, matrix, _, _ = _load_hours_matrix(
-                site.id,
-                processing_month,
-                approved_only=False,
-                include_inactive=include_inactive
-            )
-        except Exception:
-            logger.exception(f"Failed to build salary matrix for site {site.id}")
-            continue
+        site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
 
         ws = workbook.copy_worksheet(template_ws)
         ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
         try:
-            _populate_salary_template_sheet(ws, employees, matrix, month)
+            _populate_salary_template_sheet(ws, site_data['employees'], site_data['matrix'], month)
             populated_count += 1
         except ValueError as e:
             logger.exception(f"Invalid salary template format for site {site.id}")
