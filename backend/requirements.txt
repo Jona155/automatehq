@@ -7,3 +7,4 @@ flask-migrate>=4.0
 PyJWT>=2.8.0
 gunicorn
 twilio>=8.0.0
+openpyxl>=3.1

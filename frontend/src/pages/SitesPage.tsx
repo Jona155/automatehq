@@ -233,7 +233,7 @@ export default function SitesPage() {
       const blob = await downloadMonthlySummaryBatch(summaryExportMonth, {
         approved_only: false,
         include_inactive: false,
-        include_inactive_sites: true,
+        include_inactive_sites: false,
       });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');

@@ -9,7 +9,10 @@ import csv
 import calendar
 from io import BytesIO, StringIO
 import unicodedata
-import pandas as pd
+from pathlib import Path
+from copy import copy
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from sqlalchemy import and_, or_, func, case
 from sqlalchemy.orm import joinedload
 from twilio.rest import Client
@@ -97,6 +100,96 @@ def _safe_sheet_name(value: str, existing: set) -> str:
     existing.add(candidate)
     return candidate
 
+def _resolve_summary_template_path() -> Path:
+    """Resolve the Excel template used for batch site export."""
+    base_dir = Path(__file__).resolve().parents[2]
+    templates_dir = base_dir / 'excel_extraction_example'
+    preferred = templates_dir / 'שעות עבודה לפי אתרים ינואר 26 (1).xlsx'
+    if preferred.exists():
+        return preferred
+
+    candidates = sorted(templates_dir.glob('*.xlsx'))
+    if not candidates:
+        raise FileNotFoundError('No Excel template found in backend/excel_extraction_example')
+    return candidates[0]
+
+
+def _sort_employees_for_export(employees):
+    return sorted(
+        employees,
+        key=lambda e: (
+            (e.full_name or '').strip().lower(),
+            (e.passport_id or '').strip().lower(),
+            str(e.id)
+        )
+    )
+
+
+def _format_day_label(year: int, month: int, day: int, days_in_month: int):
+    if day <= days_in_month and datetime(year, month, day).weekday() == 5:
+        return f'{day}-שבת'
+    return day
+
+
+def _day_fallback_value(year: int, month: int, day: int, days_in_month: int):
+    if day > days_in_month:
+        return None
+    if datetime(year, month, day).weekday() == 5:
+        return 'שבת'
+    return None
+
+
+def _populate_template_core_sheet(
+    ws,
+    employees,
+    matrix,
+    month_date,
+    style_header,
+    style_body,
+    style_total,
+):
+    """Populate a worksheet in the core template format (no fee summary rows)."""
+    days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
+    employee_count = len(employees)
+    last_data_col = max(2, employee_count + 1)
+
+    # Clear template values (including fee/footer cells) while preserving worksheet settings.
+    clear_max_col = max(last_data_col, ws.max_column)
+    for row in range(1, 39):
+        for col in range(1, clear_max_col + 1):
+            ws.cell(row=row, column=col).value = None
+
+    ws.sheet_view.rightToLeft = True
+
+    ws.cell(row=1, column=1, value='יום בחודש')._style = copy(style_header)
+    ws.cell(row=2, column=1, value=None)._style = copy(style_body)
+
+    for idx, employee in enumerate(employees, start=2):
+        passport_value = (employee.passport_id or '').strip() if employee.passport_id else ''
+        ws.cell(row=1, column=idx, value=passport_value)._style = copy(style_header)
+        ws.cell(row=2, column=idx, value=employee.full_name or '')._style = copy(style_body)
+
+    # Body rows: fixed 31-day structure (rows 3..33)
+    for day in range(1, 32):
+        row = day + 2
+        ws.cell(
+            row=row,
+            column=1,
+            value=_format_day_label(month_date.year, month_date.month, day, days_in_month)
+        )._style = copy(style_body)
+
+        for idx, employee in enumerate(employees, start=2):
+            employee_days = matrix.get(str(employee.id), {})
+            value = employee_days.get(day)
+            if value is None:
+                value = _day_fallback_value(month_date.year, month_date.month, day, days_in_month)
+            ws.cell(row=row, column=idx, value=value)._style = copy(style_body)
+
+    ws.cell(row=34, column=1, value='סה"כ')._style = copy(style_total)
+    for col in range(2, last_data_col + 1):
+        col_letter = get_column_letter(col)
+        ws.cell(row=34, column=col, value=f'=SUM({col_letter}3:{col_letter}33)')._style = copy(style_total)
+
 def _load_hours_matrix(site_id, processing_month, approved_only, include_inactive):
     month = datetime.strptime(processing_month, '%Y-%m-%d').date()
 
@@ -176,6 +269,7 @@ def _load_hours_matrix(site_id, processing_month, approved_only, include_inactiv
             if entry.total_hours is not None:
                 matrix[employee_id][entry.day_of_month] = float(entry.total_hours)
 
+    employees = _sort_employees_for_export(employees)
     return employees, matrix, status_map, month
 
 @sites_bp.route('', methods=['GET'])
@@ -517,14 +611,14 @@ def export_monthly_summary(site_id):
 @sites_bp.route('/summary/export-batch', methods=['GET'])
 @token_required
 def export_monthly_summary_batch():
-    """Export monthly summary matrix for all sites as an Excel file (one sheet per site)."""
+    """Export monthly summary matrix for all sites in template format (one sheet per site)."""
     processing_month = request.args.get('processing_month')
     if not processing_month:
         return api_response(status_code=400, message="processing_month is required", error="Bad Request")
 
     approved_only = request.args.get('approved_only', 'false').lower() == 'true'
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
-    include_inactive_sites = request.args.get('include_inactive_sites', 'true').lower() == 'true'
+    include_inactive_sites = request.args.get('include_inactive_sites', 'false').lower() == 'true'
 
     try:
         month = datetime.strptime(processing_month, '%Y-%m-%d').date()
@@ -534,75 +628,73 @@ def export_monthly_summary_batch():
     sites = repo.get_all_for_business(g.business_id)
     if not include_inactive_sites:
         sites = [site for site in sites if site.is_active]
+    sites = sorted(
+        sites,
+        key=lambda s: (
+            (s.site_name or '').strip().lower(),
+            (s.site_code or '').strip().lower(),
+            str(s.id)
+        )
+    )
 
-    days_in_month = calendar.monthrange(month.year, month.month)[1]
-    day_headers = [str(day) for day in range(1, days_in_month + 1)]
-    headers = ['employee_name', 'employee_id', 'status', *day_headers, 'total_hours']
+    try:
+        template_path = _resolve_summary_template_path()
+        workbook = load_workbook(template_path)
+    except Exception as e:
+        logger.exception("Failed to load summary export template")
+        return api_response(status_code=500, message="Failed to load export template", error=str(e))
+
+    template_ws = workbook.worksheets[0]
+    style_header = copy(template_ws['B1']._style)
+    style_body = copy(template_ws['B3']._style)
+    style_total = copy(template_ws['A34']._style)
+
+    for ws in workbook.worksheets[1:]:
+        workbook.remove(ws)
+
+    used_sheet_names = set()
+    for site in sites:
+        try:
+            employees, matrix, _, _ = _load_hours_matrix(
+                site.id,
+                processing_month,
+                approved_only,
+                include_inactive
+            )
+        except Exception:
+            logger.exception(f"Failed to build summary for site {site.id}")
+            continue
+
+        ws = workbook.copy_worksheet(template_ws)
+        ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
+        _populate_template_core_sheet(
+            ws,
+            employees,
+            matrix,
+            month,
+            style_header=style_header,
+            style_body=style_body,
+            style_total=style_total,
+        )
+
+    if workbook.worksheets and len(workbook.worksheets) > 1:
+        workbook.remove(template_ws)
+    else:
+        _populate_template_core_sheet(
+            template_ws,
+            [],
+            {},
+            month,
+            style_header=style_header,
+            style_body=style_body,
+            style_total=style_total,
+        )
+        template_ws.title = 'Sites'
 
     output = BytesIO()
-    used_sheet_names = set()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        for site in sites:
-            try:
-                employees, matrix, status_map, _ = _load_hours_matrix(
-                    site.id,
-                    processing_month,
-                    approved_only,
-                    include_inactive
-                )
-            except Exception:
-                logger.exception(f"Failed to build summary for site {site.id}")
-                continue
-
-            rows = []
-            for employee in employees:
-                employee_id_str = str(employee.id)
-                employee_days = matrix.get(employee_id_str, {})
-                total_hours = sum(employee_days.values()) if employee_days else 0
-                status_key = status_map.get(employee_id_str) or 'NO_UPLOAD'
-                status_label = STATUS_LABELS.get(status_key, status_key)
-
-                day_values = []
-                for day in range(1, days_in_month + 1):
-                    hours = employee_days.get(day)
-                    if hours is None:
-                        day_values.append('')
-                    else:
-                        day_values.append(f"{hours:.1f}")
-
-                rows.append({
-                    'employee_name': employee.full_name,
-                    'employee_id': employee_id_str,
-                    'status': status_label,
-                    **{day_headers[idx]: day_values[idx] for idx in range(days_in_month)},
-                    'total_hours': f"{total_hours:.1f}" if total_hours > 0 else ''
-                })
-
-            day_totals = []
-            for day in range(1, days_in_month + 1):
-                day_total = sum(matrix.get(str(employee.id), {}).get(day, 0) for employee in employees)
-                day_totals.append(f"{day_total:.1f}" if day_total > 0 else '')
-
-            grand_total = sum(
-                matrix.get(str(employee.id), {}).get(day, 0)
-                for employee in employees
-                for day in range(1, days_in_month + 1)
-            )
-
-            total_row = {
-                'employee_name': 'TOTAL',
-                'employee_id': '',
-                'status': '',
-                **{day_headers[idx]: day_totals[idx] for idx in range(days_in_month)},
-                'total_hours': f"{grand_total:.1f}" if grand_total > 0 else ''
-            }
-            rows.append(total_row)
-
-            df = pd.DataFrame(rows, columns=headers)
-            sheet_name = _safe_sheet_name(site.site_name, used_sheet_names)
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
-
+    workbook.save(output)
     output.seek(0)
+
     download_name = f"monthly_summary_all_sites_{month.strftime('%Y-%m')}.xlsx"
     return send_file(
         output,
