@@ -4,6 +4,7 @@ import uuid
 import traceback
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 import secrets
 import csv
@@ -14,7 +15,7 @@ from pathlib import Path
 from copy import copy
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
-from sqlalchemy import and_, or_, func, case
+from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import joinedload
 from twilio.rest import Client
 from ..repositories.site_repository import SiteRepository
@@ -28,6 +29,7 @@ from ..utils import normalize_phone
 from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
 from ..models.sites import Employee
 from ..extensions import db
+from ..services.hours_matrix_service import load_hours_matrix_rows, build_matrix_and_status_map
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +379,7 @@ def _populate_template_core_sheet(
         ws.cell(row=34, column=col, value=f'=SUM({col_letter}3:{col_letter}33)')._style = copy(style_total)
 
 def _load_hours_matrix(site_id, processing_month, approved_only, include_inactive):
+    started_at = time.perf_counter()
     month = datetime.strptime(processing_month, '%Y-%m-%d').date()
     site_results = load_hours_matrix_for_sites(
         site_ids=[site_id],
@@ -698,37 +701,52 @@ def get_employee_upload_status(site_id):
 @token_required
 def get_hours_matrix(site_id):
     """Get hours matrix for a site and month with performance optimization."""
-    # Verify site belongs to user's business
-    site = repo.get_by_id(site_id)
-    if not site or site.business_id != g.business_id:
-        return api_response(status_code=404, message="Site not found", error="Not Found")
-    
-    processing_month = request.args.get('processing_month')
-    if not processing_month:
-        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
-    
-    approved_only = request.args.get('approved_only', 'true').lower() == 'true'
-    include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
-    
-    try:
-        employees, matrix, status_map, _ = _load_hours_matrix(
-            site_id,
-            processing_month,
-            approved_only,
-            include_inactive
-        )
+    started_at = time.perf_counter()
+    with QueryCounter(db.engine) as query_counter:
+        # Verify site belongs to user's business
+        site = repo.get_by_id(site_id)
+        if not site or site.business_id != g.business_id:
+            return api_response(status_code=404, message="Site not found", error="Not Found")
 
-        return api_response(data={
-            'employees': models_to_list(employees),
-            'matrix': matrix,
-            'status_map': status_map
-        })
-    except ValueError as e:
-        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
-    except Exception as e:
-        logger.exception(f"Failed to get hours matrix for site {site_id}")
-        traceback.print_exc()
-        return api_response(status_code=500, message="Failed to get hours matrix", error=str(e))
+        processing_month = request.args.get('processing_month')
+        if not processing_month:
+            return api_response(status_code=400, message="processing_month is required", error="Bad Request")
+
+        approved_only = request.args.get('approved_only', 'true').lower() == 'true'
+        include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
+
+        try:
+            employees, matrix, status_map, _ = _load_hours_matrix(
+                site_id,
+                processing_month,
+                approved_only,
+                include_inactive
+            )
+
+            response = api_response(data={
+                'employees': models_to_list(employees),
+                'matrix': matrix,
+                'status_map': status_map
+            })
+            return response
+        except ValueError as e:
+            return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+        except Exception as e:
+            logger.exception(f"Failed to get hours matrix for site {site_id}")
+            traceback.print_exc()
+            return api_response(status_code=500, message="Failed to get hours matrix", error=str(e))
+        finally:
+            duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+            logger.info(
+                "sites.matrix_route",
+                extra={
+                    'duration_ms': duration_ms,
+                    'site_count': 1,
+                    'employee_count': len(employees) if 'employees' in locals() else 0,
+                    'query_count': query_counter.count,
+                    'output_type': 'json',
+                }
+            )
 
 @sites_bp.route('/<uuid:site_id>/summary/export', methods=['GET'])
 @token_required
@@ -834,24 +852,20 @@ def export_monthly_summary_batch():
     except ValueError as e:
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
 
-    sites = repo.get_all_for_business(g.business_id)
-    if not include_inactive_sites:
-        sites = [site for site in sites if site.is_active]
-    sites = sorted(
-        sites,
-        key=lambda s: (
-            (s.site_name or '').strip().lower(),
-            (s.site_code or '').strip().lower(),
-            str(s.id)
+    started_at = time.perf_counter()
+    total_employee_count = 0
+    with QueryCounter(db.engine) as query_counter:
+        sites = repo.get_all_for_business(g.business_id)
+        if not include_inactive_sites:
+            sites = [site for site in sites if site.is_active]
+        sites = sorted(
+            sites,
+            key=lambda s: (
+                (s.site_name or '').strip().lower(),
+                (s.site_code or '').strip().lower(),
+                str(s.id)
+            )
         )
-    )
-
-    try:
-        template_path = _resolve_summary_template_path()
-        workbook = load_workbook(template_path)
-    except Exception as e:
-        logger.exception("Failed to load summary export template")
-        return api_response(status_code=500, message="Failed to load export template", error=str(e))
 
     template_ws = workbook.worksheets[0]
     style_header = copy(template_ws['B1']._style)
@@ -885,31 +899,30 @@ def export_monthly_summary_batch():
             style_total=style_total,
         )
 
-    if workbook.worksheets and len(workbook.worksheets) > 1:
-        workbook.remove(template_ws)
-    else:
-        _populate_template_core_sheet(
-            template_ws,
-            [],
-            {},
-            month,
-            style_header=style_header,
-            style_body=style_body,
-            style_total=style_total,
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+
+        duration_s = time.perf_counter() - started_at
+        sites_metrics.observe_export_generation_latency(duration_s, output_type='xlsx', endpoint='summary_export_batch')
+        logger.info(
+            "sites.export_batch_route",
+            extra={
+                'duration_ms': round(duration_s * 1000, 2),
+                'site_count': len(sites),
+                'employee_count': total_employee_count,
+                'query_count': query_counter.count,
+                'output_type': 'xlsx',
+            }
         )
-        template_ws.title = 'Sites'
 
-    output = BytesIO()
-    workbook.save(output)
-    output.seek(0)
-
-    download_name = f"monthly_summary_all_sites_{month.strftime('%Y-%m')}.xlsx"
-    return send_file(
-        output,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        as_attachment=True,
-        download_name=download_name
-    )
+        download_name = f"monthly_summary_all_sites_{month.strftime('%Y-%m')}.xlsx"
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=download_name
+        )
 
 @sites_bp.route('/<uuid:site_id>/salary-template/export', methods=['GET'])
 @token_required
@@ -1023,26 +1036,74 @@ def export_salary_template_batch():
             logger.exception(f"Invalid salary template format for site {site.id}")
             return api_response(status_code=500, message="Invalid salary template format", error=str(e))
 
-    if populated_count > 0 and len(workbook.worksheets) > 1:
-        workbook.remove(template_ws)
-    else:
         try:
-            _populate_salary_template_sheet(template_ws, [], {}, month)
-            template_ws.title = 'Sites'
-        except ValueError as e:
-            return api_response(status_code=500, message="Invalid salary template format", error=str(e))
+            template_path = _resolve_salary_template_path(month)
+            workbook = load_workbook(template_path)
+        except Exception as e:
+            logger.exception("Failed to load salary export template")
+            return api_response(status_code=500, message="Failed to load salary template", error=str(e))
 
-    output = BytesIO()
-    workbook.save(output)
-    output.seek(0)
+        template_ws = workbook.worksheets[0]
+        for ws in workbook.worksheets[1:]:
+            workbook.remove(ws)
 
-    download_name = f"salary_template_all_sites_{month.strftime('%Y-%m')}.xlsx"
-    return send_file(
-        output,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        as_attachment=True,
-        download_name=download_name
-    )
+        used_sheet_names = set()
+        populated_count = 0
+        for site in sites:
+            try:
+                employees, matrix, _, _ = _load_hours_matrix(
+                    site.id,
+                    processing_month,
+                    approved_only=False,
+                    include_inactive=include_inactive
+                )
+                total_employee_count += len(employees)
+            except Exception:
+                logger.exception(f"Failed to build salary matrix for site {site.id}")
+                continue
+
+            ws = workbook.copy_worksheet(template_ws)
+            ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
+            try:
+                _populate_salary_template_sheet(ws, employees, matrix, month)
+                populated_count += 1
+            except ValueError as e:
+                logger.exception(f"Invalid salary template format for site {site.id}")
+                return api_response(status_code=500, message="Invalid salary template format", error=str(e))
+
+        if populated_count > 0 and len(workbook.worksheets) > 1:
+            workbook.remove(template_ws)
+        else:
+            try:
+                _populate_salary_template_sheet(template_ws, [], {}, month)
+                template_ws.title = 'Sites'
+            except ValueError as e:
+                return api_response(status_code=500, message="Invalid salary template format", error=str(e))
+
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+
+        duration_s = time.perf_counter() - started_at
+        sites_metrics.observe_export_generation_latency(duration_s, output_type='xlsx', endpoint='salary_export_batch')
+        logger.info(
+            "sites.salary_export_batch_route",
+            extra={
+                'duration_ms': round(duration_s * 1000, 2),
+                'site_count': len(sites),
+                'employee_count': total_employee_count,
+                'query_count': query_counter.count,
+                'output_type': 'xlsx',
+            }
+        )
+
+        download_name = f"salary_template_all_sites_{month.strftime('%Y-%m')}.xlsx"
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=download_name
+        )
 
 
 @sites_bp.route('/<uuid:site_id>/access-link', methods=['POST'])
@@ -1103,12 +1164,11 @@ def list_access_links(site_id):
     if not site or site.business_id != g.business_id:
         return api_response(status_code=404, message="Site not found", error="Not Found")
 
-    links = access_repo.list_active_for_site(site_id, g.business_id)
+    links_with_employees = access_repo.list_active_for_site_with_employee(site_id, g.business_id)
     data = []
-    for link in links:
+    for link, employee_name in links_with_employees:
         link_dict = model_to_dict(link)
-        employee = employee_repo.get_by_id(link.employee_id)
-        link_dict['employee_name'] = employee.full_name if employee else ''
+        link_dict['employee_name'] = employee_name or ''
         link_dict['url'] = f"{request.host_url.rstrip('/')}/portal/{link.token}"
         data.append(link_dict)
 
@@ -1203,23 +1263,42 @@ def send_whatsapp_links_batch():
     failed_count = 0
     skipped_count = 0
 
+    parsed_site_ids = []
     for site_id in site_ids:
         site_id_str = str(site_id)
-        site = None
         try:
-            site_uuid = uuid.UUID(site_id_str)
+            parsed_site_ids.append((site_id_str, uuid.UUID(site_id_str)))
         except ValueError:
             skipped_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('skipped')
             results.append({
                 'site_id': site_id_str,
                 'status': 'skipped',
                 'reason': 'Invalid site_id format'
             })
-            continue
 
-        site = repo.get_by_id(site_uuid)
-        if not site or site.business_id != g.business_id:
+    site_lookup = {
+        str(site.id): site
+        for site in repo.get_by_ids_for_business(
+            [parsed_id for _, parsed_id in parsed_site_ids],
+            g.business_id,
+        )
+    }
+    responsible_employee_ids = [
+        site.responsible_employee_id
+        for site in site_lookup.values()
+        if site.responsible_employee_id
+    ]
+    employee_lookup = {
+        str(employee.id): employee
+        for employee in employee_repo.get_by_ids_for_business(responsible_employee_ids, g.business_id)
+    }
+
+    for site_id_str, site_uuid in parsed_site_ids:
+        site = site_lookup.get(str(site_uuid))
+        if not site:
             skipped_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('skipped')
             results.append({
                 'site_id': site_id_str,
                 'status': 'skipped',
@@ -1229,6 +1308,7 @@ def send_whatsapp_links_batch():
 
         if not site.responsible_employee_id:
             skipped_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('skipped')
             results.append({
                 'site_id': site_id_str,
                 'site_name': site.site_name,
@@ -1237,9 +1317,10 @@ def send_whatsapp_links_batch():
             })
             continue
 
-        employee = employee_repo.get_by_id(site.responsible_employee_id)
+        employee = employee_lookup.get(str(site.responsible_employee_id))
         if not employee or employee.business_id != g.business_id or str(employee.site_id) != str(site.id):
             skipped_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('skipped')
             results.append({
                 'site_id': site_id_str,
                 'site_name': site.site_name,
@@ -1251,6 +1332,7 @@ def send_whatsapp_links_batch():
 
         if not employee.is_active:
             skipped_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('skipped')
             results.append({
                 'site_id': site_id_str,
                 'site_name': site.site_name,
@@ -1263,6 +1345,7 @@ def send_whatsapp_links_batch():
 
         if not employee.phone_number:
             skipped_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('skipped')
             results.append({
                 'site_id': site_id_str,
                 'site_name': site.site_name,
@@ -1276,6 +1359,7 @@ def send_whatsapp_links_batch():
         raw_phone = normalize_phone(employee.phone_number)
         if not raw_phone:
             skipped_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('skipped')
             results.append({
                 'site_id': site_id_str,
                 'site_name': site.site_name,
@@ -1289,6 +1373,7 @@ def send_whatsapp_links_batch():
         formatted_phone = _format_whatsapp_number(raw_phone)
         if not formatted_phone:
             skipped_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('skipped')
             results.append({
                 'site_id': site_id_str,
                 'site_name': site.site_name,
@@ -1302,6 +1387,7 @@ def send_whatsapp_links_batch():
         token = _generate_access_token()
         if not token:
             failed_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('failed')
             results.append({
                 'site_id': site_id_str,
                 'site_name': site.site_name,
@@ -1340,6 +1426,7 @@ def send_whatsapp_links_batch():
             )
             logger.info(f"WhatsApp sent to {formatted_phone}: {message.sid}")
             sent_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('sent')
             results.append({
                 'site_id': site_id_str,
                 'site_name': site.site_name,
@@ -1351,6 +1438,7 @@ def send_whatsapp_links_batch():
         except Exception as e:
             logger.exception(f"Twilio error for site {site.id}")
             failed_count += 1
+            sites_metrics.increment_whatsapp_batch_outcome('failed')
             results.append({
                 'site_id': site_id_str,
                 'site_name': site.site_name,
