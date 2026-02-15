@@ -14,7 +14,7 @@ from pathlib import Path
 from copy import copy
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
-from sqlalchemy import and_, or_, func, case
+from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import joinedload
 from twilio.rest import Client
 from ..repositories.site_repository import SiteRepository
@@ -28,6 +28,7 @@ from ..utils import normalize_phone
 from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
 from ..models.sites import Employee
 from ..extensions import db
+from ..services.hours_matrix_service import load_hours_matrix_rows, build_matrix_and_status_map
 
 logger = logging.getLogger(__name__)
 
@@ -384,76 +385,14 @@ def _load_hours_matrix(site_id, processing_month, approved_only, include_inactiv
     else:
         employees = employee_repo.get_active_by_site(site_id, g.business_id)
 
-    matrix = {}
-    status_map = {}
-
-    ranked_cards = db.session.query(
-        WorkCard.id.label('work_card_id'),
-        WorkCard.employee_id,
-        WorkCard.review_status,
-        func.row_number().over(
-            partition_by=WorkCard.employee_id,
-            order_by=[
-                case(
-                    (WorkCard.review_status == 'APPROVED', 1),
-                    else_=2
-                ),
-                WorkCard.created_at.desc()
-            ]
-        ).label('rank')
-    ).filter(
-        WorkCard.business_id == g.business_id,
-        WorkCard.site_id == site_id,
-        WorkCard.processing_month == month,
-        WorkCard.employee_id.isnot(None)
+    rows = load_hours_matrix_rows(
+        session=db.session,
+        business_id=g.business_id,
+        site_id=site_id,
+        processing_month=month,
+        approved_only=approved_only,
     )
-
-    if approved_only:
-        ranked_cards = ranked_cards.filter(WorkCard.review_status == 'APPROVED')
-
-    ranked_cards = ranked_cards.subquery()
-
-    best_cards = db.session.query(
-        ranked_cards.c.work_card_id
-    ).filter(
-        ranked_cards.c.rank == 1
-    ).subquery()
-
-    day_entries = db.session.query(
-        WorkCardDayEntry.work_card_id,
-        WorkCardDayEntry.day_of_month,
-        WorkCardDayEntry.total_hours
-    ).join(
-        WorkCard,
-        WorkCard.id == WorkCardDayEntry.work_card_id
-    ).filter(
-        WorkCardDayEntry.work_card_id.in_(db.session.query(best_cards.c.work_card_id))
-    ).all()
-
-    work_card_to_employee = {}
-    cards_query = db.session.query(
-        WorkCard.id,
-        WorkCard.employee_id,
-        WorkCard.review_status
-    ).filter(
-        WorkCard.id.in_(db.session.query(best_cards.c.work_card_id))
-    ).all()
-
-    for card_id, employee_id, review_status in cards_query:
-        employee_id_str = str(employee_id)
-        work_card_to_employee[str(card_id)] = employee_id_str
-        status_map[employee_id_str] = review_status
-
-    for entry in day_entries:
-        work_card_id_str = str(entry.work_card_id)
-        employee_id = work_card_to_employee.get(work_card_id_str)
-
-        if employee_id:
-            if employee_id not in matrix:
-                matrix[employee_id] = {}
-
-            if entry.total_hours is not None:
-                matrix[employee_id][entry.day_of_month] = float(entry.total_hours)
+    matrix, status_map = build_matrix_and_status_map(rows)
 
     employees = _sort_employees_for_export(employees)
     return employees, matrix, status_map, month
