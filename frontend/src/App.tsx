@@ -5,6 +5,7 @@ import DashboardPage from './pages/DashboardPage';
 import EmployeesPage from './pages/EmployeesPage';
 import SitesPage from './pages/SitesPage';
 import SiteDetailsPage from './pages/SiteDetailsPage';
+import SiteReviewPage from './pages/SiteReviewPage';
 import UsersPage from './pages/UsersPage';
 import EmployeeImportPage from './pages/EmployeeImportPage';
 import PublicPortalPage from './pages/PublicPortalPage';
@@ -27,6 +28,7 @@ function App() {
                 <Route path="/:businessCode/employees" element={<EmployeesPage />} />
                 <Route path="/:businessCode/sites" element={<SitesPage />} />
                 <Route path="/:businessCode/sites/:siteId" element={<SiteDetailsPage />} />
+                <Route path="/:businessCode/sites/:siteId/review" element={<SiteReviewPage />} />
                 <Route path="/:businessCode/users" element={<UsersPage />} />
                 <Route path="/:businessCode/employee-imports" element={<EmployeeImportPage />} />
               </Route>
