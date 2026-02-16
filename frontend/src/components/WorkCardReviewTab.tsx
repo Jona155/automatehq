@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import type { WorkCard, DayEntry, WorkCardExtraction, Employee } from '../types';
 import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, getExtraction, updateWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
@@ -66,6 +66,77 @@ interface DayEntryRow {
   resolvedApprovedConflict: 'KEEP_PREVIOUS' | 'USE_LATEST' | null;
 }
 
+interface DayImageZone {
+  day: number;
+  confidence: number | null;
+  bbox: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
+}
+
+const normalizeDayZone = (raw: unknown): DayImageZone | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const source = raw as Record<string, unknown>;
+  const dayValue = source.day ?? source.day_of_month;
+  const day = typeof dayValue === 'number' ? dayValue : Number(dayValue);
+  if (!Number.isFinite(day)) return null;
+
+  const confidenceValue = source.confidence;
+  const confidence = typeof confidenceValue === 'number' ? confidenceValue : null;
+
+  const bboxSource = source.bbox;
+  if (!bboxSource || typeof bboxSource !== 'object') {
+    return { day, confidence, bbox: null };
+  }
+
+  const bboxData = bboxSource as Record<string, unknown>;
+  const x = Number(bboxData.x ?? bboxData.left);
+  const y = Number(bboxData.y ?? bboxData.top);
+  const width = Number(bboxData.width ?? bboxData.w);
+  const height = Number(bboxData.height ?? bboxData.h);
+
+  if (![x, y, width, height].every(Number.isFinite)) {
+    return { day, confidence, bbox: null };
+  }
+
+  return {
+    day,
+    confidence,
+    bbox: { x, y, width, height },
+  };
+};
+
+const useDayImageZoneMapping = (extraction: WorkCardExtraction | null) => {
+  return useMemo(() => {
+    if (!extraction) {
+      return {
+        zoneByDay: new Map<number, DayImageZone>(),
+        getZoneForDay: (_day: number) => null as DayImageZone | null,
+      };
+    }
+
+    const extractionWithFutureData = extraction as WorkCardExtraction & Record<string, unknown>;
+    const rawZones = extractionWithFutureData.day_mappings ?? extractionWithFutureData.day_coordinates;
+    const zonesList = Array.isArray(rawZones) ? rawZones : [];
+    const zoneByDay = new Map<number, DayImageZone>();
+
+    zonesList.forEach((rawZone) => {
+      const normalized = normalizeDayZone(rawZone);
+      if (normalized) {
+        zoneByDay.set(normalized.day, normalized);
+      }
+    });
+
+    return {
+      zoneByDay,
+      getZoneForDay: (day: number) => zoneByDay.get(day) ?? null,
+    };
+  }, [extraction]);
+};
+
 function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey }: WorkCardReviewTabProps) {
   const AUTO_ADVANCE_STORAGE_KEY = 'workCardReview:autoAdvance';
   const [workCards, setWorkCards] = useState<WorkCard[]>([]);
@@ -94,6 +165,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [reviewMode, setReviewMode] = useState<ReviewMode>('queue');
   const [showDetailsDrawer, setShowDetailsDrawer] = useState(false);
   const [showDirtyOnly, setShowDirtyOnly] = useState(false);
+  const [jumpToDay, setJumpToDay] = useState('');
+  const [activeDay, setActiveDay] = useState<number | null>(null);
+  const [imageScale, setImageScale] = useState(1);
+  const [imageRotation, setImageRotation] = useState(0);
+  const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
+  const [isPanningImage, setIsPanningImage] = useState(false);
+  const [highlightedImageDay, setHighlightedImageDay] = useState<number | null>(null);
+  const [panStart, setPanStart] = useState<{ x: number; y: number; originX: number; originY: number } | null>(null);
   const [autoAdvance, setAutoAdvance] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     const storedValue = window.localStorage.getItem(AUTO_ADVANCE_STORAGE_KEY);
@@ -102,6 +181,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestedExtractionsRef = useRef<Set<string>>(new Set());
   const selectedCardIdRef = useRef<string | null>(null);
+  const imageViewportRef = useRef<HTMLDivElement | null>(null);
+  const imageElementRef = useRef<HTMLImageElement | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const { showToast, ToastContainer } = useToast();
   const { user } = useAuth();
   const filterCards = useCallback((cards: WorkCard[]) => {
@@ -163,6 +246,32 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     const rows = dayEntries.map((entry, index) => ({ entry, index }));
     return showDirtyOnly ? rows.filter(row => row.entry.isDirty) : rows;
   }, [dayEntries, showDirtyOnly]);
+
+  const { zoneByDay, getZoneForDay } = useDayImageZoneMapping(extraction);
+
+  const jumpDayNumber = useMemo(() => {
+    const trimmed = jumpToDay.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [jumpToDay]);
+
+  const jumpDayValidationMessage = useMemo(() => {
+    if (!jumpToDay.trim()) return '';
+    if (jumpDayNumber === null || !Number.isInteger(jumpDayNumber)) {
+      return 'יש להזין מספר יום תקין';
+    }
+    if (jumpDayNumber < 1 || jumpDayNumber > dayEntries.length) {
+      return `היום חייב להיות בין 1 ל-${dayEntries.length}`;
+    }
+    return '';
+  }, [jumpToDay, jumpDayNumber, dayEntries.length]);
+
+  const filteredDisplayedEntries = useMemo(() => {
+    if (!jumpToDay.trim() || jumpDayValidationMessage) return displayedEntries;
+    if (jumpDayNumber === null) return displayedEntries;
+    return displayedEntries.filter(({ entry }) => entry.day_of_month === jumpDayNumber);
+  }, [displayedEntries, jumpToDay, jumpDayValidationMessage, jumpDayNumber]);
 
   const conflictingEntries = useMemo(
     () => dayEntries.filter((entry) => entry.conflictType === 'WITH_APPROVED' || entry.conflictType === 'WITH_PENDING'),
@@ -611,6 +720,126 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       return updated;
     });
   };
+
+  const resetImageTransform = useCallback(() => {
+    setImageScale(1);
+    setImageRotation(0);
+    setImageOffset({ x: 0, y: 0 });
+  }, []);
+
+  const zoomImage = useCallback((direction: 'in' | 'out') => {
+    setImageScale((prev) => {
+      const next = direction === 'in' ? prev + 0.2 : prev - 0.2;
+      return Math.min(4, Math.max(0.5, Number(next.toFixed(2))));
+    });
+  }, []);
+
+  const rotateImage = useCallback(() => {
+    setImageRotation((prev) => (prev + 90) % 360);
+  }, []);
+
+  const fitImage = useCallback(() => {
+    setImageScale(1);
+    setImageOffset({ x: 0, y: 0 });
+  }, []);
+
+  const registerRowRef = useCallback((day: number, element: HTMLTableRowElement | null) => {
+    if (!element) {
+      rowRefs.current.delete(day);
+      return;
+    }
+    rowRefs.current.set(day, element);
+  }, []);
+
+  const keepRowVisible = useCallback((day: number) => {
+    const row = rowRefs.current.get(day);
+    const container = tableScrollRef.current;
+    if (!row || !container) return;
+
+    const rowTop = row.offsetTop;
+    const rowBottom = rowTop + row.offsetHeight;
+    const viewTop = container.scrollTop;
+    const viewBottom = viewTop + container.clientHeight;
+
+    if (rowTop < viewTop) {
+      container.scrollTo({ top: Math.max(rowTop - 36, 0), behavior: 'smooth' });
+    } else if (rowBottom > viewBottom) {
+      container.scrollTo({ top: rowBottom - container.clientHeight + 36, behavior: 'smooth' });
+    }
+  }, []);
+
+  const activateDay = useCallback((day: number) => {
+    setActiveDay(day);
+    setHighlightedImageDay(day);
+    keepRowVisible(day);
+  }, [keepRowVisible]);
+
+  const handleJumpToDay = useCallback(() => {
+    if (jumpDayValidationMessage || jumpDayNumber === null) return;
+
+    const existingDay = dayEntries.some((entry) => entry.day_of_month === jumpDayNumber);
+    if (!existingDay) return;
+
+    activateDay(jumpDayNumber);
+    const row = rowRefs.current.get(jumpDayNumber);
+    const input = row?.querySelector('input:not([disabled])') as HTMLInputElement | null;
+    input?.focus();
+  }, [jumpDayValidationMessage, jumpDayNumber, dayEntries, activateDay]);
+
+  const handleImageWheel = useCallback((event: WheelEvent) => {
+    if (!imageUrl) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const zoomDelta = Math.max(-0.35, Math.min(0.35, -event.deltaY * 0.002));
+    setImageScale((prev) => {
+      const next = prev + zoomDelta;
+      return Math.min(4, Math.max(0.5, Number(next.toFixed(3))));
+    });
+  }, [imageUrl]);
+
+
+  useEffect(() => {
+    const viewport = imageViewportRef.current;
+    if (!viewport) return;
+
+    const wheelListener = (event: WheelEvent) => {
+      handleImageWheel(event);
+    };
+
+    viewport.addEventListener('wheel', wheelListener, { passive: false });
+    return () => {
+      viewport.removeEventListener('wheel', wheelListener);
+    };
+  }, [handleImageWheel]);
+
+  const handleImagePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!imageUrl || event.button !== 0 || imageScale <= 1) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsPanningImage(true);
+    setPanStart({ x: event.clientX, y: event.clientY, originX: imageOffset.x, originY: imageOffset.y });
+  }, [imageUrl, imageOffset.x, imageOffset.y, imageScale]);
+
+  const handleImagePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!panStart) return;
+    event.preventDefault();
+    const deltaX = event.clientX - panStart.x;
+    const deltaY = event.clientY - panStart.y;
+    setImageOffset({ x: panStart.originX + deltaX, y: panStart.originY + deltaY });
+  }, [panStart]);
+
+  const handleImagePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    event.stopPropagation();
+    setIsPanningImage(false);
+    setPanStart(null);
+  }, []);
 
   // Save day entries
   const handleSave = async () => {
@@ -1293,30 +1522,114 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
               )}
               <div className="flex-1 flex min-h-0 overflow-hidden flex-col lg:flex-row">
                 {/* Image Panel */}
-                <div className={`${imagePanelWidth} lg:border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-100 dark:bg-slate-900`}>
+                <div className={`${imagePanelWidth} lg:border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-100 dark:bg-slate-900 min-h-0`}>
                   <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
                     <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
                       <span className="material-symbols-outlined text-lg">image</span>
                       תמונת כרטיס
                     </h4>
                   </div>
-                  <div className="flex-1 overflow-auto p-4 flex items-start justify-center">
-                    {isLoadingImage ? (
-                      <div className="flex items-center justify-center h-full">
-                        <span className="material-symbols-outlined text-3xl text-slate-400 animate-spin">progress_activity</span>
+                  <div className="relative flex-1 min-h-0">
+                    <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-20">
+                      <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-slate-900/80 text-white shadow-lg px-2 py-1 backdrop-blur-sm">
+                        <button
+                          type="button"
+                          onClick={() => zoomImage('out')}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                          aria-label="הקטן תמונה"
+                          title="הקטנה"
+                        >
+                          <span className="material-symbols-outlined text-base">zoom_out</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => zoomImage('in')}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                          aria-label="הגדל תמונה"
+                          title="הגדלה"
+                        >
+                          <span className="material-symbols-outlined text-base">zoom_in</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={fitImage}
+                          className="px-2 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                          aria-label="התאם תמונה למסך"
+                          title="התאם למסך"
+                        >
+                          התאם
+                        </button>
+                        <button
+                          type="button"
+                          onClick={rotateImage}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                          aria-label="סובב תמונה"
+                          title="סיבוב"
+                        >
+                          <span className="material-symbols-outlined text-base">rotate_90_degrees_ccw</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={resetImageTransform}
+                          className="px-2 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                          aria-label="אפס תצוגת תמונה"
+                          title="איפוס"
+                        >
+                          אפס
+                        </button>
                       </div>
-                    ) : imageUrl ? (
-                      <img
-                        src={imageUrl}
-                        alt="Work Card"
-                        className="max-w-full h-auto rounded-lg shadow-lg"
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center h-full text-slate-400">
-                        <span className="material-symbols-outlined text-4xl mb-2">broken_image</span>
-                        <span className="text-sm">לא ניתן לטעון את התמונה</span>
-                      </div>
-                    )}
+                    </div>
+
+                    <div
+                      ref={imageViewportRef}
+                      className={`h-full overflow-hidden p-4 overscroll-contain ${imageScale > 1 ? (isPanningImage ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
+                      onPointerDown={handleImagePointerDown}
+                      onPointerMove={handleImagePointerMove}
+                      onPointerUp={handleImagePointerUp}
+                      onPointerCancel={handleImagePointerUp}
+                      role="region"
+                      aria-label="תצוגת תמונת כרטיס עם זום והזזה"
+                      tabIndex={0}
+                      style={{ touchAction: imageScale > 1 ? 'none' : 'pan-y' }}
+                    >
+                      {isLoadingImage ? (
+                        <div className="flex items-center justify-center h-full">
+                          <span className="material-symbols-outlined text-3xl text-slate-400 animate-spin">progress_activity</span>
+                        </div>
+                      ) : imageUrl ? (
+                        <div className="relative h-full w-full flex items-center justify-center overflow-hidden">
+                          <img
+                            ref={imageElementRef}
+                            src={imageUrl}
+                            alt="Work Card"
+                            draggable={false}
+                            className="max-w-full h-auto rounded-lg shadow-lg select-none"
+                            style={{
+                              transform: `translate(${imageOffset.x}px, ${imageOffset.y}px) scale(${imageScale}) rotate(${imageRotation}deg)`,
+                              transformOrigin: 'center center',
+                              transition: isPanningImage ? 'none' : 'transform 120ms ease-out',
+                            }}
+                          />
+                          {highlightedImageDay !== null && getZoneForDay(highlightedImageDay)?.bbox && (
+                            <div
+                              className="absolute border-2 border-primary bg-primary/15 rounded-md pointer-events-none"
+                              style={{
+                                left: `${getZoneForDay(highlightedImageDay)?.bbox?.x ?? 0}%`,
+                                top: `${getZoneForDay(highlightedImageDay)?.bbox?.y ?? 0}%`,
+                                width: `${getZoneForDay(highlightedImageDay)?.bbox?.width ?? 0}%`,
+                                height: `${getZoneForDay(highlightedImageDay)?.bbox?.height ?? 0}%`,
+                              }}
+                              aria-hidden="true"
+                            />
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                          <span className="material-symbols-outlined text-4xl mb-2">broken_image</span>
+                          <span className="text-sm">לא ניתן לטעון את התמונה</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1327,7 +1640,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       <span className="material-symbols-outlined text-lg">table_chart</span>
                       שעות עבודה
                     </h4>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap justify-end">
                       <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
                         <input
                           type="checkbox"
@@ -1340,6 +1653,35 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       <div className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-full">
                         סה"כ {totalHours.toFixed(2)} שעות
                       </div>
+                      <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300" htmlFor="jump-to-day-input">
+                        עבור ליום
+                        <input
+                          id="jump-to-day-input"
+                          type="number"
+                          min={1}
+                          max={dayEntries.length || 31}
+                          value={jumpToDay}
+                          onChange={(e) => setJumpToDay(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleJumpToDay();
+                            }
+                          }}
+                          className="w-20 px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                          aria-label="קפיצה ליום"
+                          aria-invalid={Boolean(jumpDayValidationMessage)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleJumpToDay}
+                        disabled={Boolean(jumpDayValidationMessage) || !jumpToDay.trim()}
+                        className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-600 text-xs hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                        aria-label="בצע קפיצה ליום"
+                      >
+                        קפוץ
+                      </button>
                       {conflictCount > 0 && (
                         <button
                           type="button"
@@ -1353,6 +1695,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                   </div>
 
                   <div className="px-4 pt-3 space-y-3">
+                    {jumpDayValidationMessage && (
+                      <p className="text-xs text-amber-700 dark:text-amber-300" role="status">{jumpDayValidationMessage}</p>
+                    )}
                     {/* Identity Mismatch Warning */}
                     {hasIdentityMismatch && (
                       <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
@@ -1362,14 +1707,13 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             אי-התאמה בזיהוי
                           </p>
                           <p className="text-xs text-amber-700 dark:text-amber-400">
-                            ת.ז/דרכון בכרטיס: <strong>{extraction?.extracted_passport_id}</strong> | 
+                            ת.ז/דרכון בכרטיס: <strong>{extraction?.extracted_passport_id}</strong> |
                             ת.ז/דרכון עובד: <strong>{selectedCard.employee?.passport_id}</strong>
                           </p>
                         </div>
                       </div>
                     )}
 
-                    {/* Unassigned Card - Assignment Section */}
                     {!selectedCard.employee_id && (
                       <div className="flex items-center gap-2 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
                         <span className="material-symbols-outlined text-orange-600 dark:text-orange-400">person_add</span>
@@ -1401,13 +1745,13 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                     <div className="flex-1 flex items-center justify-center">
                       <span className="material-symbols-outlined text-3xl text-slate-400 animate-spin">progress_activity</span>
                     </div>
-                  ) : displayedEntries.length === 0 ? (
+                  ) : filteredDisplayedEntries.length === 0 ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
                       <span className="material-symbols-outlined text-4xl text-slate-300 dark:text-slate-600 mb-2">table_rows</span>
                       <p className="text-sm text-slate-500 dark:text-slate-400">אין שורות להצגה</p>
                     </div>
                   ) : (
-                    <div className="flex-1 overflow-auto">
+                    <div ref={tableScrollRef} className="flex-1 overflow-auto" role="region" aria-label="טבלת שעות עבודה">
                       <table className="w-full text-sm">
                         <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800 z-10">
                           <tr className="text-slate-600 dark:text-slate-400">
@@ -1418,74 +1762,82 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           </tr>
                         </thead>
                         <tbody>
-                          {displayedEntries.map(({ entry, index }) => (
-                            <tr
-                              key={entry.day_of_month}
-                              className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
-                                entry.isLocked
-                                  ? 'bg-slate-100 dark:bg-slate-800/40'
-                                  : entry.hasConflict
-                                  ? 'bg-red-50 dark:bg-red-900/10'
-                                  : entry.isDirty
-                                  ? 'bg-yellow-50 dark:bg-yellow-900/10'
-                                  : ''
-                              }`}
-                            >
-                              <td className="px-3 py-2 text-center font-medium text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-700">
-                                <div className="flex items-center justify-center gap-1">
-                                  <span>{entry.day_of_month}</span>
-                                  {entry.isLocked && (
-                                    <span className="material-symbols-outlined text-xs text-slate-500">lock</span>
-                                  )}
-                                  {entry.hasConflict && (
-                                    <span className="material-symbols-outlined text-xs text-red-500">warning</span>
-                                  )}
-                                  {entry.resolvedApprovedConflict && (
-                                    <span
-                                      className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                                        entry.resolvedApprovedConflict === 'USE_LATEST'
-                                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                                          : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
-                                      }`}
+                          {filteredDisplayedEntries.map(({ entry, index }) => {
+                            const isActive = activeDay === entry.day_of_month;
+                            const zone = zoneByDay.get(entry.day_of_month);
+                            return (
+                              <tr
+                                key={entry.day_of_month}
+                                ref={(el) => registerRowRef(entry.day_of_month, el)}
+                                className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
+                                  isActive
+                                    ? 'ring-2 ring-inset ring-primary/60 bg-primary/5 dark:bg-primary/10'
+                                    : entry.isLocked
+                                    ? 'bg-slate-100 dark:bg-slate-800/40'
+                                    : entry.hasConflict
+                                    ? 'bg-red-50 dark:bg-red-900/10'
+                                    : entry.isDirty
+                                    ? 'bg-yellow-50 dark:bg-yellow-900/10'
+                                    : ''
+                                }`}
+                              >
+                                <td className="px-3 py-2 text-center font-medium text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-700">
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      className="font-medium underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded"
+                                      onClick={() => activateDay(entry.day_of_month)}
+                                      aria-label={`בחר יום ${entry.day_of_month}`}
                                     >
-                                      {entry.resolvedApprovedConflict === 'USE_LATEST' ? 'חדש' : 'קודם'}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
-                                <input
-                                  type="time"
-                                  value={entry.from_time}
-                                  onChange={(e) => handleEntryChange(index, 'from_time', e.target.value)}
-                                  disabled={entry.isLocked}
-                                  className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                                />
-                              </td>
-                              <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
-                                <input
-                                  type="time"
-                                  value={entry.to_time}
-                                  onChange={(e) => handleEntryChange(index, 'to_time', e.target.value)}
-                                  disabled={entry.isLocked}
-                                  className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                                />
-                              </td>
-                              <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
-                                <input
-                                  type="number"
-                                  step="0.25"
-                                  min="0"
-                                  max="24"
-                                  value={entry.total_hours}
-                                  onChange={(e) => handleEntryChange(index, 'total_hours', e.target.value)}
-                                  disabled={entry.isLocked}
-                                  className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
-                                  placeholder="0"
-                                />
-                              </td>
-                            </tr>
-                          ))}
+                                      {entry.day_of_month}
+                                    </button>
+                                    {typeof zone?.confidence === 'number' && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" title={`Confidence ${Math.round(zone.confidence * 100)}%`}>
+                                        {Math.round(zone.confidence * 100)}%
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
+                                  <input
+                                    type="time"
+                                    value={entry.from_time}
+                                    onChange={(e) => handleEntryChange(index, 'from_time', e.target.value)}
+                                    onFocus={() => activateDay(entry.day_of_month)}
+                                    disabled={entry.isLocked}
+                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary"
+                                    aria-label={`שעת כניסה יום ${entry.day_of_month}`}
+                                  />
+                                </td>
+                                <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
+                                  <input
+                                    type="time"
+                                    value={entry.to_time}
+                                    onChange={(e) => handleEntryChange(index, 'to_time', e.target.value)}
+                                    onFocus={() => activateDay(entry.day_of_month)}
+                                    disabled={entry.isLocked}
+                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary"
+                                    aria-label={`שעת יציאה יום ${entry.day_of_month}`}
+                                  />
+                                </td>
+                                <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
+                                  <input
+                                    type="number"
+                                    step="0.25"
+                                    min="0"
+                                    max="24"
+                                    value={entry.total_hours}
+                                    onChange={(e) => handleEntryChange(index, 'total_hours', e.target.value)}
+                                    onFocus={() => activateDay(entry.day_of_month)}
+                                    disabled={entry.isLocked}
+                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary"
+                                    placeholder="0"
+                                    aria-label={`סך שעות יום ${entry.day_of_month}`}
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
