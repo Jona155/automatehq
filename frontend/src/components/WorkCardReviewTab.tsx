@@ -47,6 +47,8 @@ const normalizeTimeToHourMinute = (timeValue: string | null | undefined): string
   return `${hours}:${minutes}`;
 };
 
+const AUTO_ADVANCE_STORAGE_KEY = 'workCardReview:autoAdvance';
+
 interface DayEntryRow {
   day_of_month: number;
   from_time: string;
@@ -65,7 +67,6 @@ interface DayEntryRow {
 }
 
 export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey }: WorkCardReviewTabProps) {
-  const AUTO_ADVANCE_STORAGE_KEY = 'workCardReview:autoAdvance';
   const [workCards, setWorkCards] = useState<WorkCard[]>([]);
   const [selectedCard, setSelectedCard] = useState<WorkCard | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -210,7 +211,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(AUTO_ADVANCE_STORAGE_KEY, String(autoAdvance));
-  }, [AUTO_ADVANCE_STORAGE_KEY, autoAdvance]);
+  }, [autoAdvance]);
 
   useEffect(() => {
     if (!selectedCard) return;
@@ -233,6 +234,12 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     if (nextPending) {
       setSelectedCard(nextPending);
     }
+  }, [selectedVisibleIndex, visibleCards]);
+
+  const hasNextPending = useMemo(() => {
+    if (!visibleCards.length) return false;
+    const startIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0;
+    return visibleCards.some((card, index) => index >= startIndex && card.review_status !== 'APPROVED');
   }, [selectedVisibleIndex, visibleCards]);
 
   const getNextCardAfterReviewAction = useCallback((cards: WorkCard[], currentCardId: string) => {
@@ -1070,7 +1077,8 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                           </button>
                           <button
                             onClick={navigateToNextPending}
-                            className="px-3 py-2 rounded-lg border border-indigo-200 dark:border-indigo-700 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+                            disabled={!hasNextPending}
+                            className="px-3 py-2 rounded-lg border border-indigo-200 dark:border-indigo-700 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
                             title="דלג לכרטיס הבא שממתין לסקירה"
                           >
                             הבא ממתין
