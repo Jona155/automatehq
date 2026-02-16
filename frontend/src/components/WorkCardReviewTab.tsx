@@ -37,6 +37,16 @@ const calculateHours = (from: string | null, to: string | null): number | null =
   return Math.round((totalMinutes / 60) * 100) / 100; // Round to 2 decimals
 };
 
+// Normalize backend/API time strings to HH:MM for HTML time inputs and save payloads
+const normalizeTimeToHourMinute = (timeValue: string | null | undefined): string => {
+  if (!timeValue) return '';
+  const match = timeValue.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return timeValue;
+  const hours = match[1].padStart(2, '0');
+  const minutes = match[2];
+  return `${hours}:${minutes}`;
+};
+
 interface DayEntryRow {
   day_of_month: number;
   from_time: string;
@@ -275,13 +285,15 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     const rows: DayEntryRow[] = [];
     for (let day = 1; day <= daysInMonth; day++) {
       const existing = entriesMap.get(day);
+      const normalizedFrom = normalizeTimeToHourMinute(existing?.from_time);
+      const normalizedTo = normalizeTimeToHourMinute(existing?.to_time);
       rows.push({
         day_of_month: day,
-        from_time: existing?.from_time || '',
-        to_time: existing?.to_time || '',
+        from_time: normalizedFrom,
+        to_time: normalizedTo,
         total_hours: existing?.total_hours?.toString() || '',
-        latest_from_time: existing?.from_time || '',
-        latest_to_time: existing?.to_time || '',
+        latest_from_time: normalizedFrom,
+        latest_to_time: normalizedTo,
         latest_total_hours: existing?.total_hours?.toString() || '',
         previousEntry: existing?.previous_entry || null,
         isDirty: false,
@@ -522,8 +534,8 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     try {
       const entries = dirtyEntries.map(e => ({
         day_of_month: e.day_of_month,
-        from_time: e.from_time || null,
-        to_time: e.to_time || null,
+        from_time: normalizeTimeToHourMinute(e.from_time) || null,
+        to_time: normalizeTimeToHourMinute(e.to_time) || null,
         total_hours: e.total_hours ? parseFloat(e.total_hours) : null,
       }));
 
@@ -623,8 +635,8 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
         if (!decision) return entry;
 
         if (decision === 'KEEP_PREVIOUS' && entry.previousEntry) {
-          const nextFrom = entry.previousEntry.from_time || '';
-          const nextTo = entry.previousEntry.to_time || '';
+          const nextFrom = normalizeTimeToHourMinute(entry.previousEntry.from_time);
+          const nextTo = normalizeTimeToHourMinute(entry.previousEntry.to_time);
           const nextTotal = entry.previousEntry.total_hours?.toString() || '';
           const changed = entry.from_time !== nextFrom || entry.to_time !== nextTo || entry.total_hours !== nextTotal;
           return {
