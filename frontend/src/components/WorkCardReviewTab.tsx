@@ -47,6 +47,8 @@ const normalizeTimeToHourMinute = (timeValue: string | null | undefined): string
   return `${hours}:${minutes}`;
 };
 
+const AUTO_ADVANCE_STORAGE_KEY = 'workCardReview:autoAdvance';
+
 interface DayEntryRow {
   day_of_month: number;
   from_time: string;
@@ -106,19 +108,6 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     () => `workCardReviewMode:${siteId}:${selectedMonth}`,
     [siteId, selectedMonth]
   );
-
-  useEffect(() => {
-    const savedMode = localStorage.getItem(reviewModeStorageKey);
-    if (savedMode === 'queue' || savedMode === 'focus') {
-      setReviewMode(savedMode);
-      return;
-    }
-    setReviewMode('queue');
-  }, [reviewModeStorageKey]);
-
-  useEffect(() => {
-    localStorage.setItem(reviewModeStorageKey, reviewMode);
-  }, [reviewModeStorageKey, reviewMode]);
 
   const filterCards = useCallback((cards: WorkCard[]) => {
     const search = cardSearch.trim().toLowerCase();
@@ -229,7 +218,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(AUTO_ADVANCE_STORAGE_KEY, String(autoAdvance));
-  }, [AUTO_ADVANCE_STORAGE_KEY, autoAdvance]);
+  }, [autoAdvance]);
 
   useEffect(() => {
     if (!selectedCard) return;
@@ -252,6 +241,12 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     if (nextPending) {
       setSelectedCard(nextPending);
     }
+  }, [selectedVisibleIndex, visibleCards]);
+
+  const hasNextPending = useMemo(() => {
+    if (!visibleCards.length) return false;
+    const startIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0;
+    return visibleCards.some((card, index) => index >= startIndex && card.review_status !== 'APPROVED');
   }, [selectedVisibleIndex, visibleCards]);
 
   const getNextCardAfterReviewAction = useCallback((cards: WorkCard[], currentCardId: string) => {
@@ -699,9 +694,9 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
         setSelectedCard(nextCard);
       } else {
         setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
+        const refreshedEntries = await getDayEntries(approvedCardId);
+        initializeDayEntries(refreshedEntries);
       }
-      const refreshedEntries = await getDayEntries(selectedCard.id);
-      initializeDayEntries(refreshedEntries);
     } catch (err) {
       console.error('Failed to approve card:', err);
       showToast('שגיאה באישור הכרטיס', 'error');
@@ -1122,7 +1117,8 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                           </button>
                           <button
                             onClick={navigateToNextPending}
-                            className="px-3 py-2 rounded-lg border border-indigo-200 dark:border-indigo-700 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+                            disabled={!hasNextPending}
+                            className="px-3 py-2 rounded-lg border border-indigo-200 dark:border-indigo-700 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
                             title="דלג לכרטיס הבא שממתין לסקירה"
                           >
                             הבא ממתין
