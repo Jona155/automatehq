@@ -787,22 +787,32 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   }, [jumpDayValidationMessage, jumpDayNumber, dayEntries, activateDay]);
 
   const handleImageWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+    const shouldZoom = event.ctrlKey || event.metaKey || imageScale > 1;
+    if (!shouldZoom) {
+      return;
+    }
+
     event.preventDefault();
+    event.stopPropagation();
     setImageScale((prev) => {
       const next = prev + (event.deltaY < 0 ? 0.1 : -0.1);
       return Math.min(4, Math.max(0.5, Number(next.toFixed(2))));
     });
-  }, []);
+  }, [imageScale]);
 
   const handleImagePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!imageUrl) return;
+    if (!imageUrl || event.button !== 0 || imageScale <= 1) return;
+
+    event.preventDefault();
+    event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     setIsPanningImage(true);
     setPanStart({ x: event.clientX, y: event.clientY, originX: imageOffset.x, originY: imageOffset.y });
-  }, [imageUrl, imageOffset.x, imageOffset.y]);
+  }, [imageUrl, imageOffset.x, imageOffset.y, imageScale]);
 
   const handleImagePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!panStart) return;
+    event.preventDefault();
     const deltaX = event.clientX - panStart.x;
     const deltaY = event.clientY - panStart.y;
     setImageOffset({ x: panStart.originX + deltaX, y: panStart.originY + deltaY });
@@ -812,6 +822,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    event.stopPropagation();
     setIsPanningImage(false);
     setPanStart(null);
   }, []);
@@ -1557,7 +1568,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
                     <div
                       ref={imageViewportRef}
-                      className={`h-full overflow-hidden p-4 cursor-${isPanningImage ? 'grabbing' : 'grab'}`}
+                      className={`h-full overflow-hidden p-4 overscroll-contain ${imageScale > 1 ? (isPanningImage ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
                       onWheel={handleImageWheel}
                       onPointerDown={handleImagePointerDown}
                       onPointerMove={handleImagePointerMove}
@@ -1566,6 +1577,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       role="region"
                       aria-label="תצוגת תמונת כרטיס עם זום והזזה"
                       tabIndex={0}
+                      style={{ touchAction: imageScale > 1 ? 'none' : 'pan-y' }}
                     >
                       {isLoadingImage ? (
                         <div className="flex items-center justify-center h-full">
