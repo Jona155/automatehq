@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import type { WorkCard, DayEntry, WorkCardExtraction, Employee } from '../types';
 import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, getExtraction, updateWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
@@ -786,19 +786,33 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     input?.focus();
   }, [jumpDayValidationMessage, jumpDayNumber, dayEntries, activateDay]);
 
-  const handleImageWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
-    const shouldZoom = event.ctrlKey || event.metaKey || imageScale > 1;
-    if (!shouldZoom) {
-      return;
-    }
+  const handleImageWheel = useCallback((event: WheelEvent) => {
+    if (!imageUrl) return;
 
     event.preventDefault();
     event.stopPropagation();
+
+    const zoomDelta = Math.max(-0.35, Math.min(0.35, -event.deltaY * 0.002));
     setImageScale((prev) => {
-      const next = prev + (event.deltaY < 0 ? 0.1 : -0.1);
-      return Math.min(4, Math.max(0.5, Number(next.toFixed(2))));
+      const next = prev + zoomDelta;
+      return Math.min(4, Math.max(0.5, Number(next.toFixed(3))));
     });
-  }, [imageScale]);
+  }, [imageUrl]);
+
+
+  useEffect(() => {
+    const viewport = imageViewportRef.current;
+    if (!viewport) return;
+
+    const wheelListener = (event: WheelEvent) => {
+      handleImageWheel(event);
+    };
+
+    viewport.addEventListener('wheel', wheelListener, { passive: false });
+    return () => {
+      viewport.removeEventListener('wheel', wheelListener);
+    };
+  }, [handleImageWheel]);
 
   const handleImagePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!imageUrl || event.button !== 0 || imageScale <= 1) return;
@@ -1569,7 +1583,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                     <div
                       ref={imageViewportRef}
                       className={`h-full overflow-hidden p-4 overscroll-contain ${imageScale > 1 ? (isPanningImage ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
-                      onWheel={handleImageWheel}
                       onPointerDown={handleImagePointerDown}
                       onPointerMove={handleImagePointerMove}
                       onPointerUp={handleImagePointerUp}
