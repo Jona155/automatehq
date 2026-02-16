@@ -30,7 +30,7 @@ function getPreviousMonth(): string {
 
 
 export default function SiteDetailsPage() {
-  const { siteId } = useParams<{ siteId: string }>();
+  const { businessCode, siteId } = useParams<{ businessCode: string; siteId: string }>();
   const { isAuthenticated, user } = useAuth();
   const [site, setSite] = useState<Site | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -129,6 +129,11 @@ export default function SiteDetailsPage() {
 
   const handleBack = () => {
     navigate(`/${user?.business?.code}/sites`);
+  };
+
+  const handleOpenReviewMode = () => {
+    if (!siteId || !businessCode) return;
+    navigate(`/${businessCode}/sites/${siteId}/review?selectedMonth=${encodeURIComponent(selectedMonth)}`);
   };
 
   const handleUploadClick = (employee: Employee) => {
@@ -481,6 +486,15 @@ export default function SiteDetailsPage() {
 
         {activeTab === 'review' && (
           <div className="min-h-[600px]">
+            <div className="flex justify-end px-6 pt-4">
+              <button
+                onClick={handleOpenReviewMode}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                <span>Open Review Mode</span>
+              </button>
+            </div>
             <WorkCardReviewTab
               siteId={siteId!}
               selectedMonth={selectedMonth}
