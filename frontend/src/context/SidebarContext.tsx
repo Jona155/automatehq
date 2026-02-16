@@ -5,6 +5,7 @@ const STORAGE_KEY = 'automatehq-sidebar-collapsed';
 interface SidebarContextType {
   collapsed: boolean;
   toggle: () => void;
+  setCollapsed: (value: boolean) => void;
 }
 
 const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
@@ -34,7 +35,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <SidebarContext.Provider value={{ collapsed, toggle }}>
+    <SidebarContext.Provider value={{ collapsed, toggle, setCollapsed }}>
       {children}
     </SidebarContext.Provider>
   );
