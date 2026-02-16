@@ -47,6 +47,8 @@ const normalizeTimeToHourMinute = (timeValue: string | null | undefined): string
   return `${hours}:${minutes}`;
 };
 
+const AUTO_ADVANCE_STORAGE_KEY = 'workCardReview:autoAdvance';
+
 interface DayEntryRow {
   day_of_month: number;
   from_time: string;
@@ -89,20 +91,18 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const [listFilter, setListFilter] = useState<'all' | 'unassigned' | 'assigned'>('all');
   const [layoutMode, setLayoutMode] = useState<'balanced' | 'focusImage' | 'focusTable'>('balanced');
   const [showDirtyOnly, setShowDirtyOnly] = useState(false);
+  const [autoAdvance, setAutoAdvance] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const storedValue = window.localStorage.getItem(AUTO_ADVANCE_STORAGE_KEY);
+    return storedValue === null ? true : storedValue === 'true';
+  });
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestedExtractionsRef = useRef<Set<string>>(new Set());
   const selectedCardIdRef = useRef<string | null>(null);
   const { showToast, ToastContainer } = useToast();
   const { user } = useAuth();
 
-  // Separate cards into assigned and unassigned
-  const { assignedCards, unassignedCards } = useMemo(() => {
-    const assigned = workCards.filter(card => card.employee_id !== null);
-    const unassigned = workCards.filter(card => card.employee_id === null);
-    return { assignedCards: assigned, unassignedCards: unassigned };
-  }, [workCards]);
-
-  const filteredCards = useMemo(() => {
+  const filterCards = useCallback((cards: WorkCard[]) => {
     const search = cardSearch.trim().toLowerCase();
 
     const matchesCard = (card: WorkCard, extractionData?: WorkCardExtraction | null) => {
@@ -120,8 +120,8 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       );
     };
 
-    const filteredAssigned = assignedCards.filter(card => matchesCard(card));
-    const filteredUnassigned = unassignedCards.filter(card =>
+    const filteredAssigned = cards.filter(card => card.employee_id !== null).filter(card => matchesCard(card));
+    const filteredUnassigned = cards.filter(card => card.employee_id === null).filter(card =>
       matchesCard(card, extractionsByCardId[card.id] ?? null)
     );
 
@@ -129,7 +129,26 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       assigned: listFilter === 'unassigned' ? [] : filteredAssigned,
       unassigned: listFilter === 'assigned' ? [] : filteredUnassigned,
     };
-  }, [assignedCards, unassignedCards, extractionsByCardId, cardSearch, listFilter]);
+  }, [extractionsByCardId, cardSearch, listFilter]);
+
+  const unassignedCards = useMemo(
+    () => workCards.filter(card => card.employee_id === null),
+    [workCards]
+  );
+
+  const filteredCards = useMemo(() => filterCards(workCards), [filterCards, workCards]);
+
+  const visibleCards = useMemo(
+    () => [...filteredCards.unassigned, ...filteredCards.assigned],
+    [filteredCards.unassigned, filteredCards.assigned]
+  );
+
+  const selectedVisibleIndex = useMemo(
+    () => (selectedCard ? visibleCards.findIndex((card) => card.id === selectedCard.id) : -1),
+    [selectedCard, visibleCards]
+  );
+
+  const isFocusMode = layoutMode !== 'balanced';
 
   const totalHours = useMemo(() => {
     return dayEntries.reduce((sum, entry) => {
@@ -188,6 +207,82 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   useEffect(() => {
     setShowDirtyOnly(false);
   }, [selectedCard?.id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(AUTO_ADVANCE_STORAGE_KEY, String(autoAdvance));
+  }, [autoAdvance]);
+
+  useEffect(() => {
+    if (!selectedCard) return;
+    if (visibleCards.some((card) => card.id === selectedCard.id)) return;
+    setSelectedCard(visibleCards[0] ?? null);
+  }, [selectedCard, visibleCards]);
+
+  const navigateToCard = useCallback((offset: -1 | 1) => {
+    if (!visibleCards.length) return;
+    const baseIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex : 0;
+    const nextIndex = baseIndex + offset;
+    if (nextIndex < 0 || nextIndex >= visibleCards.length) return;
+    setSelectedCard(visibleCards[nextIndex]);
+  }, [selectedVisibleIndex, visibleCards]);
+
+  const navigateToNextPending = useCallback(() => {
+    if (!visibleCards.length) return;
+    const startIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0;
+    const nextPending = visibleCards.find((card, index) => index >= startIndex && card.review_status !== 'APPROVED');
+    if (nextPending) {
+      setSelectedCard(nextPending);
+    }
+  }, [selectedVisibleIndex, visibleCards]);
+
+  const hasNextPending = useMemo(() => {
+    if (!visibleCards.length) return false;
+    const startIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0;
+    return visibleCards.some((card, index) => index >= startIndex && card.review_status !== 'APPROVED');
+  }, [selectedVisibleIndex, visibleCards]);
+
+  const getNextCardAfterReviewAction = useCallback((cards: WorkCard[], currentCardId: string) => {
+    const nextFilteredCards = filterCards(cards);
+    const nextVisibleCards = [...nextFilteredCards.unassigned, ...nextFilteredCards.assigned];
+    const currentIndex = nextVisibleCards.findIndex((card) => card.id === currentCardId);
+    const firstPendingAfterCurrent = nextVisibleCards.find(
+      (card, index) => index > currentIndex && card.review_status !== 'APPROVED'
+    );
+    if (firstPendingAfterCurrent) return firstPendingAfterCurrent;
+    if (currentIndex >= 0 && currentIndex + 1 < nextVisibleCards.length) {
+      return nextVisibleCards[currentIndex + 1];
+    }
+    if (currentIndex > 0) {
+      return nextVisibleCards[currentIndex - 1];
+    }
+    return nextVisibleCards[0] ?? null;
+  }, [filterCards]);
+
+  useEffect(() => {
+    if (!isFocusMode || !selectedCard) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (event.key === 'ArrowUp' || key === 'k') {
+        event.preventDefault();
+        navigateToCard(-1);
+      } else if (event.key === 'ArrowDown' || key === 'j') {
+        event.preventDefault();
+        navigateToCard(1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFocusMode, selectedCard, navigateToCard]);
 
   const fetchWorkCards = useCallback(async () => {
     setIsLoadingCards(true);
@@ -582,12 +677,19 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       showToast('הכרטיס אושר בהצלחה', 'success');
 
       // Update local state
-      setWorkCards(prev => prev.map(c =>
-        c.id === selectedCard.id ? { ...c, review_status: 'APPROVED' } : c
-      ));
-      setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
-      const refreshedEntries = await getDayEntries(selectedCard.id);
-      initializeDayEntries(refreshedEntries);
+      const approvedCardId = selectedCard.id;
+      const nextCards = workCards.map(c =>
+        c.id === approvedCardId ? { ...c, review_status: 'APPROVED' as const } : c
+      );
+      setWorkCards(nextCards);
+      if (autoAdvance) {
+        const nextCard = getNextCardAfterReviewAction(nextCards, approvedCardId);
+        setSelectedCard(nextCard);
+      } else {
+        setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
+        const refreshedEntries = await getDayEntries(approvedCardId);
+        initializeDayEntries(refreshedEntries);
+      }
     } catch (err) {
       console.error('Failed to approve card:', err);
       showToast('שגיאה באישור הכרטיס', 'error');
@@ -673,12 +775,19 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const handleReject = async () => {
     if (!selectedCard) return;
     try {
-      await deleteWorkCard(selectedCard.id);
+      const rejectedCardId = selectedCard.id;
+      await deleteWorkCard(rejectedCardId);
       showToast('הכרטיס נדחה ונמחק בהצלחה', 'success');
       
       // Remove from list
-      setWorkCards(prev => prev.filter(c => c.id !== selectedCard.id));
-      setSelectedCard(null);
+      const nextCards = workCards.filter(c => c.id !== rejectedCardId);
+      setWorkCards(nextCards);
+      if (autoAdvance) {
+        const nextCard = getNextCardAfterReviewAction(nextCards, rejectedCardId);
+        setSelectedCard(nextCard);
+      } else {
+        setSelectedCard(null);
+      }
       setImageUrl(null);
       setDayEntries([]);
       setShowRejectModal(false);
@@ -945,6 +1054,38 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                   </div>
                   <div className="flex flex-col items-end gap-3">
                     <div className="flex items-center gap-2 flex-wrap justify-end">
+                      {isFocusMode && (
+                        <>
+                          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                            {selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0} / {visibleCards.length}
+                          </span>
+                          <button
+                            onClick={() => navigateToCard(-1)}
+                            disabled={selectedVisibleIndex <= 0}
+                            className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
+                            title="הקודם (↑ או K)"
+                          >
+                            הקודם
+                          </button>
+                          <button
+                            onClick={() => navigateToCard(1)}
+                            disabled={selectedVisibleIndex === -1 || selectedVisibleIndex >= visibleCards.length - 1}
+                            className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
+                            title="הבא (↓ או J)"
+                          >
+                            הבא
+                          </button>
+                          <button
+                            onClick={navigateToNextPending}
+                            disabled={!hasNextPending}
+                            className="px-3 py-2 rounded-lg border border-indigo-200 dark:border-indigo-700 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="דלג לכרטיס הבא שממתין לסקירה"
+                          >
+                            הבא ממתין
+                          </button>
+                        </>
+                      )}
+
                       <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
                         selectedCard.review_status === 'APPROVED'
                           ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
@@ -963,6 +1104,16 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <label className="inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={autoAdvance}
+                          onChange={(e) => setAutoAdvance(e.target.checked)}
+                          className="rounded border-slate-300 text-primary focus:ring-primary/40"
+                        />
+                        מעבר אוטומטי אחרי אישור/דחייה
+                      </label>
+
                       <div className="flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 p-1 bg-white dark:bg-slate-800">
                         <button
                           onClick={() => setLayoutMode('focusImage')}
@@ -1577,4 +1728,3 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
     </div>
   );
 }
-
