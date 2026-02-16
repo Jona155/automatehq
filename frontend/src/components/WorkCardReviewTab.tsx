@@ -67,6 +67,7 @@ interface DayEntryRow {
 }
 
 export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey }: WorkCardReviewTabProps) {
+  const AUTO_ADVANCE_STORAGE_KEY = 'workCardReview:autoAdvance';
   const [workCards, setWorkCards] = useState<WorkCard[]>([]);
   const [selectedCard, setSelectedCard] = useState<WorkCard | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -90,6 +91,8 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const [cardSearch, setCardSearch] = useState('');
   const [listFilter, setListFilter] = useState<'all' | 'unassigned' | 'assigned'>('all');
   const [layoutMode, setLayoutMode] = useState<'balanced' | 'focusImage' | 'focusTable'>('balanced');
+  const [reviewMode, setReviewMode] = useState<ReviewMode>('queue');
+  const [showDetailsDrawer, setShowDetailsDrawer] = useState(false);
   const [showDirtyOnly, setShowDirtyOnly] = useState(false);
   const [autoAdvance, setAutoAdvance] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
@@ -101,6 +104,10 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   const selectedCardIdRef = useRef<string | null>(null);
   const { showToast, ToastContainer } = useToast();
   const { user } = useAuth();
+  const reviewModeStorageKey = useMemo(
+    () => `workCardReviewMode:${siteId}:${selectedMonth}`,
+    [siteId, selectedMonth]
+  );
 
   const filterCards = useCallback((cards: WorkCard[]) => {
     const search = cardSearch.trim().toLowerCase();
@@ -844,8 +851,35 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       <ToastContainer />
       
       {/* Header with Month Picker */}
-      <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
-        <h2 className="text-lg font-bold">סקירת כרטיסי עבודה</h2>
+      <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-bold">סקירת כרטיסי עבודה</h2>
+          <div className="flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 p-1 bg-slate-100 dark:bg-slate-800">
+            <button
+              type="button"
+              onClick={() => setReviewMode('queue')}
+              className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                reviewMode === 'queue'
+                  ? 'bg-primary text-white'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              תור
+            </button>
+            <button
+              type="button"
+              onClick={() => setReviewMode('focus')}
+              disabled={!selectedCard}
+              className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                reviewMode === 'focus'
+                  ? 'bg-primary text-white'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              } disabled:opacity-40 disabled:cursor-not-allowed`}
+            >
+              פוקוס
+            </button>
+          </div>
+        </div>
         <MonthPicker
           value={selectedMonth}
           onChange={onMonthChange}
@@ -856,7 +890,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
       {/* Main Content */}
       <div className="flex flex-1 min-h-0">
         {/* Sidebar - Work Cards List */}
-        <div className="w-80 border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-50 dark:bg-slate-900/50">
+        <div className={`${reviewMode === 'focus' ? 'hidden' : 'w-80'} border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-50 dark:bg-slate-900/50`}>
           <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-600 dark:text-slate-400">
@@ -1017,11 +1051,26 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
 
         {/* Main Area - Image and Day Entries */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          {!selectedCard ? (
+          {reviewMode === 'queue' ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+              <span className="material-symbols-outlined text-6xl text-slate-300 dark:text-slate-600 mb-4">playlist_play</span>
+              <h3 className="text-lg font-medium text-slate-600 dark:text-slate-400 mb-2">מצב תור פעיל</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-500 max-w-md">
+                השתמשו בחיפוש, סינון וסטטוסים לניהול הרשימה. בחירת כרטיס תעביר אוטומטית למצב פוקוס לסקירה מעמיקה.
+              </p>
+            </div>
+          ) : !selectedCard ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
               <span className="material-symbols-outlined text-6xl text-slate-300 dark:text-slate-600 mb-4">touch_app</span>
               <h3 className="text-lg font-medium text-slate-600 dark:text-slate-400 mb-2">בחר כרטיס עבודה</h3>
-              <p className="text-sm text-slate-500 dark:text-slate-500">בחר כרטיס מהרשימה משמאל לצפייה ועריכה</p>
+              <p className="text-sm text-slate-500 dark:text-slate-500">חזור למצב תור כדי לבחור כרטיס לסקירה</p>
+              <button
+                type="button"
+                onClick={() => setReviewMode('queue')}
+                className="mt-4 px-4 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                מעבר למצב תור
+              </button>
             </div>
           ) : (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -1040,15 +1089,6 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                     <div className="min-w-0">
                       <div className="font-semibold text-slate-900 dark:text-white truncate">
                         {selectedCard.employee?.full_name || 'כרטיס לא משויך'}
-                      </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
-                        <span>מזהה: {String(selectedCard.id).slice(0, 8)}</span>
-                        {selectedCard.employee?.passport_id && (
-                          <span>ת.ז: {selectedCard.employee.passport_id}</span>
-                        )}
-                        {!selectedCard.employee?.passport_id && extraction?.extracted_passport_id && (
-                          <span>ת.ז מזוהה: {extraction.extracted_passport_id}</span>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -1101,6 +1141,14 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                       {hasUnsavedChanges && (
                         <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">שינויים לא נשמרו</span>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => setShowDetailsDrawer((prev) => !prev)}
+                        className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-sm">info</span>
+                        <span>{showDetailsDrawer ? 'הסתר פרטים' : 'פרטי כרטיס'}</span>
+                      </button>
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -1154,43 +1202,16 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                         </button>
                       )}
 
-                      <button
-                        onClick={handleTriggerExtraction}
-                        disabled={
-                          isTriggering ||
-                          extraction?.status === 'PENDING' ||
-                          extraction?.status === 'RUNNING' ||
-                          extraction?.status === 'DONE'
-                        }
-                        className={`px-3 py-2 rounded-lg transition-colors font-medium text-xs flex items-center gap-1 border disabled:opacity-50 disabled:cursor-not-allowed ${
-                          extraction?.status === 'DONE'
-                            ? 'bg-green-50 text-green-700 border-green-200'
-                            : 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100'
-                        }`}
-                        title={
-                          extraction?.status === 'DONE'
-                            ? 'נתונים חולצו'
-                            : 'חלץ נתונים מהתמונה'
-                        }
-                      >
-                        {isTriggering || extraction?.status === 'PENDING' || extraction?.status === 'RUNNING' ? (
-                          <>
-                            <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
-                            <span>מחלץ...</span>
-                          </>
-                        ) : extraction?.status === 'DONE' ? (
-                          <>
-                            <span className="material-symbols-outlined text-base">check_circle</span>
-                            <span>חולץ</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="material-symbols-outlined text-base">auto_fix_high</span>
-                            <span>חלץ נתונים</span>
-                          </>
-                        )}
-                      </button>
-
+                      {conflictCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={openConflictModal}
+                          className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors font-medium text-xs flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-base">warning</span>
+                          <span>התנגשויות ({unresolvedConflictCount > 0 ? unresolvedConflictCount : conflictCount})</span>
+                        </button>
+                      )}
                       <button
                         onClick={handleSave}
                         disabled={isSaving || !hasUnsavedChanges}
@@ -1238,6 +1259,58 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                   </div>
                 </div>
               </div>
+              {showDetailsDrawer && (
+                <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                    <button
+                      type="button"
+                      onClick={handleTriggerExtraction}
+                      disabled={
+                        isTriggering ||
+                        extraction?.status === 'PENDING' ||
+                        extraction?.status === 'RUNNING' ||
+                        extraction?.status === 'DONE'
+                      }
+                      className={`px-2.5 py-1 rounded-full border transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+                        extraction?.status === 'DONE'
+                          ? 'bg-green-50 text-green-700 border-green-200'
+                          : 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100'
+                      }`}
+                      title={
+                        extraction?.status === 'DONE'
+                          ? 'נתונים חולצו'
+                          : 'חלץ נתונים מהתמונה'
+                      }
+                    >
+                      {isTriggering || extraction?.status === 'PENDING' || extraction?.status === 'RUNNING'
+                        ? 'מחלץ...'
+                        : extraction?.status === 'DONE'
+                        ? 'חולץ'
+                        : 'חלץ נתונים'}
+                    </button>
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full font-medium ${
+                      selectedCard.review_status === 'APPROVED'
+                        ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
+                        : selectedCard.review_status === 'NEEDS_REVIEW'
+                        ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
+                        : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                    }`}>
+                      {selectedCard.review_status === 'APPROVED'
+                        ? 'מאושר'
+                        : selectedCard.review_status === 'NEEDS_REVIEW'
+                        ? 'ממתין לסקירה'
+                        : selectedCard.review_status === 'NEEDS_ASSIGNMENT'
+                        ? 'ממתין לשיוך'
+                        : selectedCard.review_status}
+                    </span>
+                    <span>מזהה: {String(selectedCard.id).slice(0, 8)}</span>
+                    {selectedCard.employee?.passport_id && <span>ת.ז: {selectedCard.employee.passport_id}</span>}
+                    {!selectedCard.employee?.passport_id && extraction?.extracted_passport_id && (
+                      <span>ת.ז מזוהה: {extraction.extracted_passport_id}</span>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="flex-1 flex min-h-0 overflow-hidden flex-col lg:flex-row">
                 {/* Image Panel */}
                 <div className={`${imagePanelWidth} lg:border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-100 dark:bg-slate-900`}>
