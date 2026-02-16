@@ -208,12 +208,84 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
   }, [selectedCard?.employee?.passport_id, extraction?.extracted_passport_id]);
 
   useEffect(() => {
-    selectedCardIdRef.current = selectedCard?.id ?? null;
+    setShowDirtyOnly(false);
   }, [selectedCard?.id]);
 
   useEffect(() => {
-    setShowDirtyOnly(false);
-  }, [selectedCard?.id]);
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(AUTO_ADVANCE_STORAGE_KEY, String(autoAdvance));
+  }, [autoAdvance]);
+
+  useEffect(() => {
+    if (!selectedCard) return;
+    if (visibleCards.some((card) => card.id === selectedCard.id)) return;
+    setSelectedCard(visibleCards[0] ?? null);
+  }, [selectedCard, visibleCards]);
+
+  const navigateToCard = useCallback((offset: -1 | 1) => {
+    if (!visibleCards.length) return;
+    const baseIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex : 0;
+    const nextIndex = baseIndex + offset;
+    if (nextIndex < 0 || nextIndex >= visibleCards.length) return;
+    setSelectedCard(visibleCards[nextIndex]);
+  }, [selectedVisibleIndex, visibleCards]);
+
+  const navigateToNextPending = useCallback(() => {
+    if (!visibleCards.length) return;
+    const startIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0;
+    const nextPending = visibleCards.find((card, index) => index >= startIndex && card.review_status !== 'APPROVED');
+    if (nextPending) {
+      setSelectedCard(nextPending);
+    }
+  }, [selectedVisibleIndex, visibleCards]);
+
+  const hasNextPending = useMemo(() => {
+    if (!visibleCards.length) return false;
+    const startIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0;
+    return visibleCards.some((card, index) => index >= startIndex && card.review_status !== 'APPROVED');
+  }, [selectedVisibleIndex, visibleCards]);
+
+  const getNextCardAfterReviewAction = useCallback((cards: WorkCard[], currentCardId: string) => {
+    const nextFilteredCards = filterCards(cards);
+    const nextVisibleCards = [...nextFilteredCards.unassigned, ...nextFilteredCards.assigned];
+    const currentIndex = nextVisibleCards.findIndex((card) => card.id === currentCardId);
+    const firstPendingAfterCurrent = nextVisibleCards.find(
+      (card, index) => index > currentIndex && card.review_status !== 'APPROVED'
+    );
+    if (firstPendingAfterCurrent) return firstPendingAfterCurrent;
+    if (currentIndex >= 0 && currentIndex + 1 < nextVisibleCards.length) {
+      return nextVisibleCards[currentIndex + 1];
+    }
+    if (currentIndex > 0) {
+      return nextVisibleCards[currentIndex - 1];
+    }
+    return nextVisibleCards[0] ?? null;
+  }, [filterCards]);
+
+  useEffect(() => {
+    if (!isFocusMode || !selectedCard) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (event.key === 'ArrowUp' || key === 'k') {
+        event.preventDefault();
+        navigateToCard(-1);
+      } else if (event.key === 'ArrowDown' || key === 'j') {
+        event.preventDefault();
+        navigateToCard(1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFocusMode, selectedCard, navigateToCard]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -427,6 +499,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
 
     let cancelled = false;
     const cardId = selectedCard.id;
+    selectedCardIdRef.current = cardId;
 
     // Clear previous UI while loading the next card
     setImageUrl(null);
@@ -474,6 +547,7 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
 
     let cancelled = false;
     const cardId = selectedCard.id;
+    selectedCardIdRef.current = cardId;
 
     // Clear previous card extraction immediately to avoid UI mixing between cards
     setExtraction(null);
@@ -1094,37 +1168,37 @@ export default function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange
                   </div>
                   <div className="flex flex-col items-end gap-3">
                     <div className="flex items-center gap-2 flex-wrap justify-end">
-                      {isFocusMode && (
-                        <>
-                          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                            {selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0} / {visibleCards.length}
-                          </span>
-                          <button
-                            onClick={() => navigateToCard(-1)}
-                            disabled={selectedVisibleIndex <= 0}
-                            className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
-                            title="הקודם (↑ או K)"
-                          >
-                            הקודם
-                          </button>
-                          <button
-                            onClick={() => navigateToCard(1)}
-                            disabled={selectedVisibleIndex === -1 || selectedVisibleIndex >= visibleCards.length - 1}
-                            className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
-                            title="הבא (↓ או J)"
-                          >
-                            הבא
-                          </button>
-                          <button
-                            onClick={navigateToNextPending}
-                            disabled={!hasNextPending}
-                            className="px-3 py-2 rounded-lg border border-indigo-200 dark:border-indigo-700 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="דלג לכרטיס הבא שממתין לסקירה"
-                          >
-                            הבא ממתין
-                          </button>
-                        </>
-                      )}
+                      <>
+                        <button
+                          onClick={() => navigateToCard(-1)}
+                          disabled={selectedVisibleIndex <= 0}
+                          className="w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center justify-center text-slate-600 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
+                          title="עובד קודם"
+                          aria-label="עובד קודם"
+                        >
+                          <span className="material-symbols-outlined text-base">chevron_right</span>
+                        </button>
+                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                          {selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0} / {visibleCards.length}
+                        </span>
+                        <button
+                          onClick={() => navigateToCard(1)}
+                          disabled={selectedVisibleIndex === -1 || selectedVisibleIndex >= visibleCards.length - 1}
+                          className="w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center justify-center text-slate-600 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
+                          title="עובד הבא"
+                          aria-label="עובד הבא"
+                        >
+                          <span className="material-symbols-outlined text-base">chevron_left</span>
+                        </button>
+                        <button
+                          onClick={navigateToNextPending}
+                          disabled={!hasNextPending}
+                          className="px-3 py-2 rounded-lg border border-indigo-200 dark:border-indigo-700 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="דלג לכרטיס הבא שממתין לסקירה"
+                        >
+                          הבא ממתין
+                        </button>
+                      </>
 
                       <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
                         selectedCard.review_status === 'APPROVED'
