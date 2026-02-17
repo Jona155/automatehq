@@ -14,6 +14,11 @@ from passport_normalization import normalize_passport, normalize_passport_candid
 
 logger = logging.getLogger('extraction_worker.matcher')
 
+IDENTITY_REASON_FORMAT_ONLY_DIFF = 'FORMAT_ONLY_DIFF'
+IDENTITY_REASON_VALUE_DIFF = 'VALUE_DIFF'
+IDENTITY_REASON_NO_EXTRACTED_ID = 'NO_EXTRACTED_ID'
+IDENTITY_REASON_NO_ASSIGNED_ID = 'NO_ASSIGNED_ID'
+
 
 def _match_by_passport_candidates(
     normalized_values: Iterable[str],
@@ -158,3 +163,43 @@ def match_employee_by_name(
 
     logger.warning(f"Multiple employees ({len(matches)}) match name: {employee_name}")
     return None
+
+
+def diagnose_identity_mismatch(
+    assigned_passport_id: Optional[str],
+    extracted_passport_id: Optional[str],
+) -> Dict[str, Any]:
+    """Compare assigned/extracted IDs by normalized value and return frontend-safe diagnostics."""
+    assigned_raw = (assigned_passport_id or '').strip()
+    extracted_raw = (extracted_passport_id or '').strip()
+
+    if not extracted_raw:
+        return {
+            'identity_mismatch': False,
+            'identity_reason': IDENTITY_REASON_NO_EXTRACTED_ID,
+        }
+
+    if not assigned_raw:
+        return {
+            'identity_mismatch': False,
+            'identity_reason': IDENTITY_REASON_NO_ASSIGNED_ID,
+        }
+
+    assigned_normalized = normalize_passport(assigned_raw)
+    extracted_normalized = normalize_passport(extracted_raw)
+    if assigned_normalized and extracted_normalized and assigned_normalized == extracted_normalized:
+        if assigned_raw != extracted_raw:
+            return {
+                'identity_mismatch': False,
+                'identity_reason': IDENTITY_REASON_FORMAT_ONLY_DIFF,
+            }
+
+        return {
+            'identity_mismatch': False,
+            'identity_reason': None,
+        }
+
+    return {
+        'identity_mismatch': True,
+        'identity_reason': IDENTITY_REASON_VALUE_DIFF,
+    }

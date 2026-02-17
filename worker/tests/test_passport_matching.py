@@ -6,7 +6,14 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from passport_normalization import normalize_passport, normalize_passport_candidates
-from matcher import match_employee
+from matcher import (
+    match_employee,
+    diagnose_identity_mismatch,
+    IDENTITY_REASON_FORMAT_ONLY_DIFF,
+    IDENTITY_REASON_NO_ASSIGNED_ID,
+    IDENTITY_REASON_NO_EXTRACTED_ID,
+    IDENTITY_REASON_VALUE_DIFF,
+)
 
 
 class FakeEmployeeRepo:
@@ -104,3 +111,35 @@ def test_match_uses_candidates_then_name_site_fallback():
     assert fallback_result['employee_id'] == name_employee.id
     assert fallback_result['method'] == 'name_site_high_confidence_fallback'
     assert fallback_result['is_exact'] is False
+
+
+def test_identity_diagnostics_distinguishes_format_and_value_diff():
+    format_only = diagnose_identity_mismatch(
+        assigned_passport_id=' N-123456 ',
+        extracted_passport_id='N123456',
+    )
+    assert format_only['identity_mismatch'] is False
+    assert format_only['identity_reason'] == IDENTITY_REASON_FORMAT_ONLY_DIFF
+
+    value_diff = diagnose_identity_mismatch(
+        assigned_passport_id='N123456',
+        extracted_passport_id='N999999',
+    )
+    assert value_diff['identity_mismatch'] is True
+    assert value_diff['identity_reason'] == IDENTITY_REASON_VALUE_DIFF
+
+
+def test_identity_diagnostics_handles_missing_values():
+    no_extracted = diagnose_identity_mismatch(
+        assigned_passport_id='N123456',
+        extracted_passport_id=None,
+    )
+    assert no_extracted['identity_mismatch'] is False
+    assert no_extracted['identity_reason'] == IDENTITY_REASON_NO_EXTRACTED_ID
+
+    no_assigned = diagnose_identity_mismatch(
+        assigned_passport_id=None,
+        extracted_passport_id='N123456',
+    )
+    assert no_assigned['identity_mismatch'] is False
+    assert no_assigned['identity_reason'] == IDENTITY_REASON_NO_ASSIGNED_ID
