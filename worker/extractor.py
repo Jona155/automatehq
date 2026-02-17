@@ -6,6 +6,7 @@ Adapted from poc-worker/app.py for production use.
 import base64
 import os
 import logging
+import re
 from typing import List, Optional, Dict, Any
 
 import cv2
@@ -16,7 +17,7 @@ from openai import OpenAI
 logger = logging.getLogger('extraction_worker.extractor')
 
 # Pipeline version for tracking
-PIPELINE_VERSION = "1.1.0"
+PIPELINE_VERSION = "1.2.0"
 
 # OpenAI configuration
 GPT_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
@@ -43,6 +44,8 @@ class WorkRow(BaseModel):
     start_time: Optional[str] = Field(None, description="Start time in HH:MM format")
     end_time: Optional[str] = Field(None, description="End time in HH:MM format")
     total_hours: Optional[float] = Field(None, description="Total hours worked")
+    confidence: Optional[float] = Field(None, description="Confidence score between 0 and 1 for the extracted row")
+    notes: Optional[str] = Field(None, description="Optional note for uncertainty or legibility issues")
 
 
 class WorkTable(BaseModel):
@@ -149,21 +152,19 @@ def encode_image_to_base64(image_array: np.ndarray) -> str:
 # GPT-4o Vision Extraction
 # ===========================================
 
-def extract_single_crop(crop_img: np.ndarray, day_range_hint: str) -> Optional[WorkTable]:
+def extract_single_crop(crop_img: np.ndarray) -> Optional[WorkTable]:
     """
     Send a cropped table image to GPT-4o Vision for structured data extraction.
     
     Args:
         crop_img: Cropped table image as numpy array
-        day_range_hint: Hint about expected day range (e.g., "1-15" or "16-31")
-        
     Returns:
         WorkTable with extracted entries, or None on error
     """
     client = get_openai_client()
     base64_image = encode_image_to_base64(crop_img)
     
-    logger.debug(f"Sending crop to GPT-4o (expected days {day_range_hint})")
+    logger.debug("Sending crop to GPT-4o")
     
     response = client.beta.chat.completions.parse(
         model=GPT_MODEL,
@@ -172,9 +173,12 @@ def extract_single_crop(crop_img: np.ndarray, day_range_hint: str) -> Optional[W
                 "role": "system",
                 "content": (
                     "You are a data extraction AI specialized in reading handwritten work logs. "
-                    "Extract work hours from the image. For each day, extract start time, end time, "
-                    "and total hours if visible. Return times in HH:MM format (24-hour). "
+                    "Extract work hours from the image. For each visible row label/day, extract start time, "
+                    "end time, and total hours if visible. Return times in HH:MM format (24-hour). "
+                    "Day values must come from visible row labels only and must never be inferred from table "
+                    "position, crop position, or expected ranges. "
                     "Return null for empty or illegible entries. "
+                    "Include an optional confidence value (0-1) and optional notes for uncertain rows. "
                     "Also extract the employee name and passport/ID number if visible anywhere on the card."
                 )
             },
@@ -183,7 +187,12 @@ def extract_single_crop(crop_img: np.ndarray, day_range_hint: str) -> Optional[W
                 "content": [
                     {
                         "type": "text",
-                        "text": f"Extract the handwritten work log data from this image. This section likely covers days {day_range_hint}. Return null for empty rows."
+                        "text": (
+                            "Extract handwritten work log rows from this image. "
+                            "Only output rows where a day label is visible. "
+                            "Do not infer the day from crop location or left/right placement. "
+                            "Return null for empty rows."
+                        )
                     },
                     {
                         "type": "image_url",
@@ -196,6 +205,39 @@ def extract_single_crop(crop_img: np.ndarray, day_range_hint: str) -> Optional[W
     )
     
     return response.choices[0].message.parsed
+
+
+TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _is_valid_time(value: Optional[str]) -> bool:
+    if value is None:
+        return False
+    return bool(TIME_PATTERN.match(value.strip()))
+
+
+def _entry_quality_score(entry: Dict[str, Any]) -> float:
+    """Score entry quality for conflict resolution when duplicate day rows exist."""
+    score = 0.0
+
+    if _is_valid_time(entry.get('start_time')):
+        score += 2.0
+    if _is_valid_time(entry.get('end_time')):
+        score += 2.0
+
+    total_hours = entry.get('total_hours')
+    if isinstance(total_hours, (int, float)) and 0 <= float(total_hours) <= 24:
+        score += 2.0
+
+    confidence = entry.get('confidence')
+    if isinstance(confidence, (int, float)):
+        score += max(0.0, min(float(confidence), 1.0)) * 3.0
+
+    note = entry.get('notes')
+    if isinstance(note, str) and note.strip():
+        score += 0.25
+
+    return score
 
 
 def extract_header_from_full_image(image_bytes: bytes) -> Optional[HeaderInfo]:
@@ -264,17 +306,11 @@ def extract_data_from_crops(crop_images: List[np.ndarray]) -> Dict[str, Any]:
     employee_name = None
     passport_id = None
     
-    # Define expected day ranges for crops
-    # First crop (rightmost) = days 1-15, second crop (leftmost) = days 16-31
-    ranges = ["1-15", "16-31"]
-    
     for i, crop_img in enumerate(crop_images):
-        current_range = ranges[i] if i < len(ranges) else "unknown"
-        
-        logger.info(f"Extracting data from crop {i+1} (expected days {current_range})...")
+        logger.info(f"Extracting data from crop {i+1}...")
         
         try:
-            result = extract_single_crop(crop_img, current_range)
+            result = extract_single_crop(crop_img)
             
             if result and result.entries:
                 # Convert Pydantic objects to dicts
@@ -293,20 +329,24 @@ def extract_data_from_crops(crop_images: List[np.ndarray]) -> Dict[str, Any]:
     
     # Sort entries by day and deduplicate
     if all_entries:
-        # Remove duplicates (same day)
-        seen_days = set()
-        unique_entries = []
-        
-        # Sort by day first
-        all_entries.sort(key=lambda x: x.get('day', 0))
-        
+        # Keep best duplicate per day by confidence + field validity.
+        best_by_day: Dict[int, Dict[str, Any]] = {}
         for entry in all_entries:
             day = entry.get('day')
-            if day is not None and day not in seen_days:
-                seen_days.add(day)
-                unique_entries.append(entry)
-        
-        all_entries = unique_entries
+            if day is None:
+                continue
+
+            existing = best_by_day.get(day)
+            if not existing:
+                best_by_day[day] = entry
+                continue
+
+            current_score = _entry_quality_score(entry)
+            existing_score = _entry_quality_score(existing)
+            if current_score > existing_score:
+                best_by_day[day] = entry
+
+        all_entries = [best_by_day[day] for day in sorted(best_by_day.keys())]
     
     logger.info(f"Total extracted: {len(all_entries)} unique day entries")
     
