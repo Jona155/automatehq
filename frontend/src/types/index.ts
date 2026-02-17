@@ -157,8 +157,68 @@ export interface WorkCardExtraction {
   match_confidence: number | null;
   model_name: string | null;
   pipeline_version: string | null;
+  raw_result_jsonb?: {
+    strategy?: string;
+    selected_passport_id_normalized?: string | null;
+    passport_id_candidates?: Array<{
+      raw: string;
+      normalized: string | null;
+      source_region?: string | null;
+      confidence?: number | null;
+    }>;
+    normalized_passport_candidates?: string[];
+    row_quality?: WorkCardExtractionQuality | null;
+    template_profile?: WorkCardTemplateProfile | null;
+    targeted_reread?: {
+      enabled?: boolean;
+      requested_days?: number[];
+      applied_days?: number[];
+      error?: string;
+    };
+  } | null;
+  normalized_result_jsonb?: {
+    entries?: Array<Record<string, unknown>>;
+    identity_mismatch?: boolean;
+    identity_reason?: string | null;
+    match_is_exact?: boolean | null;
+    match_is_fuzzy?: boolean | null;
+    matched_normalized_passport_id?: string | null;
+    review_required_days?: number[];
+    off_mark_days?: number[];
+    row_quality_by_day?: Record<string, WorkCardDayQuality>;
+    match_candidates?: Array<Record<string, unknown>>;
+    matching_decision_reason?: string | null;
+    match_distance?: number | null;
+    match_candidate_count?: number | null;
+    template_profile?: WorkCardTemplateProfile | null;
+  } | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface WorkCardDayQuality {
+  row_state?: 'WORKED' | 'OFF_MARK' | 'EMPTY' | 'ILLEGIBLE' | null;
+  mark_type?: 'NONE' | 'SINGLE_LINE' | 'CROSS' | 'HATCH' | null;
+  row_confidence?: number | null;
+  has_valid_time_pair?: boolean;
+  review_required?: boolean;
+  reasons?: string[];
+  evidence?: string[];
+}
+
+export interface WorkCardExtractionQuality {
+  review_required_days?: number[];
+  off_mark_days?: number[];
+  row_quality_by_day?: Record<string, WorkCardDayQuality>;
+}
+
+export interface WorkCardTemplateProfile {
+  orientation?: 'landscape' | 'portrait' | 'unknown';
+  image_width?: number;
+  image_height?: number;
+  table_sections_detected?: number;
+  table_layout_confidence?: number | null;
+  row_density_estimate?: number | null;
 }
 
 export interface UploadAccessRequest {

@@ -17,9 +17,11 @@ from matcher import (
 
 
 class FakeEmployeeRepo:
-    def __init__(self, by_passport=None, name_matches=None):
+    def __init__(self, by_passport=None, name_matches=None, active_by_site=None, active_by_business=None):
         self.by_passport = by_passport or {}
         self.name_matches = name_matches or {}
+        self.active_by_site = active_by_site or {}
+        self.active_by_business = active_by_business or []
 
     def get_by_passport(self, passport_id, business_id=None):
         return self.by_passport.get(passport_id)
@@ -27,9 +29,15 @@ class FakeEmployeeRepo:
     def search_by_name(self, name, business_id, site_id=None):
         return self.name_matches.get((name, site_id), [])
 
+    def get_active_by_site(self, site_id, business_id):
+        return self.active_by_site.get(site_id, [])
 
-def _employee(name):
-    return SimpleNamespace(id=uuid4(), full_name=name)
+    def get_active_employees(self, business_id):
+        return self.active_by_business
+
+
+def _employee(name, passport_id=None):
+    return SimpleNamespace(id=uuid4(), full_name=name, passport_id=passport_id)
 
 
 def test_normalize_passport_rules():
@@ -143,3 +151,67 @@ def test_identity_diagnostics_handles_missing_values():
     )
     assert no_assigned['identity_mismatch'] is False
     assert no_assigned['identity_reason'] == IDENTITY_REASON_NO_ASSIGNED_ID
+
+
+def test_fuzzy_passport_unique_distance_one_auto_matches():
+    business_id = uuid4()
+    site_id = uuid4()
+    fuzzy_employee = _employee('Fuzzy Match', passport_id='N123456')
+    repo = FakeEmployeeRepo(
+        active_by_site={site_id: [fuzzy_employee]},
+        active_by_business=[fuzzy_employee],
+    )
+
+    result = match_employee(
+        passport_id='M123456',
+        passport_candidates=[],
+        business_id=business_id,
+        employee_repo=repo,
+        site_id=site_id,
+        enable_fuzzy_passport_match=True,
+    )
+
+    assert result['employee_id'] == fuzzy_employee.id
+    assert result['method'] == 'passport_fuzzy_unique_distance_le_1'
+    assert result['is_exact'] is False
+    assert result['is_fuzzy'] is True
+    assert result['distance'] <= 1.0
+
+
+def test_fuzzy_passport_ambiguous_does_not_auto_assign():
+    business_id = uuid4()
+    site_id = uuid4()
+    employee_a = _employee('Employee A', passport_id='M123456')
+    employee_b = _employee('Employee B', passport_id='N123456')
+    repo = FakeEmployeeRepo(
+        active_by_site={site_id: [employee_a, employee_b]},
+        active_by_business=[employee_a, employee_b],
+    )
+
+    result = match_employee(
+        passport_id='N123456',
+        passport_candidates=['M123456'],
+        business_id=business_id,
+        employee_repo=repo,
+        site_id=site_id,
+        enable_fuzzy_passport_match=True,
+    )
+
+    # Exact match path should still be preferred.
+    assert result['employee_id'] == employee_b.id
+    assert result['method'] == 'passport_normalized_exact'
+
+    no_exact_repo = FakeEmployeeRepo(
+        active_by_site={site_id: [employee_a, employee_b]},
+        active_by_business=[employee_a, employee_b],
+    )
+    no_exact = match_employee(
+        passport_id='A123456',
+        passport_candidates=[],
+        business_id=business_id,
+        employee_repo=no_exact_repo,
+        site_id=site_id,
+        enable_fuzzy_passport_match=True,
+    )
+    assert no_exact['employee_id'] is None
+    assert no_exact['method'] == 'no_match_with_fuzzy_candidates'

@@ -311,6 +311,24 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     return selectedCard.employee.passport_id.trim() !== extraction.extracted_passport_id.trim();
   }, [selectedCard?.employee?.passport_id, extraction?.extracted_passport_id]);
 
+  const extractionQualityMeta = useMemo(() => {
+    const normalized = extraction?.normalized_result_jsonb;
+    const reviewRequired = new Set<number>((normalized?.review_required_days || []).filter((day) => Number.isInteger(day)));
+    const offMark = new Set<number>((normalized?.off_mark_days || []).filter((day) => Number.isInteger(day)));
+    const rowQuality = normalized?.row_quality_by_day || {};
+    const matchCandidates = Array.isArray(normalized?.match_candidates) ? normalized.match_candidates : [];
+    const isFuzzy = Boolean(normalized?.match_is_fuzzy);
+    const decisionReason = normalized?.matching_decision_reason || null;
+    return {
+      reviewRequired,
+      offMark,
+      rowQuality,
+      matchCandidates,
+      isFuzzy,
+      decisionReason,
+    };
+  }, [extraction]);
+
   useEffect(() => {
     setShowDirtyOnly(false);
   }, [selectedCard?.id]);
@@ -1739,6 +1757,49 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         </button>
                       </div>
                     )}
+
+                    {extractionQualityMeta.isFuzzy && extractionQualityMeta.decisionReason && (
+                      <div className="flex items-center gap-2 p-3 bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800 rounded-lg">
+                        <span className="material-symbols-outlined text-sky-600 dark:text-sky-400">manage_search</span>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-sky-800 dark:text-sky-300">
+                            התאמה משוערת הופעלה
+                          </p>
+                          <p className="text-xs text-sky-700 dark:text-sky-400">
+                            סיבה: <strong>{extractionQualityMeta.decisionReason}</strong>
+                          </p>
+                          {extractionQualityMeta.matchCandidates.length > 0 && (
+                            <p className="text-xs text-sky-700 dark:text-sky-400 mt-1">
+                              מועמדים קרובים: {extractionQualityMeta.matchCandidates.slice(0, 3).map((candidate, idx) => {
+                                const item = candidate as Record<string, unknown>;
+                                const name = String(item.employee_name || item.employee_id || `#${idx + 1}`);
+                                const distance = typeof item.distance === 'number' ? ` (${item.distance})` : '';
+                                return `${name}${distance}`;
+                              }).join(', ')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {extractionQualityMeta.reviewRequired.size > 0 && (
+                      <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                        <span className="material-symbols-outlined text-amber-600 dark:text-amber-400">rule</span>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                            זוהו שורות הדורשות בדיקה
+                          </p>
+                          <p className="text-xs text-amber-700 dark:text-amber-400">
+                            ימים לבדיקה: <strong>{Array.from(extractionQualityMeta.reviewRequired).sort((a, b) => a - b).join(', ')}</strong>
+                          </p>
+                          {extractionQualityMeta.offMark.size > 0 && (
+                            <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                              ימים שסומנו כקו/חופשי: <strong>{Array.from(extractionQualityMeta.offMark).sort((a, b) => a - b).join(', ')}</strong>
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {isLoadingEntries ? (
@@ -1765,6 +1826,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           {filteredDisplayedEntries.map(({ entry, index }) => {
                             const isActive = activeDay === entry.day_of_month;
                             const zone = zoneByDay.get(entry.day_of_month);
+                            const dayQuality = extractionQualityMeta.rowQuality[String(entry.day_of_month)] || null;
+                            const isReviewRequired = extractionQualityMeta.reviewRequired.has(entry.day_of_month) || Boolean(dayQuality?.review_required);
+                            const isOffMark = extractionQualityMeta.offMark.has(entry.day_of_month) || dayQuality?.row_state === 'OFF_MARK';
                             return (
                               <tr
                                 key={entry.day_of_month}
@@ -1774,6 +1838,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     ? 'ring-2 ring-inset ring-primary/60 bg-primary/5 dark:bg-primary/10'
                                     : entry.isLocked
                                     ? 'bg-slate-100 dark:bg-slate-800/40'
+                                    : isReviewRequired
+                                    ? 'bg-amber-50 dark:bg-amber-900/10'
+                                    : isOffMark
+                                    ? 'bg-blue-50 dark:bg-blue-900/10'
                                     : entry.hasConflict
                                     ? 'bg-red-50 dark:bg-red-900/10'
                                     : entry.isDirty
@@ -1794,6 +1862,16 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     {typeof zone?.confidence === 'number' && (
                                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" title={`Confidence ${Math.round(zone.confidence * 100)}%`}>
                                         {Math.round(zone.confidence * 100)}%
+                                      </span>
+                                    )}
+                                    {isReviewRequired && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" title={dayQuality?.reasons?.join(', ') || 'Requires review'}>
+                                        בדיקה
+                                      </span>
+                                    )}
+                                    {isOffMark && !isReviewRequired && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" title="Marked as off-day line/strike">
+                                        קו
                                       </span>
                                     )}
                                   </div>

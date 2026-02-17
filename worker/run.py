@@ -16,6 +16,7 @@ import os
 import sys
 import time
 import uuid
+import decimal
 import logging
 import traceback
 from datetime import time as dt_time
@@ -54,6 +55,9 @@ POLL_INTERVAL = int(os.environ.get("WORKER_POLL_SECONDS", "5"))
 WORKER_ID = os.environ.get("WORKER_ID", f"worker-{uuid.uuid4().hex[:8]}")
 MAX_RETRY_ATTEMPTS = int(os.environ.get("MAX_RETRY_ATTEMPTS", "3"))
 STALE_LOCK_MINUTES = int(os.environ.get("STALE_LOCK_MINUTES", "30"))
+ENABLE_NAME_SITE_MATCH_FALLBACK = os.environ.get("ENABLE_NAME_SITE_MATCH_FALLBACK", "false").lower() == "true"
+ENABLE_FUZZY_PASSPORT_MATCH = os.environ.get("ENABLE_FUZZY_PASSPORT_MATCH", "false").lower() == "true"
+ENABLE_FUZZY_NAME_FALLBACK = os.environ.get("ENABLE_FUZZY_NAME_FALLBACK", "false").lower() == "true"
 
 
 def create_worker_app() -> Flask:
@@ -139,6 +143,19 @@ def _entry_differs_from_previous(extracted_entry: Dict[str, Any], previous_entry
     return new_values != prev_values
 
 
+def _to_json_safe(value: Any) -> Any:
+    """Convert nested structures to JSON-safe primitives for JSONB persistence."""
+    if isinstance(value, dict):
+        return {str(k): _to_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_json_safe(v) for v in value]
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    return value
+
+
 def process_job(
     extraction_repo: WorkCardExtractionRepository,
     file_repo: WorkCardFileRepository,
@@ -196,6 +213,10 @@ def process_job(
         # Match employee by normalized passport with candidate + optional name/site fallback
         extracted_passport_id = extraction_result.get('extracted_passport_id')
         normalized_passport_candidates = extraction_result.get('normalized_passport_candidates') or []
+        row_quality = extraction_result.get('row_quality') or {}
+        review_required_days = row_quality.get('review_required_days') or []
+        off_mark_days = row_quality.get('off_mark_days') or []
+        row_quality_by_day = row_quality.get('row_quality_by_day') or {}
         match_result = match_employee(
             passport_id=extracted_passport_id,
             passport_candidates=normalized_passport_candidates,
@@ -203,14 +224,21 @@ def process_job(
             employee_repo=employee_repo,
             employee_name=extraction_result.get('extracted_employee_name'),
             site_id=work_card.site_id,
-            enable_name_site_fallback=(os.environ.get('ENABLE_NAME_SITE_MATCH_FALLBACK', 'false').lower() == 'true'),
+            enable_name_site_fallback=ENABLE_NAME_SITE_MATCH_FALLBACK,
+            enable_fuzzy_passport_match=ENABLE_FUZZY_PASSPORT_MATCH,
+            enable_fuzzy_name_fallback=ENABLE_FUZZY_NAME_FALLBACK,
         )
         
         matched_employee_id = match_result.get('employee_id') if match_result else None
         match_method = match_result.get('method') if match_result else None
         match_confidence = match_result.get('confidence') if match_result else None
         match_is_exact = match_result.get('is_exact') if match_result else None
+        match_is_fuzzy = match_result.get('is_fuzzy') if match_result else None
         matched_normalized_passport_id = match_result.get('normalized_passport_id') if match_result else None
+        match_candidates = match_result.get('match_candidates') if match_result else []
+        matching_decision_reason = match_result.get('decision_reason') if match_result else None
+        match_distance = match_result.get('distance') if match_result else None
+        match_candidate_count = match_result.get('candidate_count') if match_result else None
         
         if matched_employee_id:
             logger.info(f"Matched employee {matched_employee_id} via {match_method}")
@@ -318,14 +346,23 @@ def process_job(
         extraction_repo.mark_completed(job_id, {
             'extracted_employee_name': extraction_result.get('extracted_employee_name'),
             'extracted_passport_id': extracted_passport_id,
-            'raw_result_jsonb': raw_result,
-            'normalized_result_jsonb': {
+            'raw_result_jsonb': _to_json_safe(raw_result),
+            'normalized_result_jsonb': _to_json_safe({
                 'entries': entries,
                 'identity_mismatch': identity_mismatch,
                 'identity_reason': identity_reason,
                 'match_is_exact': match_is_exact,
+                'match_is_fuzzy': match_is_fuzzy,
                 'matched_normalized_passport_id': matched_normalized_passport_id,
-            },
+                'review_required_days': review_required_days,
+                'off_mark_days': off_mark_days,
+                'row_quality_by_day': row_quality_by_day,
+                'match_candidates': match_candidates,
+                'matching_decision_reason': matching_decision_reason,
+                'match_distance': match_distance,
+                'match_candidate_count': match_candidate_count,
+                'template_profile': extraction_result.get('template_profile'),
+            }),
             'matched_employee_id': matched_employee_id,
             'match_method': match_method,
             'match_confidence': match_confidence,
