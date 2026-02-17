@@ -168,6 +168,134 @@ class TargetedRowReviewRequest(BaseModel):
 # OpenCV Image Processing
 # ===========================================
 
+def _parse_exif_orientation_from_app1(payload: bytes) -> Optional[int]:
+    """Extract EXIF orientation (1-8) from a JPEG APP1 payload."""
+    if not payload.startswith(b"Exif\x00\x00"):
+        return None
+
+    tiff = payload[6:]
+    if len(tiff) < 8:
+        return None
+
+    byte_order = tiff[:2]
+    if byte_order == b"II":
+        endian = "little"
+    elif byte_order == b"MM":
+        endian = "big"
+    else:
+        return None
+
+    if int.from_bytes(tiff[2:4], endian) != 42:
+        return None
+
+    ifd0_offset = int.from_bytes(tiff[4:8], endian)
+    if ifd0_offset < 0 or ifd0_offset + 2 > len(tiff):
+        return None
+
+    entry_count = int.from_bytes(tiff[ifd0_offset:ifd0_offset + 2], endian)
+    cursor = ifd0_offset + 2
+
+    for _ in range(entry_count):
+        if cursor + 12 > len(tiff):
+            break
+
+        tag = int.from_bytes(tiff[cursor:cursor + 2], endian)
+        field_type = int.from_bytes(tiff[cursor + 2:cursor + 4], endian)
+        value_count = int.from_bytes(tiff[cursor + 4:cursor + 8], endian)
+        raw_value = tiff[cursor + 8:cursor + 12]
+        cursor += 12
+
+        if tag != 0x0112:
+            continue
+
+        orientation: Optional[int] = None
+        if field_type == 3 and value_count == 1:
+            # SHORT value packed directly into the 4-byte value field.
+            orientation = int.from_bytes(raw_value[:2], endian)
+        else:
+            value_offset = int.from_bytes(raw_value, endian)
+            if 0 <= value_offset <= len(tiff) - 2:
+                orientation = int.from_bytes(tiff[value_offset:value_offset + 2], endian)
+
+        if orientation is not None and 1 <= orientation <= 8:
+            return orientation
+        return None
+
+    return None
+
+
+def _extract_jpeg_exif_orientation(image_bytes: bytes) -> Optional[int]:
+    """Read EXIF orientation from JPEG bytes when present."""
+    if len(image_bytes) < 4 or image_bytes[:2] != b"\xFF\xD8":
+        return None
+
+    cursor = 2
+    data_length = len(image_bytes)
+
+    while cursor + 4 <= data_length:
+        # Sync to JPEG marker boundary.
+        while cursor < data_length and image_bytes[cursor] != 0xFF:
+            cursor += 1
+        if cursor + 1 >= data_length:
+            break
+
+        marker = image_bytes[cursor + 1]
+        cursor += 2
+
+        # Start of Scan / End of Image means no more APP metadata segments.
+        if marker in (0xDA, 0xD9):
+            break
+
+        if cursor + 2 > data_length:
+            break
+        segment_length = int.from_bytes(image_bytes[cursor:cursor + 2], "big")
+        if segment_length < 2 or cursor + segment_length > data_length:
+            break
+
+        if marker == 0xE1:
+            payload = image_bytes[cursor + 2:cursor + segment_length]
+            orientation = _parse_exif_orientation_from_app1(payload)
+            if orientation is not None:
+                return orientation
+
+        cursor += segment_length
+
+    return None
+
+
+def _apply_exif_orientation(image: np.ndarray, orientation: Optional[int]) -> np.ndarray:
+    if orientation is None or orientation == 1:
+        return image
+    if orientation == 2:
+        return cv2.flip(image, 1)
+    if orientation == 3:
+        return cv2.rotate(image, cv2.ROTATE_180)
+    if orientation == 4:
+        return cv2.flip(image, 0)
+    if orientation == 5:
+        return cv2.transpose(image)
+    if orientation == 6:
+        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    if orientation == 7:
+        return cv2.flip(cv2.transpose(image), -1)
+    if orientation == 8:
+        return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return image
+
+
+def _decode_image_bytes(image_bytes: bytes) -> np.ndarray:
+    """Decode image bytes with EXIF orientation normalization."""
+    file_bytes = np.frombuffer(image_bytes, np.uint8)
+    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("Could not decode image")
+
+    orientation = _extract_jpeg_exif_orientation(image_bytes)
+    if orientation and orientation != 1:
+        image = _apply_exif_orientation(image, orientation)
+        logger.debug("Applied EXIF orientation correction: %s", orientation)
+    return image
+
 def crop_tables_from_image_bytes(image_bytes: bytes) -> List[np.ndarray]:
     """
     Detect and crop table sections from work card image.
@@ -185,12 +313,8 @@ def crop_tables_from_image_bytes(image_bytes: bytes) -> List[np.ndarray]:
     Raises:
         ValueError: If image cannot be decoded
     """
-    # Decode image from bytes
-    file_bytes = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    
-    if img is None:
-        raise ValueError("Could not decode image")
+    # Decode image from bytes (with EXIF orientation normalization)
+    img = _decode_image_bytes(image_bytes)
     
     logger.debug(f"Image size: {img.shape[1]}x{img.shape[0]}")
     
@@ -632,9 +756,9 @@ def _apply_semantic_gating(entries: List[Dict[str, Any]]) -> Tuple[List[Dict[str
 
 
 def _analyze_template_profile(image_bytes: bytes, crop_count: int) -> Dict[str, Any]:
-    file_bytes = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    if img is None:
+    try:
+        img = _decode_image_bytes(image_bytes)
+    except ValueError:
         return {
             "orientation": "unknown",
             "table_sections_detected": crop_count,
@@ -704,9 +828,9 @@ def _rerun_uncertain_days_full_image(
     if not uncertain_days:
         return None
 
-    file_bytes = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    if img is None:
+    try:
+        img = _decode_image_bytes(image_bytes)
+    except ValueError:
         return None
 
     base64_image = encode_image_to_base64(img)
@@ -770,10 +894,10 @@ def extract_header_from_full_image(image_bytes: bytes) -> Optional[HeaderInfo]:
     Returns:
         HeaderInfo with employee_name/passport_id if found, else None
     """
-    file_bytes = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("Could not decode image for header extraction")
+    try:
+        img = _decode_image_bytes(image_bytes)
+    except ValueError as exc:
+        raise ValueError("Could not decode image for header extraction") from exc
 
     base64_image = encode_image_to_base64(img)
 
@@ -879,10 +1003,10 @@ def extract_data_from_crops(crop_images: List[np.ndarray]) -> Dict[str, Any]:
 def extract_full_image_single_pass(image_bytes: bytes) -> Tuple[Optional[SinglePassExtraction], Optional[str]]:
     """Send full image once to a stronger vision model for unified extraction."""
 
-    file_bytes = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("Could not decode image for extraction")
+    try:
+        img = _decode_image_bytes(image_bytes)
+    except ValueError as exc:
+        raise ValueError("Could not decode image for extraction") from exc
 
     base64_image = encode_image_to_base64(img)
 
