@@ -39,7 +39,8 @@ from app.repositories import (
 )
 
 from extractor import extract_from_image_bytes, PIPELINE_VERSION
-from matcher import match_employee_by_passport
+from matcher import match_employee
+from passport_normalization import normalize_passport
 
 # Configure logging
 logging.basicConfig(
@@ -193,17 +194,24 @@ def process_job(
         
         logger.info(f"Extracted {len(entries)} day entries")
         
-        # Match employee by passport (if passport ID was extracted)
+        # Match employee by normalized passport with candidate + optional name/site fallback
         extracted_passport_id = extraction_result.get('extracted_passport_id')
-        match_result = match_employee_by_passport(
+        normalized_passport_candidates = extraction_result.get('normalized_passport_candidates') or []
+        match_result = match_employee(
             passport_id=extracted_passport_id,
+            passport_candidates=normalized_passport_candidates,
             business_id=work_card.business_id,
-            employee_repo=employee_repo
+            employee_repo=employee_repo,
+            employee_name=extraction_result.get('extracted_employee_name'),
+            site_id=work_card.site_id,
+            enable_name_site_fallback=(os.environ.get('ENABLE_NAME_SITE_MATCH_FALLBACK', 'false').lower() == 'true'),
         )
         
         matched_employee_id = match_result.get('employee_id') if match_result else None
         match_method = match_result.get('method') if match_result else None
         match_confidence = match_result.get('confidence') if match_result else None
+        match_is_exact = match_result.get('is_exact') if match_result else None
+        matched_normalized_passport_id = match_result.get('normalized_passport_id') if match_result else None
         
         if matched_employee_id:
             logger.info(f"Matched employee {matched_employee_id} via {match_method}")
@@ -234,7 +242,9 @@ def process_job(
             # Fetch the assigned employee to compare passport IDs
             assigned_employee = employee_repo.get_by_id(work_card.employee_id)
             if assigned_employee and assigned_employee.passport_id:
-                if assigned_employee.passport_id.strip() != extracted_passport_id.strip():
+                assigned_normalized_passport = normalize_passport(assigned_employee.passport_id)
+                extracted_normalized_passport = normalize_passport(extracted_passport_id)
+                if assigned_normalized_passport and extracted_normalized_passport and assigned_normalized_passport != extracted_normalized_passport:
                     identity_mismatch = True
                     logger.warning(
                         f"IDENTITY MISMATCH for work card {work_card.id}: "
@@ -307,6 +317,8 @@ def process_job(
             'normalized_result_jsonb': {
                 'entries': entries,
                 'identity_mismatch': identity_mismatch,
+                'match_is_exact': match_is_exact,
+                'matched_normalized_passport_id': matched_normalized_passport_id,
             },
             'matched_employee_id': matched_employee_id,
             'match_method': match_method,
