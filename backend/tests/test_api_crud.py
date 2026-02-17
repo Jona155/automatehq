@@ -224,5 +224,51 @@ class TestAPICrud(unittest.TestCase):
             WorkCard.query.filter_by(id=wc_id).delete()
             db.session.commit()
 
+    def test_work_card_assignment_transitions_to_needs_review(self):
+        # Create site
+        site_res = self.client.post('/api/sites', json={
+            'site_name': f"{self.test_site_name} Assign",
+            'site_code': 'WCAS'
+        })
+        site_id = site_res.get_json()['data']['id']
+
+        # Create employee to assign
+        employee_res = self.client.post('/api/employees', json={
+            'full_name': 'Assignment Target',
+            'passport_id': f'P-{uuid.uuid4().hex[:8]}',
+            'site_id': site_id
+        })
+        employee_id = employee_res.get_json()['data']['id']
+
+        from backend.app.models.work_cards import WorkCard
+        from datetime import date
+
+        with self.app.app_context():
+            wc = WorkCard(
+                site_id=site_id,
+                processing_month=date(2025, 1, 1),
+                employee_id=None,
+                review_status='NEEDS_ASSIGNMENT',
+                source='MANUAL',
+                original_filename='assign.jpg',
+                mime_type='image/jpeg',
+                file_size_bytes=100
+            )
+            db.session.add(wc)
+            db.session.commit()
+            wc_id = str(wc.id)
+
+        response = self.client.put(f'/api/work_cards/{wc_id}', json={
+            'employee_id': employee_id
+        })
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()['data']
+        self.assertEqual(data['employee_id'], employee_id)
+        self.assertEqual(data['review_status'], 'NEEDS_REVIEW')
+
+        with self.app.app_context():
+            WorkCard.query.filter_by(id=wc_id).delete()
+            db.session.commit()
+
 if __name__ == '__main__':
     unittest.main()

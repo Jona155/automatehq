@@ -156,6 +156,15 @@ def update_work_card(card_id):
     # Prevent changing business_id
     if 'business_id' in data:
         del data['business_id']
+
+    # Keep review status aligned with assignment state.
+    # Manual assignment should move cards out of NEEDS_ASSIGNMENT to NEEDS_REVIEW.
+    if 'employee_id' in data:
+        has_employee = bool(data.get('employee_id'))
+        if has_employee and card.review_status == 'NEEDS_ASSIGNMENT':
+            data['review_status'] = 'NEEDS_REVIEW'
+        elif not has_employee:
+            data['review_status'] = 'NEEDS_ASSIGNMENT'
         
     try:
         updated_card = repo.update(card_id, **data)
@@ -182,7 +191,7 @@ def update_status(card_id):
          return api_response(status_code=400, message="Status is required", error="Bad Request")
          
     try:
-        updated_card = repo.update_review_status(card_id, status)
+        updated_card = repo.update_review_status(card_id, status, g.business_id)
         if not updated_card:
              return api_response(status_code=404, message="Work card not found", error="Not Found")
              
