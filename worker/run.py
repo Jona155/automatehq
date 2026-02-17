@@ -39,8 +39,7 @@ from app.repositories import (
 )
 
 from extractor import extract_from_image_bytes, PIPELINE_VERSION
-from matcher import match_employee
-from passport_normalization import normalize_passport
+from matcher import match_employee, diagnose_identity_mismatch
 
 # Configure logging
 logging.basicConfig(
@@ -236,23 +235,29 @@ def process_job(
                     f"with {len(previous_entries_by_day)} day entries"
                 )
         
-        # Identity validation for single uploads (Case B: employee_id is already set)
+        # Identity diagnostics for assigned employee vs extracted passport
         identity_mismatch = False
-        if work_card.employee_id and extracted_passport_id:
-            # Fetch the assigned employee to compare passport IDs
+        identity_reason = None
+        if work_card.employee_id:
             assigned_employee = employee_repo.get_by_id(work_card.employee_id)
-            if assigned_employee and assigned_employee.passport_id:
-                assigned_normalized_passport = normalize_passport(assigned_employee.passport_id)
-                extracted_normalized_passport = normalize_passport(extracted_passport_id)
-                if assigned_normalized_passport and extracted_normalized_passport and assigned_normalized_passport != extracted_normalized_passport:
-                    identity_mismatch = True
-                    logger.warning(
-                        f"IDENTITY MISMATCH for work card {work_card.id}: "
-                        f"Assigned employee passport '{assigned_employee.passport_id}' != "
-                        f"Extracted passport '{extracted_passport_id}'"
-                    )
-                else:
-                    logger.info(f"Identity validated: passport IDs match for employee {assigned_employee.full_name}")
+            assigned_passport_id = assigned_employee.passport_id if assigned_employee else None
+            identity_diagnostics = diagnose_identity_mismatch(
+                assigned_passport_id=assigned_passport_id,
+                extracted_passport_id=extracted_passport_id,
+            )
+            identity_mismatch = identity_diagnostics['identity_mismatch']
+            identity_reason = identity_diagnostics['identity_reason']
+
+            if identity_mismatch:
+                logger.warning(
+                    f"IDENTITY MISMATCH for work card {work_card.id}: "
+                    f"assigned='{assigned_passport_id}' extracted='{extracted_passport_id}' "
+                    f"reason={identity_reason}"
+                )
+            else:
+                logger.info(
+                    f"Identity validation for work card {work_card.id}: reason={identity_reason}"
+                )
         
         # Create day entries incrementally: add only new/different slots.
         day_entries_created = 0
@@ -317,6 +322,7 @@ def process_job(
             'normalized_result_jsonb': {
                 'entries': entries,
                 'identity_mismatch': identity_mismatch,
+                'identity_reason': identity_reason,
                 'match_is_exact': match_is_exact,
                 'matched_normalized_passport_id': matched_normalized_passport_id,
             },
