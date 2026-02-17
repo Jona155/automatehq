@@ -64,10 +64,18 @@ class HeaderInfo(BaseModel):
 
 class PassportIdCandidate(BaseModel):
     """Possible passport IDs detected on the image with location hinting."""
-    value: str = Field(..., description="Raw detected passport/ID candidate text")
-    location_hint: Optional[str] = Field(
+    raw: str = Field(..., description="Raw detected passport/ID candidate text")
+    normalized: Optional[str] = Field(
         None,
-        description="Where this value appears (e.g. header, top-right, near name field)",
+        description="Alphanumeric normalized value derived from raw candidate text",
+    )
+    source_region: Optional[str] = Field(
+        None,
+        description="Where this value appears (e.g. header, footer, near name/signature)",
+    )
+    confidence: Optional[float] = Field(
+        None,
+        description="Confidence score between 0 and 1 for this candidate",
     )
 
 
@@ -78,7 +86,7 @@ class SinglePassExtraction(BaseModel):
         default_factory=list,
         description="All visible passport/ID candidates with approximate location hints",
     )
-    normalized_passport_id: Optional[str] = Field(
+    selected_passport_id_normalized: Optional[str] = Field(
         None,
         description="Best normalized passport/ID value selected from candidates",
     )
@@ -404,8 +412,10 @@ def extract_full_image_single_pass(image_bytes: bytes) -> Optional[SinglePassExt
                     "You extract structured data from scanned handwritten work cards. "
                     "Return day entries only where a day label is visibly present (1..31). "
                     "Never infer day numbers from table position. "
+                    "Scan the entire page before answering, including header, footer, margins, "
+                    "areas near signature/name fields, and handwritten notes. "
                     "Also return employee name, all visible passport/ID candidates, and the best "
-                    "normalized passport/ID value."
+                    "selected normalized passport/ID value."
                 )
             },
             {
@@ -415,9 +425,12 @@ def extract_full_image_single_pass(image_bytes: bytes) -> Optional[SinglePassExt
                         "type": "text",
                         "text": (
                             "Extract from this full image in one response: employee_name, "
-                            "passport_id_candidates (with location_hint), normalized_passport_id, "
+                            "passport_id_candidates [{raw, normalized, source_region, confidence}], "
+                            "selected_passport_id_normalized, "
                             "and day entries. Include only days that are explicitly visible. "
-                            "Use nulls for missing fields."
+                            "Use nulls for missing fields. Carefully inspect full page areas: "
+                            "header, footer, margins, near signature/name fields, and handwritten notes; "
+                            "do not only focus on expected form fields."
                         )
                     },
                     {
@@ -453,22 +466,32 @@ def _build_result_from_single_pass(single_pass: SinglePassExtraction) -> Dict[st
             best_by_day[day] = entry_dict
 
     normalized_from_candidates = [
-        _normalize_passport_id(candidate.value)
+        _normalize_passport_id(candidate.normalized or candidate.raw)
         for candidate in single_pass.passport_id_candidates
-        if candidate.value
+        if candidate.raw
     ]
     normalized_from_candidates = [v for v in normalized_from_candidates if v]
 
-    normalized_passport_id = _normalize_passport_id(single_pass.normalized_passport_id)
-    if not normalized_passport_id and normalized_from_candidates:
-        normalized_passport_id = normalized_from_candidates[0]
+    selected_passport_id_normalized = _normalize_passport_id(single_pass.selected_passport_id_normalized)
+    if not selected_passport_id_normalized and normalized_from_candidates:
+        selected_passport_id_normalized = normalized_from_candidates[0]
+
+    candidate_list = []
+    for candidate in single_pass.passport_id_candidates:
+        candidate_normalized = _normalize_passport_id(candidate.normalized or candidate.raw)
+        candidate_list.append({
+            "raw": candidate.raw,
+            "normalized": candidate_normalized,
+            "source_region": candidate.source_region,
+            "confidence": candidate.confidence,
+        })
 
     return {
         "entries": [best_by_day[day] for day in sorted(best_by_day.keys())],
         "extracted_employee_name": single_pass.employee_name,
-        "extracted_passport_id": normalized_passport_id,
-        "passport_id_candidates": [c.model_dump() for c in single_pass.passport_id_candidates],
-        "normalized_passport_id": normalized_passport_id,
+        "extracted_passport_id": selected_passport_id_normalized,
+        "passport_id_candidates": candidate_list,
+        "selected_passport_id_normalized": selected_passport_id_normalized,
     }
 
 
@@ -547,7 +570,7 @@ def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
                 if header_result.passport_id:
                     fallback_result['extracted_passport_id'] = _normalize_passport_id(header_result.passport_id)
 
-            fallback_result['normalized_passport_id'] = _normalize_passport_id(
+            fallback_result['selected_passport_id_normalized'] = _normalize_passport_id(
                 fallback_result.get('extracted_passport_id')
             )
             fallback_result['passport_id_candidates'] = []
@@ -559,6 +582,8 @@ def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
             }
 
         result['raw_result'] = raw_result
+        result['raw_result']['selected_passport_id_normalized'] = result.get('selected_passport_id_normalized')
+        result['raw_result']['passport_id_candidates'] = result.get('passport_id_candidates', [])
         result['model_name'] = PRIMARY_VISION_MODEL
         result['fallback_used'] = fallback_used
 
