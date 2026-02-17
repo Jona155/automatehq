@@ -390,7 +390,7 @@ export default function SiteDetailsPage() {
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50'
             }`}
           >
-            W.C Review
+            סקירת כרטיסי עבודה
           </button>
           <button
             onClick={() => setActiveTab('summary')}
@@ -492,7 +492,7 @@ export default function SiteDetailsPage() {
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 transition-colors"
               >
                 <span className="material-symbols-outlined text-[18px]">open_in_new</span>
-                <span>Open Review Mode</span>
+                <span>פתח מצב סקירה</span>
               </button>
             </div>
             <WorkCardReviewTab
