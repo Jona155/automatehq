@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from pydantic import BaseModel, Field
 from openai import OpenAI
-from passport_normalization import normalize_passport, normalize_passport_candidates
+from passport_normalization import normalize_passport
 
 logger = logging.getLogger('extraction_worker.extractor')
 
@@ -459,50 +459,33 @@ def _build_result_from_single_pass(single_pass: SinglePassExtraction) -> Dict[st
         if not existing or _entry_quality_score(entry_dict) > _entry_quality_score(existing):
             best_by_day[day] = entry_dict
 
-<<<<<<< HEAD
     normalized_from_candidates = [
-        _normalize_passport_id(candidate.normalized or candidate.raw)
+        normalize_passport(candidate.normalized or candidate.raw)
         for candidate in single_pass.passport_id_candidates
         if candidate.raw
     ]
     normalized_from_candidates = [v for v in normalized_from_candidates if v]
 
-    selected_passport_id_normalized = _normalize_passport_id(single_pass.selected_passport_id_normalized)
+    selected_passport_id_normalized = normalize_passport(single_pass.selected_passport_id_normalized)
     if not selected_passport_id_normalized and normalized_from_candidates:
         selected_passport_id_normalized = normalized_from_candidates[0]
 
     candidate_list = []
     for candidate in single_pass.passport_id_candidates:
-        candidate_normalized = _normalize_passport_id(candidate.normalized or candidate.raw)
+        candidate_normalized = normalize_passport(candidate.normalized or candidate.raw)
         candidate_list.append({
             "raw": candidate.raw,
             "normalized": candidate_normalized,
             "source_region": candidate.source_region,
             "confidence": candidate.confidence,
         })
-=======
-    normalized_from_candidates = normalize_passport_candidates(
-        [candidate.value for candidate in single_pass.passport_id_candidates if candidate.value]
-    )
-
-    normalized_passport_id = normalize_passport(single_pass.normalized_passport_id)
-    if not normalized_passport_id and normalized_from_candidates:
-        normalized_passport_id = normalized_from_candidates[0]
->>>>>>> 7de98cd6005594ecc922caa5b3b2044c51fedbf8
 
     return {
         "entries": [best_by_day[day] for day in sorted(best_by_day.keys())],
         "extracted_employee_name": single_pass.employee_name,
-<<<<<<< HEAD
         "extracted_passport_id": selected_passport_id_normalized,
         "passport_id_candidates": candidate_list,
         "selected_passport_id_normalized": selected_passport_id_normalized,
-=======
-        "extracted_passport_id": normalized_passport_id,
-        "passport_id_candidates": [c.model_dump() for c in single_pass.passport_id_candidates],
-        "normalized_passport_candidates": normalized_from_candidates,
-        "normalized_passport_id": normalized_passport_id,
->>>>>>> 7de98cd6005594ecc922caa5b3b2044c51fedbf8
     }
 
 
@@ -581,11 +564,7 @@ def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
                 if header_result.passport_id:
                     fallback_result['extracted_passport_id'] = normalize_passport(header_result.passport_id)
 
-<<<<<<< HEAD
-            fallback_result['selected_passport_id_normalized'] = _normalize_passport_id(
-=======
-            fallback_result['normalized_passport_id'] = normalize_passport(
->>>>>>> 7de98cd6005594ecc922caa5b3b2044c51fedbf8
+            fallback_result['selected_passport_id_normalized'] = normalize_passport(
                 fallback_result.get('extracted_passport_id')
             )
             fallback_result['passport_id_candidates'] = []
