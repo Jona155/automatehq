@@ -1,6 +1,8 @@
 from typing import Optional, List
 from uuid import UUID
-from sqlalchemy import or_, func
+from sqlalchemy import func
+import re
+import unicodedata
 from .base import BaseRepository
 from ..models.sites import Employee
 
@@ -114,8 +116,74 @@ class EmployeeRepository(BaseRepository[Employee]):
         
         if site_id:
             query = query.filter_by(site_id=site_id)
-        
-        return query.all()
+
+        direct_matches = query.all()
+        if direct_matches:
+            return direct_matches
+
+        # Fuzzy fallback for OCR one-letter drift in name extraction.
+        candidate_query = self.session.query(Employee).filter(
+            Employee.business_id == business_id
+        )
+        if site_id:
+            candidate_query = candidate_query.filter_by(site_id=site_id)
+        candidates = candidate_query.all()
+        if not candidates:
+            return []
+
+        def normalize_name(value: str) -> str:
+            cleaned = unicodedata.normalize('NFKD', value or '')
+            cleaned = ''.join(ch for ch in cleaned if not unicodedata.combining(ch))
+            cleaned = cleaned.lower()
+            return re.sub(r'[^a-z0-9]+', '', cleaned)
+
+        def weighted_distance(left: str, right: str) -> float:
+            if left == right:
+                return 0.0
+            if not left:
+                return float(len(right))
+            if not right:
+                return float(len(left))
+            costs = {
+                frozenset(('m', 'n')): 0.5,
+                frozenset(('o', '0')): 0.5,
+                frozenset(('i', '1')): 0.5,
+                frozenset(('s', '5')): 0.5,
+                frozenset(('b', '8')): 0.5,
+            }
+            rows = len(left) + 1
+            cols = len(right) + 1
+            dp = [[0.0] * cols for _ in range(rows)]
+            for i in range(rows):
+                dp[i][0] = float(i)
+            for j in range(cols):
+                dp[0][j] = float(j)
+            for i in range(1, rows):
+                for j in range(1, cols):
+                    sub_cost = costs.get(frozenset((left[i - 1], right[j - 1])), 1.0) if left[i - 1] != right[j - 1] else 0.0
+                    dp[i][j] = min(
+                        dp[i - 1][j] + 1.0,
+                        dp[i][j - 1] + 1.0,
+                        dp[i - 1][j - 1] + sub_cost,
+                    )
+            return dp[-1][-1]
+
+        normalized_input = normalize_name(name)
+        if not normalized_input:
+            return []
+
+        scored = []
+        for candidate in candidates:
+            normalized_candidate = normalize_name(candidate.full_name or '')
+            if not normalized_candidate:
+                continue
+            distance = weighted_distance(normalized_input, normalized_candidate)
+            length_base = max(len(normalized_input), len(normalized_candidate))
+            similarity = 1.0 - (distance / float(length_base)) if length_base else 0.0
+            scored.append((candidate, similarity))
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return [candidate for candidate, similarity in scored if similarity >= 0.82]
     
     def get_active_employees(self, business_id: UUID) -> List[Employee]:
         """
