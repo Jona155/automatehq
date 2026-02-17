@@ -179,7 +179,7 @@ def process_job(
         
         logger.info(f"Fetched image ({len(image_bytes)} bytes) for work card {job.work_card_id}")
         
-        # Run extraction (OpenCV + GPT-4o Vision)
+        # Run extraction (OpenCV + OpenAI Vision)
         extraction_result = extract_from_image_bytes(image_bytes)
         
         if not extraction_result:
@@ -188,7 +188,7 @@ def process_job(
         
         entries = extraction_result.get('entries', [])
         raw_result = extraction_result.get('raw_result', {})
-        model_name = extraction_result.get('model_name', 'gpt-4o')
+        model_name = extraction_result.get('model_name', 'gpt-5')
         fallback_used = extraction_result.get('fallback_used', False)
         
         logger.info(f"Extracted {len(entries)} day entries")
