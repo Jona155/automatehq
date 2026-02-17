@@ -189,6 +189,7 @@ def process_job(
         entries = extraction_result.get('entries', [])
         raw_result = extraction_result.get('raw_result', {})
         model_name = extraction_result.get('model_name', 'gpt-4o')
+        fallback_used = extraction_result.get('fallback_used', False)
         
         logger.info(f"Extracted {len(entries)} day entries")
         
@@ -311,6 +312,7 @@ def process_job(
             'match_method': match_method,
             'match_confidence': match_confidence,
             'model_name': model_name,
+            'fallback_used': fallback_used,
             'pipeline_version': PIPELINE_VERSION,
         })
         

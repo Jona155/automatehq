@@ -1,5 +1,5 @@
 """
-Image extraction module — OpenCV table cropping + GPT-4o Vision structured extraction.
+Image extraction module — single-pass Vision extraction with OpenCV fallback.
 
 Adapted from poc-worker/app.py for production use.
 """
@@ -17,10 +17,11 @@ from openai import OpenAI
 logger = logging.getLogger('extraction_worker.extractor')
 
 # Pipeline version for tracking
-PIPELINE_VERSION = "1.2.0"
+PIPELINE_VERSION = "1.3.0"
 
 # OpenAI configuration
-GPT_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+PRIMARY_VISION_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1")
+FALLBACK_VISION_MODEL = os.environ.get("OPENAI_FALLBACK_MODEL", PRIMARY_VISION_MODEL)
 
 # Initialize OpenAI client (uses OPENAI_API_KEY from environment)
 _client: Optional[OpenAI] = None
@@ -59,6 +60,32 @@ class HeaderInfo(BaseModel):
     """Header metadata from the work card (full image)."""
     employee_name: Optional[str] = Field(None, description="Employee name if visible on card")
     passport_id: Optional[str] = Field(None, description="Passport/ID number if visible on card")
+
+
+class PassportIdCandidate(BaseModel):
+    """Possible passport IDs detected on the image with location hinting."""
+    value: str = Field(..., description="Raw detected passport/ID candidate text")
+    location_hint: Optional[str] = Field(
+        None,
+        description="Where this value appears (e.g. header, top-right, near name field)",
+    )
+
+
+class SinglePassExtraction(BaseModel):
+    """Unified extraction result from one full-image vision call."""
+    employee_name: Optional[str] = Field(None, description="Employee name if visible on card")
+    passport_id_candidates: List[PassportIdCandidate] = Field(
+        default_factory=list,
+        description="All visible passport/ID candidates with approximate location hints",
+    )
+    normalized_passport_id: Optional[str] = Field(
+        None,
+        description="Best normalized passport/ID value selected from candidates",
+    )
+    entries: List[WorkRow] = Field(
+        default_factory=list,
+        description="List of extracted day entries for visible day labels only",
+    )
 
 
 # ===========================================
@@ -167,7 +194,7 @@ def extract_single_crop(crop_img: np.ndarray) -> Optional[WorkTable]:
     logger.debug("Sending crop to GPT-4o")
     
     response = client.beta.chat.completions.parse(
-        model=GPT_MODEL,
+        model=FALLBACK_VISION_MODEL,
         messages=[
             {
                 "role": "system",
@@ -262,7 +289,7 @@ def extract_header_from_full_image(image_bytes: bytes) -> Optional[HeaderInfo]:
     logger.debug("Sending full image to GPT-4o for header extraction")
 
     response = client.beta.chat.completions.parse(
-        model=GPT_MODEL,
+        model=FALLBACK_VISION_MODEL,
         messages=[
             {
                 "role": "system",
@@ -357,6 +384,109 @@ def extract_data_from_crops(crop_images: List[np.ndarray]) -> Dict[str, Any]:
     }
 
 
+def extract_full_image_single_pass(image_bytes: bytes) -> Optional[SinglePassExtraction]:
+    """Send full image once to a stronger vision model for unified extraction."""
+    client = get_openai_client()
+
+    file_bytes = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Could not decode image for extraction")
+
+    base64_image = encode_image_to_base64(img)
+
+    response = client.beta.chat.completions.parse(
+        model=PRIMARY_VISION_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You extract structured data from scanned handwritten work cards. "
+                    "Return day entries only where a day label is visibly present (1..31). "
+                    "Never infer day numbers from table position. "
+                    "Also return employee name, all visible passport/ID candidates, and the best "
+                    "normalized passport/ID value."
+                )
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Extract from this full image in one response: employee_name, "
+                            "passport_id_candidates (with location_hint), normalized_passport_id, "
+                            "and day entries. Include only days that are explicitly visible. "
+                            "Use nulls for missing fields."
+                        )
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                    }
+                ]
+            }
+        ],
+        response_format=SinglePassExtraction
+    )
+
+    return response.choices[0].message.parsed
+
+
+def _normalize_passport_id(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    normalized = re.sub(r"[^A-Z0-9]", "", value.upper())
+    return normalized or None
+
+
+def _build_result_from_single_pass(single_pass: SinglePassExtraction) -> Dict[str, Any]:
+    best_by_day: Dict[int, Dict[str, Any]] = {}
+    for entry in single_pass.entries:
+        entry_dict = entry.model_dump()
+        day = entry_dict.get("day")
+        if not isinstance(day, int) or day < 1 or day > 31:
+            continue
+
+        existing = best_by_day.get(day)
+        if not existing or _entry_quality_score(entry_dict) > _entry_quality_score(existing):
+            best_by_day[day] = entry_dict
+
+    normalized_from_candidates = [
+        _normalize_passport_id(candidate.value)
+        for candidate in single_pass.passport_id_candidates
+        if candidate.value
+    ]
+    normalized_from_candidates = [v for v in normalized_from_candidates if v]
+
+    normalized_passport_id = _normalize_passport_id(single_pass.normalized_passport_id)
+    if not normalized_passport_id and normalized_from_candidates:
+        normalized_passport_id = normalized_from_candidates[0]
+
+    return {
+        "entries": [best_by_day[day] for day in sorted(best_by_day.keys())],
+        "extracted_employee_name": single_pass.employee_name,
+        "extracted_passport_id": normalized_passport_id,
+        "passport_id_candidates": [c.model_dump() for c in single_pass.passport_id_candidates],
+        "normalized_passport_id": normalized_passport_id,
+    }
+
+
+def _single_pass_result_is_valid(result: Dict[str, Any]) -> bool:
+    entries = result.get("entries", [])
+    if not isinstance(entries, list):
+        return False
+
+    seen_days = set()
+    for entry in entries:
+        day = entry.get("day")
+        if not isinstance(day, int) or day < 1 or day > 31 or day in seen_days:
+            return False
+        seen_days.add(day)
+
+    return True
+
+
 # ===========================================
 # Main Entry Point
 # ===========================================
@@ -366,9 +496,9 @@ def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
     Main extraction function — processes image bytes through full pipeline.
     
     Pipeline:
-    1. OpenCV: Detect and crop table regions
-    2. GPT-4o Vision: Extract structured data from each crop
-    3. Combine and normalize results
+    1. Single-pass full-image extraction using stronger vision model
+    2. Validate output
+    3. Optional OpenCV + multi-call fallback if validation fails
     
     Args:
         image_bytes: Raw image bytes
@@ -380,39 +510,58 @@ def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
         - extracted_passport_id: Passport/ID if found
         - raw_result: Original combined response
         - model_name: Model used for extraction
+        - fallback_used: Whether OpenCV fallback path was required
         
         Returns None on complete failure
     """
     try:
-        # Phase 1: OpenCV table cropping
-        logger.info("Starting image processing...")
-        crops = crop_tables_from_image_bytes(image_bytes)
+        fallback_used = False
 
-        # Phase 2: GPT-4o Vision extraction (tables)
-        logger.info("Starting data extraction...")
-        result = extract_data_from_crops(crops)
+        logger.info("Starting single-pass full-image extraction...")
+        single_pass = extract_full_image_single_pass(image_bytes)
+        if not single_pass:
+            raise ValueError("Single-pass extraction returned no result")
 
-        # Phase 3: GPT-4o Vision extraction (full image header)
-        header_result = None
-        try:
-            header_result = extract_header_from_full_image(image_bytes)
-        except Exception as e:
-            logger.error(f"Header extraction failed: {e}")
-
-        if header_result:
-            if header_result.employee_name:
-                result['extracted_employee_name'] = header_result.employee_name
-            if header_result.passport_id:
-                result['extracted_passport_id'] = header_result.passport_id
-        
-        # Add metadata
-        result['raw_result'] = {
-            'num_crops': len(crops),
-            'entries': result.get('entries', []),
-            'header_extraction': header_result.model_dump() if header_result else None,
+        result = _build_result_from_single_pass(single_pass)
+        raw_result: Dict[str, Any] = {
+            "strategy": "single_pass_full_image",
+            "single_pass": single_pass.model_dump(),
         }
-        result['model_name'] = GPT_MODEL
-        
+
+        if not _single_pass_result_is_valid(result):
+            fallback_used = True
+            logger.warning("Single-pass extraction failed validation; using OpenCV fallback")
+
+            crops = crop_tables_from_image_bytes(image_bytes)
+            fallback_result = extract_data_from_crops(crops)
+
+            header_result = None
+            try:
+                header_result = extract_header_from_full_image(image_bytes)
+            except Exception as e:
+                logger.error(f"Header extraction failed during fallback: {e}")
+
+            if header_result:
+                if header_result.employee_name:
+                    fallback_result['extracted_employee_name'] = header_result.employee_name
+                if header_result.passport_id:
+                    fallback_result['extracted_passport_id'] = _normalize_passport_id(header_result.passport_id)
+
+            fallback_result['normalized_passport_id'] = _normalize_passport_id(
+                fallback_result.get('extracted_passport_id')
+            )
+            fallback_result['passport_id_candidates'] = []
+            result = fallback_result
+            raw_result["fallback"] = {
+                "num_crops": len(crops),
+                "entries": result.get("entries", []),
+                "header_extraction": header_result.model_dump() if header_result else None,
+            }
+
+        result['raw_result'] = raw_result
+        result['model_name'] = PRIMARY_VISION_MODEL
+        result['fallback_used'] = fallback_used
+
         return result
         
     except ValueError as e:
