@@ -1,66 +1,124 @@
 """
 Employee matching module — matches extracted passport ID to employee records.
 
-Matching Strategy (per project requirements):
-1. Primary: Exact passport ID match
-2. Fallback: Leave unassigned (admin assigns in UI)
+Matching Strategy:
+1. Exact normalized passport ID match
+2. Alternate normalized passport candidate match
+3. Optional high-confidence name+site fallback (non-exact)
 """
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Iterable
 from uuid import UUID
 
+from passport_normalization import normalize_passport, normalize_passport_candidates
+
 logger = logging.getLogger('extraction_worker.matcher')
+
+
+def _match_by_passport_candidates(
+    normalized_values: Iterable[str],
+    business_id: UUID,
+    employee_repo: Any,
+) -> Optional[Dict[str, Any]]:
+    seen = set()
+    for normalized_value in normalized_values:
+        if not normalized_value or normalized_value in seen:
+            continue
+        seen.add(normalized_value)
+
+        employee = employee_repo.get_by_passport(normalized_value, business_id=business_id)
+        if not employee:
+            continue
+
+        logger.info(
+            "Matched employee '%s' (ID: %s) using normalized passport '%s'",
+            employee.full_name,
+            employee.id,
+            normalized_value,
+        )
+        return {
+            'employee_id': employee.id,
+            'employee_name': employee.full_name,
+            'normalized_passport_id': normalized_value,
+        }
+
+    return None
+
+
+def match_employee(
+    passport_id: Optional[str],
+    passport_candidates: Optional[Iterable[str]],
+    business_id: UUID,
+    employee_repo: Any,
+    employee_name: Optional[str] = None,
+    site_id: Optional[UUID] = None,
+    enable_name_site_fallback: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Attempt matching using normalized passport and optional name+site fallback."""
+    normalized_primary = normalize_passport(passport_id)
+    normalized_candidates = normalize_passport_candidates(passport_candidates or [])
+
+    if normalized_primary:
+        logger.info("Attempting primary normalized passport match: %s", normalized_primary)
+        exact_match = _match_by_passport_candidates(
+            [normalized_primary],
+            business_id=business_id,
+            employee_repo=employee_repo,
+        )
+        if exact_match:
+            return {
+                **exact_match,
+                'method': 'passport_normalized_exact',
+                'confidence': 1.0,
+                'is_exact': True,
+            }
+
+    if normalized_candidates:
+        logger.info("Attempting candidate passport matches (%s candidates)", len(normalized_candidates))
+        candidate_match = _match_by_passport_candidates(
+            normalized_candidates,
+            business_id=business_id,
+            employee_repo=employee_repo,
+        )
+        if candidate_match:
+            return {
+                **candidate_match,
+                'method': 'passport_candidate_exact',
+                'confidence': 0.95,
+                'is_exact': True,
+            }
+
+    if enable_name_site_fallback:
+        name_site_match = match_employee_by_name(
+            employee_name=employee_name,
+            business_id=business_id,
+            site_id=site_id,
+            employee_repo=employee_repo,
+        )
+        if name_site_match:
+            return {
+                **name_site_match,
+                'method': 'name_site_high_confidence_fallback',
+                'confidence': 0.85,
+                'is_exact': False,
+            }
+
+    logger.info("No employee match found for normalized passport/name inputs")
+    return None
 
 
 def match_employee_by_passport(
     passport_id: Optional[str],
     business_id: UUID,
-    employee_repo: Any  # EmployeeRepository
+    employee_repo: Any,
 ) -> Optional[Dict[str, Any]]:
-    """
-    Match extracted passport ID to an employee in the business.
-    
-    Args:
-        passport_id: Extracted passport/ID number from work card
-        business_id: Business UUID for tenant scoping
-        employee_repo: EmployeeRepository instance
-        
-    Returns:
-        Dict with match result:
-        - employee_id: Matched employee UUID
-        - method: How the match was made ('passport_exact')
-        - confidence: Match confidence (1.0 for exact match)
-        
-        Returns None if no match found
-    """
-    if not passport_id:
-        logger.debug("No passport ID provided, skipping match")
-        return None
-    
-    # Clean up passport ID (remove whitespace, normalize)
-    passport_id = passport_id.strip()
-    
-    if not passport_id:
-        logger.debug("Empty passport ID after cleanup, skipping match")
-        return None
-    
-    logger.info(f"Attempting to match passport ID: {passport_id}")
-    
-    # Try exact passport match within the business
-    employee = employee_repo.get_by_passport(passport_id, business_id=business_id)
-    
-    if employee:
-        logger.info(f"Matched employee '{employee.full_name}' (ID: {employee.id})")
-        return {
-            'employee_id': employee.id,
-            'employee_name': employee.full_name,
-            'method': 'passport_exact',
-            'confidence': 1.0,
-        }
-    
-    # No match found
-    logger.info(f"No employee found with passport ID: {passport_id}")
-    return None
+    """Backward-compatible wrapper for passport-only matching calls."""
+    return match_employee(
+        passport_id=passport_id,
+        passport_candidates=None,
+        business_id=business_id,
+        employee_repo=employee_repo,
+    )
 
 
 def match_employee_by_name(
@@ -69,52 +127,34 @@ def match_employee_by_name(
     site_id: Optional[UUID],
     employee_repo: Any  # EmployeeRepository
 ) -> Optional[Dict[str, Any]]:
-    """
-    Attempt to match by employee name (fallback method, lower confidence).
-    
-    Note: This is a secondary matching method and is not currently used
-    in the main pipeline. Passport matching is preferred.
-    
-    Args:
-        employee_name: Extracted employee name from work card
-        business_id: Business UUID for tenant scoping
-        site_id: Optional site UUID to narrow search
-        employee_repo: EmployeeRepository instance
-        
-    Returns:
-        Dict with match result or None if no match/ambiguous
-    """
+    """Attempt to match by employee name and optional site (fallback method)."""
     if not employee_name:
         return None
-    
+
     employee_name = employee_name.strip()
-    
+
     if not employee_name:
         return None
-    
+
     logger.info(f"Attempting to match by name: {employee_name}")
-    
-    # Search for employees by name
+
     matches = employee_repo.search_by_name(
         name=employee_name,
         business_id=business_id,
         site_id=site_id
     )
-    
+
     if not matches:
         logger.info(f"No employees found matching name: {employee_name}")
         return None
-    
+
     if len(matches) == 1:
         employee = matches[0]
         logger.info(f"Single name match found: '{employee.full_name}' (ID: {employee.id})")
         return {
             'employee_id': employee.id,
             'employee_name': employee.full_name,
-            'method': 'name_exact',
-            'confidence': 0.8,  # Lower confidence for name matching
         }
-    
-    # Multiple matches - too ambiguous
+
     logger.warning(f"Multiple employees ({len(matches)}) match name: {employee_name}")
     return None
