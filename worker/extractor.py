@@ -21,7 +21,7 @@ logger = logging.getLogger('extraction_worker.extractor')
 PIPELINE_VERSION = "1.3.0"
 
 # OpenAI configuration
-PRIMARY_VISION_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1")
+PRIMARY_VISION_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5")
 FALLBACK_VISION_MODEL = os.environ.get("OPENAI_FALLBACK_MODEL", PRIMARY_VISION_MODEL)
 
 # Initialize OpenAI client (uses OPENAI_API_KEY from environment)
