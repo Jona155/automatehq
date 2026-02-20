@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSidebar } from '../context/SidebarContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { useState } from 'react';
 
 const SIDEBAR_WIDTH_EXPANDED = 'w-64';
@@ -9,6 +10,7 @@ const SIDEBAR_WIDTH_COLLAPSED = 'w-16';
 export default function Sidebar() {
   const { logout, business } = useAuth();
   const { collapsed, toggle } = useSidebar();
+  const { isAdmin } = usePermissions();
   const [isAdminOpen, setIsAdminOpen] = useState(true);
 
   const base = `/${business?.code || 'default'}`;
@@ -67,7 +69,7 @@ export default function Sidebar() {
           {!collapsed && <span>אתרים</span>}
         </NavLink>
 
-        {!collapsed && (
+        {isAdmin && !collapsed && (
           <div className="pt-4 pb-2">
             <button
               type="button"
@@ -80,7 +82,7 @@ export default function Sidebar() {
           </div>
         )}
 
-        {(!collapsed ? isAdminOpen : true) && (
+        {isAdmin && (!collapsed ? isAdminOpen : true) && (
           <div className="space-y-1">
             <NavLink to={`${base}/users`} className={linkClass} title={collapsed ? 'משתמשים' : undefined}>
               <span className="material-symbols-outlined text-[20px] shrink-0">person</span>

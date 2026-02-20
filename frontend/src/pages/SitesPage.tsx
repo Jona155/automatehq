@@ -10,6 +10,7 @@ import {
 } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
+import { usePermissions } from '../hooks/usePermissions';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
 import LoadingIndicator from '../components/LoadingIndicator';
@@ -29,6 +30,7 @@ const getDefaultMonth = () => {
 
 export default function SitesPage() {
   const { isAuthenticated, user } = useAuth();
+  const { isAdmin } = usePermissions();
   const [sites, setSites] = useState<Site[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -324,7 +326,7 @@ export default function SitesPage() {
           <h2 className="text-[#111518] dark:text-white text-3xl font-bold">ניהול אתרים</h2>
           <p className="text-[#617989] dark:text-slate-400 mt-1">נהל את אתרי העבודה שלך בארגון</p>
         </div>
-        <div className="relative" ref={actionsRef} dir="rtl">
+        {isAdmin && <div className="relative" ref={actionsRef} dir="rtl">
           <button
             onClick={() => setActionsOpen((prev) => !prev)}
             className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors font-medium text-sm bg-white dark:bg-transparent"
@@ -377,7 +379,7 @@ export default function SitesPage() {
               </button>
             </div>
           )}
-        </div>
+        </div>}
       </div>
       <Modal
         isOpen={summaryExportOpen}

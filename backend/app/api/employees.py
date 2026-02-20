@@ -4,7 +4,7 @@ import traceback
 from flask import Blueprint, request, g
 from ..repositories.employee_repository import EmployeeRepository
 from .utils import api_response, model_to_dict, models_to_list
-from ..auth_utils import token_required
+from ..auth_utils import token_required, role_required
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,7 @@ def get_employees():
 
 @employees_bp.route('', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def create_employee():
     """Create a new employee in the current business."""
     data = request.get_json()
@@ -103,6 +104,7 @@ def get_employee(employee_id):
 
 @employees_bp.route('/<uuid:employee_id>', methods=['PUT'])
 @token_required
+@role_required('ADMIN')
 def update_employee(employee_id):
     """Update an employee (must belong to current business)."""
     data = request.get_json()
@@ -138,6 +140,7 @@ def update_employee(employee_id):
 
 @employees_bp.route('/<uuid:employee_id>', methods=['DELETE'])
 @token_required
+@role_required('ADMIN')
 def delete_employee(employee_id):
     """Delete an employee (must belong to current business)."""
     # Verify ownership
@@ -158,6 +161,7 @@ def delete_employee(employee_id):
 
 @employees_bp.route('/<uuid:employee_id>/deactivate', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def deactivate_employee(employee_id):
     """Deactivate an employee (must belong to current business)."""
     try:
@@ -173,6 +177,7 @@ def deactivate_employee(employee_id):
 
 @employees_bp.route('/<uuid:employee_id>/activate', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def activate_employee(employee_id):
     """Activate an employee (must belong to current business)."""
     try:

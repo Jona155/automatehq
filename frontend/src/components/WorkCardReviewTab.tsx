@@ -12,6 +12,7 @@ interface WorkCardReviewTabProps {
   selectedMonth: string;
   onMonthChange: (value: string) => void;
   monthStorageKey: string;
+  isAdmin?: boolean;
 }
 
 // Get number of days in a month
@@ -143,7 +144,7 @@ const useDayImageZoneMapping = (extraction: WorkCardExtraction | null) => {
   }, [extraction]);
 };
 
-function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey }: WorkCardReviewTabProps) {
+function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey, isAdmin = true }: WorkCardReviewTabProps) {
   const AUTO_ADVANCE_STORAGE_KEY = 'workCardReview:autoAdvance';
   const [workCards, setWorkCards] = useState<WorkCard[]>([]);
   const [selectedCard, setSelectedCard] = useState<WorkCard | null>(null);
@@ -1433,7 +1434,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           <span>התנגשויות ({unresolvedConflictCount > 0 ? unresolvedConflictCount : conflictCount})</span>
                         </button>
                       )}
-                      <div className="flex items-center gap-2">
+                      {isAdmin && <div className="flex items-center gap-2">
                         <button
                           onClick={handlePrimaryReviewAction}
                           disabled={isSaving || !selectedCard.employee_id || (selectedCard.review_status === 'APPROVED' && !hasUnsavedChanges)}
@@ -1481,7 +1482,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           <span className="material-symbols-outlined text-base">close</span>
                           <span>דחה</span>
                         </button>
-                      </div>
+                      </div>}
                     </div>
                   </div>
                 </div>
@@ -1489,7 +1490,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
               {showDetailsDrawer && (
                 <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
-                    <button
+                    {isAdmin && <button
                       type="button"
                       onClick={handleTriggerExtraction}
                       disabled={
@@ -1514,7 +1515,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         : extraction?.status === 'DONE'
                         ? 'חולץ'
                         : 'חלץ נתונים'}
-                    </button>
+                    </button>}
                     <span className={`inline-flex items-center px-2.5 py-1 rounded-full font-medium ${
                       selectedCard.review_status === 'APPROVED'
                         ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
@@ -1882,7 +1883,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     value={entry.from_time}
                                     onChange={(e) => handleEntryChange(index, 'from_time', e.target.value)}
                                     onFocus={() => activateDay(entry.day_of_month)}
-                                    disabled={entry.isLocked}
+                                    disabled={entry.isLocked || !isAdmin}
                                     className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary"
                                     aria-label={`שעת כניסה יום ${entry.day_of_month}`}
                                   />
@@ -1893,7 +1894,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     value={entry.to_time}
                                     onChange={(e) => handleEntryChange(index, 'to_time', e.target.value)}
                                     onFocus={() => activateDay(entry.day_of_month)}
-                                    disabled={entry.isLocked}
+                                    disabled={entry.isLocked || !isAdmin}
                                     className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary"
                                     aria-label={`שעת יציאה יום ${entry.day_of_month}`}
                                   />
@@ -1907,7 +1908,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     value={entry.total_hours}
                                     onChange={(e) => handleEntryChange(index, 'total_hours', e.target.value)}
                                     onFocus={() => activateDay(entry.day_of_month)}
-                                    disabled={entry.isLocked}
+                                    disabled={entry.isLocked || !isAdmin}
                                     className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary"
                                     placeholder="0"
                                     aria-label={`סך שעות יום ${entry.day_of_month}`}

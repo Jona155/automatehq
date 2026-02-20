@@ -12,6 +12,7 @@ import PublicPortalPage from './pages/PublicPortalPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import TenantGuard from './components/TenantGuard';
 import Layout from './components/Layout';
+import AdminRoute from './components/AdminRoute';
 
 function App() {
   return (
@@ -29,8 +30,10 @@ function App() {
                 <Route path="/:businessCode/sites" element={<SitesPage />} />
                 <Route path="/:businessCode/sites/:siteId" element={<SiteDetailsPage />} />
                 <Route path="/:businessCode/sites/:siteId/review" element={<SiteReviewPage />} />
-                <Route path="/:businessCode/users" element={<UsersPage />} />
-                <Route path="/:businessCode/employee-imports" element={<EmployeeImportPage />} />
+                <Route element={<AdminRoute />}>
+                  <Route path="/:businessCode/users" element={<UsersPage />} />
+                  <Route path="/:businessCode/employee-imports" element={<EmployeeImportPage />} />
+                </Route>
               </Route>
             </Route>
             <Route path="/" element={<Navigate to="/login" replace />} />

@@ -19,6 +19,7 @@ export default function UsersPage() {
     full_name: '',
     email: '',
     password: '',
+    role: 'ADMIN' as 'ADMIN' | 'OPERATOR_MANAGER',
   });
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -43,17 +44,18 @@ export default function UsersPage() {
 
   const handleOpenCreate = () => {
     setEditingUser(null);
-    setFormData({ full_name: '', email: '', password: '' });
+    setFormData({ full_name: '', email: '', password: '', role: 'ADMIN' });
     setFormError(null);
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (user: User) => {
     setEditingUser(user);
-    setFormData({ 
-      full_name: user.full_name, 
-      email: user.email, 
-      password: '' // Password not shown
+    setFormData({
+      full_name: user.full_name,
+      email: user.email,
+      password: '', // Password not shown
+      role: (user.role === 'OPERATOR_MANAGER' ? 'OPERATOR_MANAGER' : 'ADMIN'),
     });
     setFormError(null);
     setIsModalOpen(true);
@@ -88,6 +90,7 @@ export default function UsersPage() {
         const payload: UpdateUserPayload = {
           full_name: formData.full_name,
           email: formData.email,
+          ...(editingUser.id !== currentUser?.id ? { role: formData.role } : {}),
         };
         await updateUser(editingUser.id, payload);
       } else {
@@ -95,7 +98,7 @@ export default function UsersPage() {
           full_name: formData.full_name,
           email: formData.email,
           password: formData.password,
-          role: 'ADMIN',
+          role: formData.role,
         };
         await createUser(payload);
       }
@@ -171,7 +174,7 @@ export default function UsersPage() {
                     </td>
                     <td className="px-6 py-5">
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary">
-                        {user.role}
+                        {user.role === 'ADMIN' ? 'מנהל' : user.role === 'OPERATOR_MANAGER' ? 'מנהל תפעול' : user.role}
                       </span>
                     </td>
                     <td className="px-6 py-5 text-left">
@@ -264,9 +267,26 @@ export default function UsersPage() {
               )}
               {editingUser && (
                 <div className="p-3 bg-blue-50 text-blue-800 text-sm rounded-lg">
-                  לא ניתן לשנות סיסמה או תפקיד כרגע.
+                  לא ניתן לשנות סיסמה כרגע.
                 </div>
               )}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  תפקיד
+                </label>
+                <select
+                  value={formData.role}
+                  onChange={(e) => setFormData({ ...formData, role: e.target.value as 'ADMIN' | 'OPERATOR_MANAGER' })}
+                  disabled={editingUser?.id === currentUser?.id}
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
+                >
+                  <option value="ADMIN">מנהל</option>
+                  <option value="OPERATOR_MANAGER">מנהל תפעול</option>
+                </select>
+                {editingUser?.id === currentUser?.id && (
+                  <p className="text-xs text-slate-500 mt-1">לא ניתן לשנות את התפקיד של עצמך</p>
+                )}
+              </div>
               <div className="flex justify-end gap-3 pt-4">
                 <button
                   type="button"
