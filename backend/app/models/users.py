@@ -9,7 +9,7 @@ class User(db.Model):
     __tablename__ = 'users'
 
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = db.Column(UUID(as_uuid=True), db.ForeignKey('businesses.id'), nullable=False)
+    business_id = db.Column(UUID(as_uuid=True), db.ForeignKey('businesses.id'), nullable=True)
     full_name = db.Column(db.Text, nullable=False)
     email = db.Column(db.Text, unique=True, nullable=True)
     phone_number = db.Column(db.Text, unique=True, nullable=True)

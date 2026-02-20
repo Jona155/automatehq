@@ -3,9 +3,11 @@ import { useAuth } from '../context/AuthContext';
 export function usePermissions() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
+  const isApplicationManager = user?.role === 'APPLICATION_MANAGER';
 
   return {
     isAdmin,
+    isApplicationManager,
     canUpload: true,
     canEditHours: isAdmin,
     canApprove: isAdmin,

@@ -20,7 +20,11 @@ def get_user_with_business(user):
     """
     user_data = model_to_dict(user)
     user_data.pop('password_hash', None)
-    
+
+    # APPLICATION_MANAGER users have no business
+    if user.business_id is None:
+        return user_data
+
     # Load business and add context
     business = business_repo.get_by_id(user.business_id)
     if business:
@@ -30,7 +34,7 @@ def get_user_with_business(user):
             'code': business.code,
             'is_active': business.is_active
         }
-    
+
     return user_data
 
 
@@ -51,21 +55,23 @@ def login():
         if not user.is_active:
             return api_response(status_code=403, message="Account is deactivated", error="Forbidden")
 
-        # Validate user's business exists and is active
-        business = business_repo.get_by_id(user.business_id)
-        if not business:
-            return api_response(
-                status_code=403, 
-                message="Your organization does not exist in the system", 
-                error="Forbidden"
-            )
-        
-        if not business.is_active:
-            return api_response(
-                status_code=403, 
-                message="Your organization has been deactivated", 
-                error="Forbidden"
-            )
+        # APPLICATION_MANAGER users have no business — skip business checks
+        if user.role != 'APPLICATION_MANAGER':
+            # Validate user's business exists and is active
+            business = business_repo.get_by_id(user.business_id)
+            if not business:
+                return api_response(
+                    status_code=403,
+                    message="Your organization does not exist in the system",
+                    error="Forbidden"
+                )
+
+            if not business.is_active:
+                return api_response(
+                    status_code=403,
+                    message="Your organization has been deactivated",
+                    error="Forbidden"
+                )
 
         if check_password_hash(user.password_hash, data.get('password')):
             auth_token = encode_auth_token(user.id)
