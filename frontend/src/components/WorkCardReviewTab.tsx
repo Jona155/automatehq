@@ -1783,24 +1783,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       </div>
                     )}
 
-                    {extractionQualityMeta.reviewRequired.size > 0 && (
-                      <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-                        <span className="material-symbols-outlined text-amber-600 dark:text-amber-400">rule</span>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                            זוהו שורות הדורשות בדיקה
-                          </p>
-                          <p className="text-xs text-amber-700 dark:text-amber-400">
-                            ימים לבדיקה: <strong>{Array.from(extractionQualityMeta.reviewRequired).sort((a, b) => a - b).join(', ')}</strong>
-                          </p>
-                          {extractionQualityMeta.offMark.size > 0 && (
-                            <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-                              ימים שסומנו כקו/חופשי: <strong>{Array.from(extractionQualityMeta.offMark).sort((a, b) => a - b).join(', ')}</strong>
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   {isLoadingEntries ? (
