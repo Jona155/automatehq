@@ -13,7 +13,7 @@ from ..repositories.work_card_file_repository import WorkCardFileRepository
 from ..repositories.work_card_extraction_repository import WorkCardExtractionRepository
 from ..repositories.work_card_day_entry_repository import WorkCardDayEntryRepository
 from .utils import api_response, model_to_dict, models_to_list
-from ..auth_utils import token_required
+from ..auth_utils import token_required, role_required
 from ..extensions import db
 from ..models.sites import Site
 
@@ -142,6 +142,7 @@ def get_work_card(card_id):
 
 @work_cards_bp.route('/<uuid:card_id>', methods=['PUT'])
 @token_required
+@role_required('ADMIN')
 def update_work_card(card_id):
     """Update a work card (must belong to current business, e.g. assign employee)."""
     # Verify ownership
@@ -177,6 +178,7 @@ def update_work_card(card_id):
 
 @work_cards_bp.route('/<uuid:card_id>/status', methods=['PUT'])
 @token_required
+@role_required('ADMIN')
 def update_status(card_id):
     """Update review status (must belong to current business)."""
     # Verify ownership
@@ -201,6 +203,7 @@ def update_status(card_id):
 
 @work_cards_bp.route('/<uuid:card_id>/approve', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def approve_work_card(card_id):
     """Approve a work card (must belong to current business)."""
     # Verify ownership
@@ -310,6 +313,7 @@ def approve_work_card(card_id):
 
 @work_cards_bp.route('/<uuid:card_id>', methods=['DELETE'])
 @token_required
+@role_required('ADMIN')
 def delete_work_card(card_id):
     """Delete a work card (must belong to current business)."""
     # Verify ownership
@@ -356,6 +360,7 @@ def get_work_card_file(card_id):
 
 @work_cards_bp.route('/export', methods=['GET'])
 @token_required
+@role_required('ADMIN')
 def export_work_cards():
     """Export work cards for a site and month as a ZIP file."""
     site_id = request.args.get('site_id')
@@ -590,6 +595,7 @@ def get_day_entries(card_id):
 
 @work_cards_bp.route('/<uuid:card_id>/day-entries', methods=['PUT'])
 @token_required
+@role_required('ADMIN')
 def update_day_entries(card_id):
     """Bulk update day entries for a work card."""
     # Verify ownership
@@ -823,6 +829,7 @@ def upload_single():
 
 @work_cards_bp.route('/<uuid:card_id>/extract', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def trigger_extraction(card_id):
     """Trigger (or re-trigger) extraction for a work card."""
     # Verify ownership

@@ -26,7 +26,7 @@ from ..services.sites.hours_matrix_service import (
     get_latest_work_card_with_extraction_by_employee,
 )
 from .utils import api_response, model_to_dict, models_to_list
-from ..auth_utils import token_required
+from ..auth_utils import token_required, role_required
 from ..utils import normalize_phone
 from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
 from ..models.sites import Employee
@@ -522,6 +522,7 @@ def get_sites():
 
 @sites_bp.route('', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def create_site():
     """Create a new site, scoped to tenant."""
     data = request.get_json()
@@ -565,6 +566,7 @@ def get_site(site_id):
 
 @sites_bp.route('/<uuid:site_id>', methods=['PUT'])
 @token_required
+@role_required('ADMIN')
 def update_site(site_id):
     """Update a site, scoped to tenant."""
     data = request.get_json()
@@ -610,6 +612,7 @@ def update_site(site_id):
 
 @sites_bp.route('/<uuid:site_id>', methods=['DELETE'])
 @token_required
+@role_required('ADMIN')
 def delete_site(site_id):
     """Delete a site, scoped to tenant."""
     try:
@@ -726,6 +729,7 @@ def get_hours_matrix(site_id):
 
 @sites_bp.route('/<uuid:site_id>/summary/export', methods=['GET'])
 @token_required
+@role_required('ADMIN')
 def export_monthly_summary(site_id):
     """Export monthly summary matrix as a CSV file."""
     site = repo.get_by_id(site_id)
@@ -813,6 +817,7 @@ def export_monthly_summary(site_id):
 
 @sites_bp.route('/summary/export-batch', methods=['GET'])
 @token_required
+@role_required('ADMIN')
 def export_monthly_summary_batch():
     """Export monthly summary matrix for all sites in template format (one sheet per site)."""
     processing_month = request.args.get('processing_month')
@@ -924,6 +929,7 @@ def export_monthly_summary_batch():
 
 @sites_bp.route('/<uuid:site_id>/salary-template/export', methods=['GET'])
 @token_required
+@role_required('ADMIN')
 def export_salary_template_site(site_id):
     """Export salary template workbook for a single site."""
     site = repo.get_by_id(site_id)
@@ -975,6 +981,7 @@ def export_salary_template_site(site_id):
 
 @sites_bp.route('/salary-template/export-batch', methods=['GET'])
 @token_required
+@role_required('ADMIN')
 def export_salary_template_batch():
     """Export salary template workbook for all sites (one sheet per site)."""
     processing_month = request.args.get('processing_month')
@@ -1075,6 +1082,7 @@ def export_salary_template_batch():
 
 @sites_bp.route('/<uuid:site_id>/access-link', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def create_access_link(site_id):
     data = request.get_json() or {}
     employee_id = data.get('employee_id')
@@ -1126,6 +1134,7 @@ def create_access_link(site_id):
 
 @sites_bp.route('/<uuid:site_id>/access-links', methods=['GET'])
 @token_required
+@role_required('ADMIN')
 def list_access_links(site_id):
     site = repo.get_by_id(site_id)
     if not site or site.business_id != g.business_id:
@@ -1144,6 +1153,7 @@ def list_access_links(site_id):
 
 @sites_bp.route('/<uuid:site_id>/access-link/<uuid:request_id>/whatsapp', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def send_whatsapp_link(site_id, request_id):
     """Send an access link via WhatsApp to the employee."""
     site = repo.get_by_id(site_id)
@@ -1200,6 +1210,7 @@ def send_whatsapp_link(site_id, request_id):
 
 @sites_bp.route('/access-links/whatsapp-batch', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def send_whatsapp_links_batch():
     """Create access links and send them via WhatsApp for multiple sites."""
     payload = request.get_json() or {}
@@ -1428,6 +1439,7 @@ def send_whatsapp_links_batch():
 
 @sites_bp.route('/<uuid:site_id>/access-link/<uuid:request_id>/revoke', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def revoke_access_link(site_id, request_id):
     site = repo.get_by_id(site_id)
     if not site or site.business_id != g.business_id:

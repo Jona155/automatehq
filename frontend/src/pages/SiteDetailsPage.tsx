@@ -6,6 +6,7 @@ import { getEmployees } from '../api/employees';
 import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
+import { usePermissions } from '../hooks/usePermissions';
 import UploadWorkCardModal from '../components/UploadWorkCardModal';
 import BatchUploadModal from '../components/BatchUploadModal';
 import WorkCardExportModal from '../components/WorkCardExportModal';
@@ -32,6 +33,7 @@ function getPreviousMonth(): string {
 export default function SiteDetailsPage() {
   const { businessCode, siteId } = useParams<{ businessCode: string; siteId: string }>();
   const { isAuthenticated, user } = useAuth();
+  const { isAdmin } = usePermissions();
   const [site, setSite] = useState<Site | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -305,7 +307,7 @@ export default function SiteDetailsPage() {
             <span className="material-symbols-outlined text-lg">cloud_upload</span>
             <span>{"\u05d4\u05e2\u05dc\u05d0\u05d4 \u05de\u05e8\u05d5\u05d1\u05d4"}</span>
           </button>
-        <div className="relative" ref={actionsRef} dir="rtl">
+        {isAdmin && <div className="relative" ref={actionsRef} dir="rtl">
           <button
             onClick={() => setActionsOpen((prev) => !prev)}
             className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors font-medium text-sm"
@@ -364,7 +366,7 @@ export default function SiteDetailsPage() {
               </button>
             </div>
           )}
-        </div>
+        </div>}
         </div>
       </div>
 
@@ -499,6 +501,7 @@ export default function SiteDetailsPage() {
               selectedMonth={selectedMonth}
               onMonthChange={setSelectedMonth}
               monthStorageKey={`site_details_month_${siteId}`}
+              isAdmin={isAdmin}
             />
           </div>
         )}

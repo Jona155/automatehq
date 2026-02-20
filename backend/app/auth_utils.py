@@ -84,6 +84,21 @@ def portal_token_required(f):
 
     return decorated
 
+def role_required(*allowed_roles):
+    """Decorator that checks if the current user has one of the allowed roles.
+    Must be used after @token_required so that g.current_user is available."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            from flask import g
+            if not hasattr(g, 'current_user') or g.current_user is None:
+                return jsonify({'message': 'Authentication required', 'success': False, 'error': 'Unauthorized'}), 401
+            if g.current_user.role not in allowed_roles:
+                return jsonify({'message': 'Insufficient permissions', 'success': False, 'error': 'Forbidden'}), 403
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):

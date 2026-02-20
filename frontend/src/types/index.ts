@@ -11,7 +11,7 @@ export interface User {
   full_name: string;
   email: string;
   phone_number?: string;
-  role: 'ADMIN' | 'EMPLOYEE' | 'RESPONSIBLE_EMPLOYEE';
+  role: 'ADMIN' | 'OPERATOR_MANAGER' | 'EMPLOYEE' | 'RESPONSIBLE_EMPLOYEE';
   is_active: boolean;
   created_at: string;
   updated_at: string;

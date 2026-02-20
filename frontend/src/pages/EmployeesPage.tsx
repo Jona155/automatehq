@@ -4,12 +4,14 @@ import { getEmployees, createEmployee, updateEmployee, deleteEmployee } from '..
 import type { CreateEmployeePayload, UpdateEmployeePayload } from '../api/employees';
 import { getSites } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
+import { usePermissions } from '../hooks/usePermissions';
 
 type SortField = 'full_name' | 'passport_id' | 'phone_number' | 'site_name';
 type SortOrder = 'asc' | 'desc';
 
 export default function EmployeesPage() {
   const { isAuthenticated } = useAuth();
+  const { isAdmin } = usePermissions();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -257,13 +259,13 @@ export default function EmployeesPage() {
           <h2 className="text-[#111518] dark:text-white text-3xl font-bold">ניהול עובדים</h2>
           <p className="text-[#617989] dark:text-slate-400 mt-1">נהל את העובדים שלך באתרי העבודה השונים</p>
         </div>
-        <button
+        {isAdmin && <button
           onClick={handleOpenCreate}
           className="bg-primary hover:bg-primary/90 text-white font-bold py-3 px-6 rounded-lg shadow-lg shadow-primary/30 transition-all flex items-center justify-center gap-2"
         >
           <span className="material-symbols-outlined">add</span>
           <span>צור עובד</span>
-        </button>
+        </button>}
       </div>
 
       {/* Filter Bar */}
@@ -381,9 +383,9 @@ export default function EmployeesPage() {
                       <SortIcon field="site_name" />
                     </div>
                   </th>
-                  <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200 text-left">
+                  {isAdmin && <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200 text-left">
                     פעולות
-                  </th>
+                  </th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
@@ -410,7 +412,7 @@ export default function EmployeesPage() {
                         {getSiteName(employee.site_id)}
                       </span>
                     </td>
-                    <td className="px-6 py-5 text-left">
+                    {isAdmin && <td className="px-6 py-5 text-left">
                       <div className="flex items-center justify-end gap-3">
                         <button
                           onClick={() => handleOpenEdit(employee)}
@@ -427,7 +429,7 @@ export default function EmployeesPage() {
                           <span className="material-symbols-outlined">delete</span>
                         </button>
                       </div>
-                    </td>
+                    </td>}
                   </tr>
                 ))}
                 {sortedEmployees.length === 0 && (

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 from flask import Blueprint, request, g
 
-from ..auth_utils import token_required
+from ..auth_utils import token_required, role_required
 from ..repositories.employee_repository import EmployeeRepository
 from ..repositories.site_repository import SiteRepository
 from ..utils import normalize_phone
@@ -270,6 +270,7 @@ def _summarize(rows: List[Dict[str, Any]]) -> Dict[str, int]:
 
 @employee_imports_bp.route('/preview', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def preview_import():
     if 'file' not in request.files:
         return api_response(status_code=400, message="No file provided", error="Bad Request")
@@ -310,6 +311,7 @@ def preview_import():
 
 @employee_imports_bp.route('/apply', methods=['POST'])
 @token_required
+@role_required('ADMIN')
 def apply_import():
     data = request.get_json()
     if not data or 'rows' not in data:
