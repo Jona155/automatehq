@@ -297,6 +297,14 @@ export default function SiteDetailsPage() {
           <h2 className="text-[#111518] dark:text-white text-3xl font-bold">{site.site_name}</h2>
           <p className="text-[#617989] dark:text-slate-400 mt-1">קוד אתר: {site.site_code || 'לא הוגדר'}</p>
         </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setBatchUploadModalOpen(true)}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-semibold text-sm shadow-sm"
+          >
+            <span className="material-symbols-outlined text-lg">cloud_upload</span>
+            <span>{"\u05d4\u05e2\u05dc\u05d0\u05d4 \u05de\u05e8\u05d5\u05d1\u05d4"}</span>
+          </button>
         <div className="relative" ref={actionsRef} dir="rtl">
           <button
             onClick={() => setActionsOpen((prev) => !prev)}
@@ -354,18 +362,9 @@ export default function SiteDetailsPage() {
                     : '\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave'}
                 </span>
               </button>
-              <button
-                onClick={() => {
-                  setActionsOpen(false);
-                  setBatchUploadModalOpen(true);
-                }}
-                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
-              >
-                <span className="material-symbols-outlined text-lg">cloud_upload</span>
-                <span>{"\u05d4\u05e2\u05dc\u05d0\u05d4 \u05de\u05e8\u05d5\u05d1\u05d4"}</span>
-              </button>
             </div>
           )}
+        </div>
         </div>
       </div>
 
