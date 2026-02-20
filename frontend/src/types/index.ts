@@ -7,11 +7,11 @@ export interface Business {
 
 export interface User {
   id: string;
-  business_id: string;
+  business_id: string | null;
   full_name: string;
   email: string;
   phone_number?: string;
-  role: 'ADMIN' | 'OPERATOR_MANAGER' | 'EMPLOYEE' | 'RESPONSIBLE_EMPLOYEE';
+  role: 'ADMIN' | 'OPERATOR_MANAGER' | 'EMPLOYEE' | 'RESPONSIBLE_EMPLOYEE' | 'APPLICATION_MANAGER';
   is_active: boolean;
   created_at: string;
   updated_at: string;

@@ -13,6 +13,9 @@ import ProtectedRoute from './components/ProtectedRoute';
 import TenantGuard from './components/TenantGuard';
 import Layout from './components/Layout';
 import AdminRoute from './components/AdminRoute';
+import StarterRoute from './components/StarterRoute';
+import StarterLayout from './components/StarterLayout';
+import StarterBusinessesPage from './pages/StarterBusinessesPage';
 
 function App() {
   return (
@@ -23,6 +26,15 @@ function App() {
           <Route path="/portal/:token" element={<PublicPortalPage />} />
           
           <Route element={<ProtectedRoute />}>
+            {/* Starter (APPLICATION_MANAGER) routes */}
+            <Route element={<StarterRoute />}>
+              <Route element={<StarterLayout />}>
+                <Route path="/starter/businesses" element={<StarterBusinessesPage />} />
+              </Route>
+            </Route>
+            <Route path="/starter" element={<Navigate to="/starter/businesses" replace />} />
+
+            {/* Business-scoped routes */}
             <Route element={<TenantGuard />}>
               <Route element={<Layout />}>
                 <Route path="/:businessCode/dashboard" element={<DashboardPage />} />

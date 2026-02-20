@@ -7,7 +7,7 @@ from ..auth_utils import token_required, role_required
 users_bp = Blueprint('users', __name__, url_prefix='/api/users')
 repo = UserRepository()
 
-VALID_ROLES = {'ADMIN', 'OPERATOR_MANAGER'}
+VALID_ROLES = {'ADMIN', 'OPERATOR_MANAGER', 'APPLICATION_MANAGER'}
 
 @users_bp.route('', methods=['GET'])
 @token_required

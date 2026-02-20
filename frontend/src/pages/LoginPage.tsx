@@ -7,14 +7,18 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login, isAuthenticated, business } = useAuth();
+  const { login, isAuthenticated, business, user } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (isAuthenticated && business) {
-      navigate(`/${business.code}/dashboard`, { replace: true });
+    if (isAuthenticated) {
+      if (user?.role === 'APPLICATION_MANAGER') {
+        navigate('/starter/businesses', { replace: true });
+      } else if (business) {
+        navigate(`/${business.code}/dashboard`, { replace: true });
+      }
     }
-  }, [isAuthenticated, business, navigate]);
+  }, [isAuthenticated, business, user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,6 +33,10 @@ export default function LoginPage() {
 
     try {
       const loggedInUser = await login({ email, password });
+      if (loggedInUser.role === 'APPLICATION_MANAGER') {
+        navigate('/starter/businesses');
+        return;
+      }
       // Redirect to business dashboard using the business code
       const businessCode = loggedInUser.business?.code;
       if (!businessCode) {
