@@ -196,9 +196,11 @@ export default function MonthlySummaryTab({ siteId, selectedMonth, onMonthChange
                     >
                       <div className="flex flex-col items-center gap-1">
                         <span className="text-slate-900 dark:text-white text-xs truncate max-w-[90px]">
-                          {employee.full_name}
+                          {employee.full_name.split(' ')[0]}
                         </span>
-                        <span className={`text-[10px] ${config.text}`}>{config.label}</span>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[90px]">
+                          {employee.passport_id}
+                        </span>
                       </div>
                     </th>
                   );
