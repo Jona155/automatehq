@@ -486,8 +486,8 @@ export default function SiteDetailsPage() {
         )}
 
         {activeTab === 'review' && (
-          <div className="min-h-[600px]">
-            <div className="flex justify-end px-6 pt-4">
+          <div className="h-[calc(100vh-14rem)] flex flex-col">
+            <div className="flex justify-end px-6 pt-4 shrink-0">
               <button
                 onClick={handleOpenReviewMode}
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 transition-colors"
@@ -496,13 +496,15 @@ export default function SiteDetailsPage() {
                 <span>פתח מצב סקירה</span>
               </button>
             </div>
-            <WorkCardReviewTab
-              siteId={siteId!}
-              selectedMonth={selectedMonth}
-              onMonthChange={setSelectedMonth}
-              monthStorageKey={`site_details_month_${siteId}`}
-              isAdmin={isAdmin}
-            />
+            <div className="flex-1 min-h-0">
+              <WorkCardReviewTab
+                siteId={siteId!}
+                selectedMonth={selectedMonth}
+                onMonthChange={setSelectedMonth}
+                monthStorageKey={`site_details_month_${siteId}`}
+                isAdmin={isAdmin}
+              />
+            </div>
           </div>
         )}
 

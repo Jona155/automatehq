@@ -50,7 +50,7 @@ export default function SiteReviewPage() {
   };
 
   return (
-    <div className="flex h-full min-h-screen flex-col">
+    <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 sm:px-6">
         <button
           onClick={handleBack}
