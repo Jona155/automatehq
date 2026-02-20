@@ -169,8 +169,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [cardSearch, setCardSearch] = useState('');
   const [listFilter, setListFilter] = useState<'all' | 'unassigned' | 'assigned'>('all');
   const [reviewMode, setReviewMode] = useState<ReviewMode>('queue');
-  const [showDetailsDrawer, setShowDetailsDrawer] = useState(false);
-  const [showDirtyOnly, setShowDirtyOnly] = useState(false);
+const [showDirtyOnly, setShowDirtyOnly] = useState(false);
   const [jumpToDay, setJumpToDay] = useState('');
   const [activeDay, setActiveDay] = useState<number | null>(null);
   const [imageScale, setImageScale] = useState(1);
@@ -1326,126 +1325,135 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
             </div>
           ) : (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* Card Header — 3-zone layout: identity | navigation | actions */}
               <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-200 flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                <div className="flex items-center gap-4 min-w-0">
+
+                  {/* Zone 1 — Employee identity */}
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className={`w-11 h-11 rounded-full flex items-center justify-center font-bold text-sm uppercase shrink-0 ${
+                      !selectedCard.employee_id
+                        ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-600'
+                        : selectedCard.review_status === 'APPROVED'
+                        ? 'bg-green-100 dark:bg-green-900/40 text-green-700'
+                        : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700'
+                    }`}>
                       {selectedCard.employee?.full_name
                         ? selectedCard.employee.full_name
                             .split(' ')
-                            .map((word) => word[0])
+                            .map((word: string) => word[0])
                             .join('')
                             .slice(0, 2)
-                        : <span className="material-symbols-outlined text-base">badge</span>}
+                        : <span className="material-symbols-outlined text-lg">badge</span>}
                     </div>
                     <div className="min-w-0">
-                      <div className="font-semibold text-slate-900 dark:text-white truncate">
+                      <div className="font-semibold text-slate-900 dark:text-white truncate leading-tight">
                         {selectedCard.employee?.full_name || 'כרטיס לא משויך'}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                          !selectedCard.employee_id
+                            ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400'
+                            : selectedCard.review_status === 'APPROVED'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
+                            : selectedCard.review_status === 'NEEDS_REVIEW'
+                            ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400'
+                            : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          <span className="material-symbols-outlined text-xs" style={{ fontSize: '11px' }}>
+                            {!selectedCard.employee_id ? 'help' : selectedCard.review_status === 'APPROVED' ? 'check_circle' : 'pending'}
+                          </span>
+                          {!selectedCard.employee_id ? 'ממתין לשיוך'
+                            : selectedCard.review_status === 'APPROVED' ? 'מאושר'
+                            : selectedCard.review_status === 'NEEDS_REVIEW' ? 'ממתין לסקירה'
+                            : selectedCard.review_status}
+                        </span>
+                        {(selectedCard.employee?.passport_id || extraction?.extracted_passport_id) && (
+                          <span className="text-xs text-slate-400 dark:text-slate-500 truncate">
+                            ת.ז {selectedCard.employee?.passport_id || extraction?.extracted_passport_id}
+                          </span>
+                        )}
+                        {hasUnsavedChanges && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                            <span className="material-symbols-outlined" style={{ fontSize: '11px' }}>edit</span>
+                            שינויים לא נשמרו
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-3">
-                    <div className="flex items-center gap-2 flex-wrap justify-end">
-                      <>
-                        <button
-                          onClick={() => navigateToCard(-1)}
-                          disabled={selectedVisibleIndex <= 0}
-                          className="w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center justify-center text-slate-600 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
-                          title="עובד קודם"
-                          aria-label="עובד קודם"
-                        >
-                          <span className="material-symbols-outlined text-base">chevron_right</span>
-                        </button>
-                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                          {selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0} / {visibleCards.length}
-                        </span>
-                        <button
-                          onClick={() => navigateToCard(1)}
-                          disabled={selectedVisibleIndex === -1 || selectedVisibleIndex >= visibleCards.length - 1}
-                          className="w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center justify-center text-slate-600 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
-                          title="עובד הבא"
-                          aria-label="עובד הבא"
-                        >
-                          <span className="material-symbols-outlined text-base">chevron_left</span>
-                        </button>
-                        <button
-                          onClick={navigateToNextPending}
-                          disabled={!hasNextPending}
-                          className="px-3 py-2 rounded-lg border border-indigo-200 dark:border-indigo-700 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="דלג לכרטיס הבא שממתין לסקירה"
-                        >
-                          הבא ממתין
-                        </button>
-                      </>
 
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
-                        selectedCard.review_status === 'APPROVED'
-                          ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
-                          : selectedCard.review_status === 'NEEDS_REVIEW'
-                          ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
-                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                      }`}>
-                        {selectedCard.review_status === 'APPROVED' ? 'מאושר' :
-                         selectedCard.review_status === 'NEEDS_REVIEW' ? 'ממתין לסקירה' :
-                         selectedCard.review_status === 'NEEDS_ASSIGNMENT' ? 'ממתין לשיוך' :
-                         selectedCard.review_status}
-                      </span>
-                      {hasUnsavedChanges && (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">שינויים לא נשמרו</span>
-                      )}
+                  {/* Zone 2 — Navigation */}
+                  <div className="flex flex-col items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1">
                       <button
-                        type="button"
-                        onClick={() => setShowDetailsDrawer((prev) => !prev)}
-                        className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1"
+                        onClick={() => navigateToCard(-1)}
+                        disabled={selectedVisibleIndex <= 0}
+                        className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center justify-center text-slate-500 dark:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        title="כרטיס קודם"
+                        aria-label="כרטיס קודם"
                       >
-                        <span className="material-symbols-outlined text-sm">info</span>
-                        <span>{showDetailsDrawer ? 'הסתר פרטים' : 'פרטי כרטיס'}</span>
+                        <span className="material-symbols-outlined text-base">chevron_right</span>
+                      </button>
+                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 w-12 text-center tabular-nums">
+                        {selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0} / {visibleCards.length}
+                      </span>
+                      <button
+                        onClick={() => navigateToCard(1)}
+                        disabled={selectedVisibleIndex === -1 || selectedVisibleIndex >= visibleCards.length - 1}
+                        className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center justify-center text-slate-500 dark:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        title="כרטיס הבא"
+                        aria-label="כרטיס הבא"
+                      >
+                        <span className="material-symbols-outlined text-base">chevron_left</span>
                       </button>
                     </div>
+                    <button
+                      onClick={navigateToNextPending}
+                      disabled={!hasNextPending}
+                      className="px-2.5 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-700 text-xs font-medium text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-30 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                      title="דלג לכרטיס הבא שממתין לסקירה"
+                    >
+                      הבא ממתין ›
+                    </button>
+                  </div>
 
-                    <div className="flex items-center gap-2 flex-wrap justify-end">
-                      <label className="inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                        <input
-                          type="checkbox"
-                          checked={autoAdvance}
-                          onChange={(e) => setAutoAdvance(e.target.checked)}
-                          className="rounded border-slate-300 text-primary focus:ring-primary/40"
-                        />
-                        מעבר אוטומטי אחרי אישור/דחייה
-                      </label>
+                  {/* Zone 3 — Actions */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {!selectedCard.employee_id && (
+                      <button
+                        onClick={() => setShowAssignModal(true)}
+                        className="px-3 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors font-medium text-xs flex items-center gap-1.5 shadow-sm"
+                      >
+                        <span className="material-symbols-outlined text-sm">link</span>
+                        <span>שיוך עובד</span>
+                      </button>
+                    )}
 
-                      {!selectedCard.employee_id && (
-                        <button
-                          onClick={() => setShowAssignModal(true)}
-                          className="px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium text-xs flex items-center gap-1"
-                        >
-                          <span className="material-symbols-outlined text-sm">link</span>
-                          <span>שיוך עובד</span>
-                        </button>
-                      )}
+                    {conflictCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={openConflictModal}
+                        className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors font-medium text-xs flex items-center gap-1.5"
+                      >
+                        <span className="material-symbols-outlined text-base">warning</span>
+                        <span>{unresolvedConflictCount > 0 ? unresolvedConflictCount : conflictCount} התנגשויות</span>
+                      </button>
+                    )}
 
-                      {conflictCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={openConflictModal}
-                          className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors font-medium text-xs flex items-center gap-1"
-                        >
-                          <span className="material-symbols-outlined text-base">warning</span>
-                          <span>התנגשויות ({unresolvedConflictCount > 0 ? unresolvedConflictCount : conflictCount})</span>
-                        </button>
-                      )}
-                      {isAdmin && <div className="flex items-center gap-2">
+                    {isAdmin && (
+                      <div className="flex items-stretch gap-2">
                         <button
                           onClick={handlePrimaryReviewAction}
                           disabled={isSaving || !selectedCard.employee_id || (selectedCard.review_status === 'APPROVED' && !hasUnsavedChanges)}
-                          className={`px-3 py-2 rounded-lg transition-colors font-medium text-xs flex items-center gap-1 border ${
+                          className={`h-9 px-4 rounded-lg transition-colors font-medium text-xs flex items-center gap-1.5 ${
                             selectedCard.review_status === 'APPROVED' && !hasUnsavedChanges
-                              ? 'bg-green-50 text-green-600 border-green-200 cursor-default'
+                              ? 'bg-green-50 text-green-600 border border-green-200 cursor-default dark:bg-green-900/20 dark:text-green-400 dark:border-green-800'
                             : !selectedCard.employee_id
-                              ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                              ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed dark:bg-slate-800 dark:border-slate-700'
                               : isSaving
-                              ? 'bg-primary/80 text-white border-transparent cursor-wait'
-                              : 'bg-green-600 text-white hover:bg-green-700 border-transparent'
+                              ? 'bg-green-500/80 text-white cursor-wait'
+                              : 'bg-green-600 text-white hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600'
                           }`}
                           title={
                             !selectedCard.employee_id
@@ -1460,7 +1468,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           }
                         >
                           <span className={`material-symbols-outlined text-base ${isSaving ? 'animate-spin' : ''}`}>
-                            {isSaving ? 'progress_activity' : hasUnsavedChanges ? 'save' : 'check'}
+                            {isSaving ? 'progress_activity' : hasUnsavedChanges ? 'save' : selectedCard.review_status === 'APPROVED' && !hasUnsavedChanges ? 'check_circle' : 'check_circle'}
                           </span>
                           <span>
                             {isSaving
@@ -1468,7 +1476,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                               : selectedCard.review_status === 'APPROVED' && hasUnsavedChanges
                               ? 'שמור שינויים'
                               : hasUnsavedChanges
-                              ? 'שמור שינויים ואשר'
+                              ? 'שמור ואשר'
                               : selectedCard.review_status === 'APPROVED'
                               ? 'מאושר'
                               : 'אשר'}
@@ -1476,21 +1484,35 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         </button>
                         <button
                           onClick={() => setShowRejectModal(true)}
-                          className="px-3 py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors font-medium text-xs flex items-center gap-1 border border-red-200"
+                          className="h-9 px-4 rounded-lg font-medium text-xs flex items-center gap-1.5 bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-colors dark:bg-transparent dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
                           title="דחה כרטיס (מחק)"
                         >
-                          <span className="material-symbols-outlined text-base">close</span>
+                          <span className="material-symbols-outlined text-base">cancel</span>
                           <span>דחה</span>
                         </button>
-                      </div>}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
-              {showDetailsDrawer && (
-                <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
-                    {isAdmin && <button
+
+              {/* Info strip — always-visible secondary metadata + controls */}
+              <div className="px-5 py-1.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center gap-3 flex-wrap text-xs text-slate-500 dark:text-slate-400">
+                <label className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={autoAdvance}
+                    onChange={(e) => setAutoAdvance(e.target.checked)}
+                    className="rounded border-slate-300 text-primary focus:ring-primary/40"
+                  />
+                  מעבר אוטומטי
+                </label>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <span className="font-mono">#{String(selectedCard.id).slice(0, 8)}</span>
+                {isAdmin && (
+                  <>
+                    <span className="text-slate-300 dark:text-slate-600">|</span>
+                    <button
                       type="button"
                       onClick={handleTriggerExtraction}
                       disabled={
@@ -1499,46 +1521,25 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         extraction?.status === 'RUNNING' ||
                         extraction?.status === 'DONE'
                       }
-                      className={`px-2.5 py-1 rounded-full border transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
                         extraction?.status === 'DONE'
-                          ? 'bg-green-50 text-green-700 border-green-200'
-                          : 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100'
+                          ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800'
+                          : 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800 dark:hover:bg-purple-900/30'
                       }`}
-                      title={
-                        extraction?.status === 'DONE'
-                          ? 'נתונים חולצו'
-                          : 'חלץ נתונים מהתמונה'
-                      }
+                      title={extraction?.status === 'DONE' ? 'נתונים חולצו' : 'חלץ נתונים מהתמונה'}
                     >
+                      <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>
+                        {extraction?.status === 'DONE' ? 'check' : 'auto_awesome'}
+                      </span>
                       {isTriggering || extraction?.status === 'PENDING' || extraction?.status === 'RUNNING'
                         ? 'מחלץ...'
                         : extraction?.status === 'DONE'
                         ? 'חולץ'
                         : 'חלץ נתונים'}
-                    </button>}
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full font-medium ${
-                      selectedCard.review_status === 'APPROVED'
-                        ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
-                        : selectedCard.review_status === 'NEEDS_REVIEW'
-                        ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
-                        : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
-                    }`}>
-                      {selectedCard.review_status === 'APPROVED'
-                        ? 'מאושר'
-                        : selectedCard.review_status === 'NEEDS_REVIEW'
-                        ? 'ממתין לסקירה'
-                        : selectedCard.review_status === 'NEEDS_ASSIGNMENT'
-                        ? 'ממתין לשיוך'
-                        : selectedCard.review_status}
-                    </span>
-                    <span>מזהה: {String(selectedCard.id).slice(0, 8)}</span>
-                    {selectedCard.employee?.passport_id && <span>ת.ז: {selectedCard.employee.passport_id}</span>}
-                    {!selectedCard.employee?.passport_id && extraction?.extracted_passport_id && (
-                      <span>ת.ז מזוהה: {extraction.extracted_passport_id}</span>
-                    )}
-                  </div>
-                </div>
-              )}
+                    </button>
+                  </>
+                )}
+              </div>
               <div className="flex-1 flex min-h-0 overflow-hidden flex-col lg:flex-row">
                 {/* Image Panel */}
                 <div className={`${imagePanelWidth} lg:border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-100 dark:bg-slate-900 min-h-0`}>
