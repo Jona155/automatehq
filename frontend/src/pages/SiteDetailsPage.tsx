@@ -371,7 +371,7 @@ export default function SiteDetailsPage() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
         <div className="flex border-b border-slate-200 dark:border-slate-700">
           <button
             onClick={() => setActiveTab('employees')}
@@ -486,7 +486,7 @@ export default function SiteDetailsPage() {
         )}
 
         {activeTab === 'review' && (
-          <div className="h-[calc(100vh-14rem)] flex flex-col">
+          <div className="flex flex-col">
             <div className="flex justify-end px-6 pt-4 shrink-0">
               <button
                 onClick={handleOpenReviewMode}
@@ -496,7 +496,7 @@ export default function SiteDetailsPage() {
                 <span>פתח מצב סקירה</span>
               </button>
             </div>
-            <div className="flex-1 min-h-0">
+            <div>
               <WorkCardReviewTab
                 siteId={siteId!}
                 selectedMonth={selectedMonth}

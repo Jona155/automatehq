@@ -50,7 +50,7 @@ export default function SiteReviewPage() {
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-col min-h-full">
       <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 sm:px-6">
         <button
           onClick={handleBack}
@@ -62,7 +62,7 @@ export default function SiteReviewPage() {
         <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Review Mode</span>
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div className="flex-1">
         <WorkCardReviewTab
           siteId={siteId}
           selectedMonth={selectedMonth}

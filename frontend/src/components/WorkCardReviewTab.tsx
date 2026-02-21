@@ -1101,7 +1101,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
   const tablePanelWidth = 'w-full lg:w-[46%]';
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col">
       <ToastContainer />
       
       {/* Header with Month Picker */}
@@ -1142,7 +1142,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
       </div>
 
       {/* Main Content */}
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1">
         {/* Sidebar - Work Cards List */}
         <div className={`${reviewMode === 'focus' ? 'hidden' : 'w-80'} border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-50 dark:bg-slate-900/50`}>
           <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 space-y-3">
@@ -1314,7 +1314,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
         </div>
 
         {/* Main Area - Image and Day Entries */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <div className="flex-1 flex flex-col">
           {!selectedCard ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
               <span className="material-symbols-outlined text-6xl text-slate-300 dark:text-slate-600 mb-4">playlist_play</span>
@@ -1324,7 +1324,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
               </p>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="flex-1 flex flex-col">
               {/* Card Header — 3-zone layout: identity | navigation | actions */}
               <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
                 <div className="flex items-center gap-4 min-w-0">
@@ -1540,16 +1540,16 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                   </>
                 )}
               </div>
-              <div className="flex-1 flex min-h-0 overflow-hidden flex-col lg:flex-row">
+              <div className="flex flex-col lg:flex-row lg:h-[640px]">
                 {/* Image Panel */}
-                <div className={`${imagePanelWidth} lg:border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-100 dark:bg-slate-900 min-h-0`}>
+                <div className={`${imagePanelWidth} lg:border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-100 dark:bg-slate-900 h-[400px] lg:h-auto`}>
                   <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
                     <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
                       <span className="material-symbols-outlined text-lg">image</span>
                       תמונת כרטיס
                     </h4>
                   </div>
-                  <div className="relative flex-1 min-h-0">
+                  <div className="relative flex-1">
                     <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-20">
                       <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-slate-900/80 text-white shadow-lg px-2 py-1 backdrop-blur-sm">
                         <button
@@ -1654,7 +1654,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                 </div>
 
                 {/* Day Entries Panel */}
-                <div className={`${tablePanelWidth} flex flex-col min-h-0 border-t border-slate-200 dark:border-slate-700 lg:border-t-0`}>
+                <div className={`${tablePanelWidth} flex flex-col border-t border-slate-200 dark:border-slate-700 lg:border-t-0`}>
                   <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-4">
                     <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2 shrink-0">
                       <span className="material-symbols-outlined text-lg">table_chart</span>
