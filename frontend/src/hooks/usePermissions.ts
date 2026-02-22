@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 export function usePermissions() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
+  const isOperatorManager = user?.role === 'OPERATOR_MANAGER';
   const isApplicationManager = user?.role === 'APPLICATION_MANAGER';
 
   return {
@@ -17,7 +18,7 @@ export function usePermissions() {
     canManageEmployees: isAdmin,
     canManageUsers: isAdmin,
     canImportEmployees: isAdmin,
-    canManageAccessLinks: isAdmin,
+    canManageAccessLinks: isAdmin || isOperatorManager,
     canTriggerExtraction: isAdmin,
   };
 }

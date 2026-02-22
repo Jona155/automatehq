@@ -155,7 +155,7 @@ export default function AccessLinksManager({
               <option value="">בחר עובד</option>
               {eligibleEmployees.map((employee) => (
                 <option key={employee.id} value={employee.id}>
-                  {employee.full_name}
+                  {employee.full_name.split(' ')[0]} - {employee.passport_id}
                   {defaultEmployeeId === employee.id ? ' (ברירת מחדל)' : ''}
                 </option>
               ))}
