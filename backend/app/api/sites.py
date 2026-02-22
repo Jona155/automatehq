@@ -1082,7 +1082,7 @@ def export_salary_template_batch():
 
 @sites_bp.route('/<uuid:site_id>/access-link', methods=['POST'])
 @token_required
-@role_required('ADMIN')
+@role_required('ADMIN', 'OPERATOR_MANAGER')
 def create_access_link(site_id):
     data = request.get_json() or {}
     employee_id = data.get('employee_id')
@@ -1134,7 +1134,7 @@ def create_access_link(site_id):
 
 @sites_bp.route('/<uuid:site_id>/access-links', methods=['GET'])
 @token_required
-@role_required('ADMIN')
+@role_required('ADMIN', 'OPERATOR_MANAGER')
 def list_access_links(site_id):
     site = repo.get_by_id(site_id)
     if not site or site.business_id != g.business_id:
@@ -1153,7 +1153,7 @@ def list_access_links(site_id):
 
 @sites_bp.route('/<uuid:site_id>/access-link/<uuid:request_id>/whatsapp', methods=['POST'])
 @token_required
-@role_required('ADMIN')
+@role_required('ADMIN', 'OPERATOR_MANAGER')
 def send_whatsapp_link(site_id, request_id):
     """Send an access link via WhatsApp to the employee."""
     site = repo.get_by_id(site_id)
@@ -1439,7 +1439,7 @@ def send_whatsapp_links_batch():
 
 @sites_bp.route('/<uuid:site_id>/access-link/<uuid:request_id>/revoke', methods=['POST'])
 @token_required
-@role_required('ADMIN')
+@role_required('ADMIN', 'OPERATOR_MANAGER')
 def revoke_access_link(site_id, request_id):
     site = repo.get_by_id(site_id)
     if not site or site.business_id != g.business_id:
