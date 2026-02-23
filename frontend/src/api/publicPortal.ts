@@ -31,3 +31,41 @@ export const uploadPortalFiles = async (sessionToken: string, files: File[]) => 
   });
   return response.data.data;
 };
+
+export interface AdminPortalSite {
+  id: string;
+  site_name: string;
+}
+
+export interface AdminPortalVerificationResponse {
+  session_token: string;
+  user_name: string;
+  business_name: string;
+  sites: AdminPortalSite[];
+}
+
+export const verifyAdminPortalAccess = async (payload: {
+  business_code: string;
+  phone_number: string;
+}): Promise<AdminPortalVerificationResponse> => {
+  const response = await publicClient.post<{ data: AdminPortalVerificationResponse }>('/public/admin-verify', payload);
+  return response.data.data;
+};
+
+export const uploadAdminPortalFiles = async (
+  sessionToken: string,
+  meta: { site_id: string; processing_month: string },
+  files: File[],
+): Promise<{ uploaded: any[]; failed: any[]; total: number }> => {
+  const formData = new FormData();
+  formData.append('site_id', meta.site_id);
+  formData.append('processing_month', meta.processing_month);
+  files.forEach((file) => formData.append('files', file));
+  const response = await publicClient.post('/public/admin-upload', formData, {
+    headers: {
+      Authorization: `Bearer ${sessionToken}`,
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data.data;
+};

@@ -6,6 +6,7 @@ export interface CreateUserPayload {
   email: string;
   password?: string;
   role?: string;
+  phone_number?: string;
 }
 
 export interface UpdateUserPayload {
@@ -13,6 +14,7 @@ export interface UpdateUserPayload {
   email?: string;
   password?: string;
   role?: string;
+  phone_number?: string;
 }
 
 export const getUsers = async (params?: { active?: boolean; role?: string }) => {

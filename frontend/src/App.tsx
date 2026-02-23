@@ -9,6 +9,7 @@ import SiteReviewPage from './pages/SiteReviewPage';
 import UsersPage from './pages/UsersPage';
 import EmployeeImportPage from './pages/EmployeeImportPage';
 import PublicPortalPage from './pages/PublicPortalPage';
+import AdminPortalPage from './pages/AdminPortalPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import TenantGuard from './components/TenantGuard';
 import Layout from './components/Layout';
@@ -24,6 +25,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/portal/:token" element={<PublicPortalPage />} />
+          <Route path="/admin-portal/:businessCode" element={<AdminPortalPage />} />
           
           <Route element={<ProtectedRoute />}>
             {/* Starter (APPLICATION_MANAGER) routes */}
