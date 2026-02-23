@@ -32,6 +32,9 @@ logs/
 # Mock Files
 mocks/
 
+# Worker extractor images
+images_for_worker_extractor/
+
 #poc files
 poc-worker/
 
