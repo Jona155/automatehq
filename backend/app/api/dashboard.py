@@ -200,6 +200,68 @@ def get_dashboard_summary():
             "work_cards": [work_card_map.get(m, 0) for m in months],
         }
 
+        # Sites review table — per-site status breakdown for the selected month
+        emp_sub = (
+            db.session.query(
+                Employee.site_id.label("site_id"),
+                func.count(Employee.id).label("active_employee_count"),
+            )
+            .filter(Employee.business_id == g.business_id, Employee.is_active.is_(True))
+            .group_by(Employee.site_id)
+            .subquery()
+        )
+
+        wc_sub = (
+            db.session.query(
+                WorkCard.site_id.label("site_id"),
+                WorkCard.review_status.label("review_status"),
+                func.count(WorkCard.id).label("cnt"),
+            )
+            .filter(WorkCard.business_id == g.business_id, WorkCard.processing_month == month_start)
+            .group_by(WorkCard.site_id, WorkCard.review_status)
+            .subquery()
+        )
+
+        review_rows = (
+            db.session.query(
+                Site.id.label("site_id"),
+                Site.site_name.label("site_name"),
+                func.coalesce(emp_sub.c.active_employee_count, 0).label("active_employee_count"),
+                wc_sub.c.review_status.label("review_status"),
+                wc_sub.c.cnt.label("cnt"),
+            )
+            .join(wc_sub, wc_sub.c.site_id == Site.id)
+            .outerjoin(emp_sub, emp_sub.c.site_id == Site.id)
+            .filter(Site.business_id == g.business_id)
+            .all()
+        )
+
+        _REVIEW_STATUSES = ["APPROVED", "NEEDS_REVIEW", "NEEDS_ASSIGNMENT", "REJECTED"]
+        sites_review_map = {}
+        for row in review_rows:
+            sid = str(row.site_id)
+            if sid not in sites_review_map:
+                sites_review_map[sid] = {
+                    "site_id": sid, "site_name": row.site_name,
+                    "active_employee_count": int(row.active_employee_count or 0),
+                    "total_work_cards": 0,
+                    "APPROVED": 0, "NEEDS_REVIEW": 0, "NEEDS_ASSIGNMENT": 0, "REJECTED": 0,
+                }
+            sites_review_map[sid]["total_work_cards"] += int(row.cnt or 0)
+            if row.review_status in _REVIEW_STATUSES:
+                sites_review_map[sid][row.review_status] += int(row.cnt or 0)
+
+        sites_review_table = sorted(
+            [{"site_id": v["site_id"], "site_name": v["site_name"],
+              "active_employee_count": v["active_employee_count"],
+              "total_work_cards": v["total_work_cards"],
+              "approved": v["APPROVED"], "needs_review": v["NEEDS_REVIEW"],
+              "needs_assignment": v["NEEDS_ASSIGNMENT"], "rejected": v["REJECTED"]}
+             for v in sites_review_map.values()],
+            key=lambda x: x["needs_review"] + x["needs_assignment"],
+            reverse=True,
+        )
+
         payload = {
             "month": month_start.isoformat(),
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -211,6 +273,7 @@ def get_dashboard_summary():
             "sites_table": sites_table,
             "work_card_status": work_card_status,
             "trends": trends,
+            "sites_review_table": sites_review_table,
         }
 
         _set_cached(cache_key, payload)
