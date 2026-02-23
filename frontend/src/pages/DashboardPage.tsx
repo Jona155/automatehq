@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   ResponsiveContainer,
   LineChart,
@@ -54,16 +55,21 @@ const buildMonthOptions = (count: number) => {
 };
 
 export default function DashboardPage() {
+  const { businessCode } = useParams<{ businessCode: string }>();
+  const navigate = useNavigate();
   const monthOptions = useMemo(() => buildMonthOptions(12), []);
   const [selectedMonth, setSelectedMonth] = useState(monthOptions[0]?.value ?? '');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const REVIEW_PAGE_SIZE = 5;
+  const [reviewPage, setReviewPage] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
     const load = async () => {
       setIsLoading(true);
+      setReviewPage(0);
       try {
         const data = await getDashboardSummary(selectedMonth);
         if (isMounted) {
@@ -110,6 +116,17 @@ export default function DashboardPage() {
         : [{ status: 'EMPTY', label: 'ללא נתונים', count: 1, color: '#e2e8f0' }],
     [statusChartData]
   );
+
+  const reviewTablePage = useMemo(() => {
+    if (!summary?.sites_review_table) return [];
+    const start = reviewPage * REVIEW_PAGE_SIZE;
+    return summary.sites_review_table.slice(start, start + REVIEW_PAGE_SIZE);
+  }, [summary, reviewPage]);
+
+  const reviewTotalPages = useMemo(() => {
+    if (!summary?.sites_review_table) return 0;
+    return Math.ceil(summary.sites_review_table.length / REVIEW_PAGE_SIZE);
+  }, [summary]);
 
   const trendData = useMemo(() => {
     if (!summary) return [];
@@ -162,6 +179,17 @@ export default function DashboardPage() {
                 <div className="h-3 w-32 bg-slate-200 dark:bg-slate-700 rounded mt-3" />
               </div>
             ))}
+          </section>
+
+          <section className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700">
+              <div className="h-4 w-52 bg-slate-200 dark:bg-slate-700 rounded" />
+            </div>
+            <div className="px-6 py-6 space-y-4">
+              {[1, 2, 3, 4, 5].map((row) => (
+                <div key={row} className="h-4 w-full bg-slate-200 dark:bg-slate-700 rounded" />
+              ))}
+            </div>
           </section>
 
           <section className="grid grid-cols-1 xl:grid-cols-3 gap-6 xl:items-start">
@@ -228,6 +256,71 @@ export default function DashboardPage() {
               <p className="text-xs text-slate-400 mt-3">לפי חודש עבודה נוכחי</p>
             </div>
           </section>
+
+          {(summary.sites_review_table?.length ?? 0) > 0 && (
+            <section className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">אתרים הדורשים טיפול</h2>
+                  <p className="text-xs text-slate-400 mt-1">אתרים עם כרטיסי עבודה שממתינים לבדיקה או שיוך לחודש הנבחר</p>
+                </div>
+                <span className="text-xs text-slate-400">{formatMonthTitle(summary.month)}</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-right border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
+                      <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">שם אתר</th>
+                      <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">עובדים פעילים</th>
+                      <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">סה"כ כרטיסים</th>
+                      <th className="px-6 py-4 text-sm font-bold text-green-600 dark:text-green-400">מאושר</th>
+                      <th className="px-6 py-4 text-sm font-bold text-sky-600 dark:text-sky-400">צריך בדיקה</th>
+                      <th className="px-6 py-4 text-sm font-bold text-orange-500 dark:text-orange-400">צריך שיוך</th>
+                      <th className="px-6 py-4 text-sm font-bold text-red-500 dark:text-red-400">נדחה</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                    {reviewTablePage.map((site) => (
+                      <tr
+                        key={site.site_id}
+                        className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer"
+                        onClick={() => { if (businessCode) navigate(`/${businessCode}/sites/${site.site_id}`); }}
+                      >
+                        <td className="px-6 py-5 text-[#111518] dark:text-white font-medium">{site.site_name}</td>
+                        <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.active_employee_count)}</td>
+                        <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.total_work_cards)}</td>
+                        <td className="px-6 py-5 text-green-600 dark:text-green-400 font-medium">{site.approved > 0 ? formatNumber(site.approved) : '—'}</td>
+                        <td className="px-6 py-5 text-sky-600 dark:text-sky-400 font-medium">{site.needs_review > 0 ? formatNumber(site.needs_review) : '—'}</td>
+                        <td className="px-6 py-5 text-orange-500 dark:text-orange-400 font-medium">{site.needs_assignment > 0 ? formatNumber(site.needs_assignment) : '—'}</td>
+                        <td className="px-6 py-5 text-red-500 dark:text-red-400 font-medium">{site.rejected > 0 ? formatNumber(site.rejected) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {reviewTotalPages > 1 && (
+                <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between text-sm text-slate-500">
+                  <span>עמוד {reviewPage + 1} מתוך {reviewTotalPages} ({summary.sites_review_table?.length ?? 0} אתרים)</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      onClick={() => setReviewPage((p) => p - 1)}
+                      disabled={reviewPage === 0}
+                    >
+                      הקודם
+                    </button>
+                    <button
+                      className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      onClick={() => setReviewPage((p) => p + 1)}
+                      disabled={reviewPage >= reviewTotalPages - 1}
+                    >
+                      הבא
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
 
           <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 xl:self-start">
