@@ -49,8 +49,8 @@ export default function PublicPortalPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 px-4 py-10 flex items-center justify-center">
-      <div className="bg-white rounded-2xl shadow-lg p-8 max-w-lg w-full space-y-6">
+    <div className="min-h-screen bg-slate-100 px-4 py-10 flex items-center justify-center" dir="ltr">
+      <div className="bg-white rounded-2xl shadow-lg p-8 max-w-lg w-full space-y-6 text-left">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
             <BilingualText en="Work Card Upload Portal" si="වැඩ කාඩ්පත් උඩුගත කිරීමේ පෝටලය" secondaryClassName="text-sm font-normal text-slate-500 mt-1" />

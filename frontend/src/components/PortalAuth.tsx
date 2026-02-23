@@ -51,7 +51,7 @@ export default function PortalAuth({ token, onVerified }: PortalAuthProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4 text-left" dir="ltr">
       <div>
         <label className="block text-sm font-medium text-slate-700 mb-2">
           <BilingualText

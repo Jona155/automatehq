@@ -116,7 +116,7 @@ export default function PortalUpload({ sessionToken, month, siteName, employeeNa
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-left" dir="ltr">
       <div className="text-sm text-slate-600">
         <div className="mb-2">
           <BilingualText en="Site" si="අඩවිය" />
