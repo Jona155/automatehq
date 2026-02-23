@@ -84,6 +84,27 @@ def portal_token_required(f):
 
     return decorated
 
+def admin_portal_token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'message': 'Token is missing', 'success': False, 'error': 'Unauthorized'}), 401
+        try:
+            auth_token = auth_header.split(" ")[1]
+        except IndexError:
+            return jsonify({'message': 'Token is invalid', 'success': False, 'error': 'Unauthorized'}), 401
+        resp = decode_portal_token(auth_token)
+        if isinstance(resp, str):
+            return jsonify({'message': resp, 'success': False, 'error': 'Unauthorized'}), 401
+        if resp.get('scope') != 'ADMIN_PORTAL_UPLOAD':
+            return jsonify({'message': 'Invalid portal scope', 'success': False, 'error': 'Forbidden'}), 403
+        from flask import g
+        g.admin_portal_claims = resp
+        return f(*args, **kwargs)
+    return decorated
+
+
 def role_required(*allowed_roles):
     """Decorator that checks if the current user has one of the allowed roles.
     Must be used after @token_required so that g.current_user is available."""

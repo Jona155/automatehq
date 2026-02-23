@@ -8,9 +8,11 @@ from ..repositories.site_repository import SiteRepository
 from ..repositories.work_card_repository import WorkCardRepository
 from ..repositories.work_card_file_repository import WorkCardFileRepository
 from ..repositories.work_card_extraction_repository import WorkCardExtractionRepository
+from ..repositories.user_repository import UserRepository
+from ..repositories.business_repository import BusinessRepository
 from ..utils import normalize_phone, utc_now
 from .utils import api_response
-from ..auth_utils import encode_portal_token, portal_token_required
+from ..auth_utils import encode_portal_token, portal_token_required, admin_portal_token_required
 
 public_portal_bp = Blueprint('public_portal', __name__, url_prefix='/api/public')
 access_repo = UploadAccessRequestRepository()
@@ -19,6 +21,8 @@ site_repo = SiteRepository()
 work_card_repo = WorkCardRepository()
 file_repo = WorkCardFileRepository()
 extraction_repo = WorkCardExtractionRepository()
+user_repo = UserRepository()
+business_repo = BusinessRepository()
 
 VERIFY_RATE_LIMIT = 5
 VERIFY_WINDOW_SECONDS = 60
@@ -154,6 +158,130 @@ def upload_files():
             extraction_repo.create(
                 work_card_id=work_card.id,
                 status='PENDING'
+            )
+
+            uploaded.append({'id': str(work_card.id), 'filename': filename})
+        except Exception as e:
+            failed.append({'filename': file.filename, 'error': str(e)})
+
+    return api_response(
+        data={'uploaded': uploaded, 'failed': failed, 'total': len(uploaded) + len(failed)},
+        message=f"Uploaded {len(uploaded)} files"
+    )
+
+
+@public_portal_bp.route('/admin-verify', methods=['POST'])
+def admin_verify():
+    payload = request.get_json() or {}
+    business_code = payload.get('business_code')
+    phone_number = payload.get('phone_number')
+
+    if not business_code or not phone_number:
+        return api_response(status_code=400, message="business_code and phone_number are required", error="Bad Request")
+
+    ip_address = request.headers.get('X-Forwarded-For', request.remote_addr) or 'unknown'
+    if _is_rate_limited(ip_address):
+        return api_response(status_code=429, message="Too many attempts. Please try again later.", error="Rate Limit")
+
+    business = business_repo.get_by_code(business_code)
+    if not business:
+        return api_response(status_code=404, message="Business not found", error="Not Found")
+
+    user = user_repo.get_by_phone(normalize_phone(phone_number), business_id=business.id)
+    if not user or user.role not in ('ADMIN', 'OPERATOR_MANAGER') or not user.is_active:
+        return api_response(status_code=401, message="Phone verification failed", error="Unauthorized")
+
+    portal_payload = {
+        'scope': 'ADMIN_PORTAL_UPLOAD',
+        'business_id': str(business.id),
+        'user_id': str(user.id),
+    }
+    session_token = encode_portal_token(portal_payload, expires_in_seconds=86400)
+
+    sites = site_repo.get_active_sites(business_id=business.id)
+    response_data = {
+        'session_token': session_token,
+        'user_name': user.full_name,
+        'business_name': business.name,
+        'sites': [{'id': str(s.id), 'site_name': s.site_name} for s in sites],
+    }
+    return api_response(data=response_data, message="Verification successful")
+
+
+@public_portal_bp.route('/admin-upload', methods=['POST'])
+@admin_portal_token_required
+def admin_upload_files():
+    ALLOWED_TYPES = {
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'application/pdf'
+    }
+
+    claims = g.admin_portal_claims
+    business_id = claims.get('business_id')
+
+    site_id = request.form.get('site_id')
+    processing_month_str = request.form.get('processing_month')
+
+    if not site_id or not processing_month_str:
+        return api_response(status_code=400, message="site_id and processing_month are required", error="Bad Request")
+
+    site = site_repo.get_by_id(site_id)
+    if not site or str(site.business_id) != business_id:
+        return api_response(status_code=403, message="Invalid site", error="Forbidden")
+
+    try:
+        processing_month = datetime.strptime(processing_month_str, '%Y-%m-%d').date()
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid processing_month format (expected YYYY-MM-DD)", error=str(e))
+
+    if 'files' not in request.files:
+        return api_response(status_code=400, message="No files provided", error="Bad Request")
+
+    files = request.files.getlist('files')
+    if not files:
+        return api_response(status_code=400, message="No files selected", error="Bad Request")
+
+    uploaded = []
+    failed = []
+
+    for file in files:
+        if file.filename == '':
+            continue
+
+        content_type = file.content_type or 'application/octet-stream'
+        if content_type not in ALLOWED_TYPES:
+            failed.append({'filename': file.filename, 'error': 'Invalid file type'})
+            continue
+
+        try:
+            file_data = file.read()
+            filename = secure_filename(file.filename)
+
+            work_card = work_card_repo.create(
+                business_id=business_id,
+                site_id=site_id,
+                employee_id=None,
+                processing_month=processing_month,
+                source='ADMIN_PORTAL',
+                uploaded_by_user_id=None,
+                original_filename=filename,
+                mime_type=content_type,
+                file_size_bytes=len(file_data),
+                review_status='NEEDS_REVIEW',
+            )
+            file_repo.create(
+                work_card_id=work_card.id,
+                content_type=content_type,
+                file_name=filename,
+                image_bytes=file_data,
+            )
+            extraction_repo.create(
+                work_card_id=work_card.id,
+                status='PENDING',
             )
 
             uploaded.append({'id': str(work_card.id), 'filename': filename})

@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import type { User } from '../types';
 import { getUsers, createUser, updateUser, deleteUser } from '../api/users';
 import type { CreateUserPayload, UpdateUserPayload } from '../api/users';
 import { useAuth } from '../context/AuthContext';
 
 export default function UsersPage() {
+  const { businessCode } = useParams<{ businessCode: string }>();
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -12,13 +14,24 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [copied, setCopied] = useState(false);
   const { user: currentUser } = useAuth();
+
+  const adminPortalUrl = `${window.location.origin}/admin-portal/${businessCode}`;
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(adminPortalUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   // Form State
   const [formData, setFormData] = useState({
     full_name: '',
     email: '',
     password: '',
+    phone_number: '',
     role: 'ADMIN' as 'ADMIN' | 'OPERATOR_MANAGER',
   });
   const [formError, setFormError] = useState<string | null>(null);
@@ -44,7 +57,7 @@ export default function UsersPage() {
 
   const handleOpenCreate = () => {
     setEditingUser(null);
-    setFormData({ full_name: '', email: '', password: '', role: 'ADMIN' });
+    setFormData({ full_name: '', email: '', password: '', phone_number: '', role: 'ADMIN' });
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -55,6 +68,7 @@ export default function UsersPage() {
       full_name: user.full_name,
       email: user.email,
       password: '', // Password not shown
+      phone_number: user.phone_number ?? '',
       role: (user.role === 'OPERATOR_MANAGER' ? 'OPERATOR_MANAGER' : 'ADMIN'),
     });
     setFormError(null);
@@ -90,6 +104,7 @@ export default function UsersPage() {
         const payload: UpdateUserPayload = {
           full_name: formData.full_name,
           email: formData.email,
+          ...(formData.phone_number ? { phone_number: formData.phone_number } : {}),
           ...(editingUser.id !== currentUser?.id ? { role: formData.role } : {}),
         };
         await updateUser(editingUser.id, payload);
@@ -99,6 +114,7 @@ export default function UsersPage() {
           email: formData.email,
           password: formData.password,
           role: formData.role,
+          ...(formData.phone_number ? { phone_number: formData.phone_number } : {}),
         };
         await createUser(payload);
       }
@@ -142,6 +158,30 @@ export default function UsersPage() {
         </button>
       </div>
 
+      <div className="bg-white dark:bg-[#1a2a35] rounded-xl border border-slate-200/50 dark:border-slate-700/50 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span className="material-symbols-outlined text-primary text-xl shrink-0">link</span>
+          <div className="min-w-0">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-0.5">פורטל העלאה למנהלים</p>
+            <a
+              href={adminPortalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-primary hover:underline truncate block"
+            >
+              {adminPortalUrl}
+            </a>
+          </div>
+        </div>
+        <button
+          onClick={handleCopyLink}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors shrink-0"
+        >
+          <span className="material-symbols-outlined text-[18px]">{copied ? 'check' : 'content_copy'}</span>
+          {copied ? 'הועתק' : 'העתק קישור'}
+        </button>
+      </div>
+
       <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
         {isLoading ? (
           <div className="p-8 text-center text-slate-500">טוען משתמשים...</div>
@@ -154,6 +194,7 @@ export default function UsersPage() {
                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
                    <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">שם מלא</th>
                   <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">אימייל</th>
+                  <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">טלפון</th>
                   <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">תפקיד</th>
                   <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200 text-left">פעולות</th>
                 </tr>
@@ -171,6 +212,11 @@ export default function UsersPage() {
                           נוסף ב-{new Date(user.created_at).toLocaleDateString('he-IL')}
                         </span>
                       </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      <span className="text-[#111518] dark:text-white font-medium">
+                        {user.phone_number || <span className="text-slate-400">—</span>}
+                      </span>
                     </td>
                     <td className="px-6 py-5">
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary">
@@ -201,7 +247,7 @@ export default function UsersPage() {
                 ))}
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="p-8 text-center text-slate-500">
+                    <td colSpan={5} className="p-8 text-center text-slate-500">
                       לא נמצאו משתמשים
                     </td>
                   </tr>
@@ -249,6 +295,18 @@ export default function UsersPage() {
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
                   placeholder="email@example.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  מספר טלפון
+                </label>
+                <input
+                  type="tel"
+                  value={formData.phone_number}
+                  onChange={(e) => setFormData({ ...formData, phone_number: e.target.value })}
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
+                  placeholder="050-1234567"
                 />
               </div>
               {!editingUser && (
