@@ -23,12 +23,11 @@ const ALLOWED_TYPES = [
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_FILES = 50;
 
-// Helper to get previous month in YYYY-MM format
-const getPreviousMonth = (): string => {
+// Helper to get current month in YYYY-MM format
+const getCurrentMonth = (): string => {
   const now = new Date();
-  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const year = prevMonth.getFullYear();
-  const month = String(prevMonth.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
   return `${year}-${month}`;
 };
 
@@ -39,7 +38,7 @@ export default function BatchUploadModal({
   siteName,
   onUploadComplete,
 }: BatchUploadModalProps) {
-  const [selectedMonth, setSelectedMonth] = useState<string>(getPreviousMonth());
+  const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonth());
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<{

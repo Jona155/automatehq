@@ -35,15 +35,6 @@ export default function MonthPicker({ value, onChange, storageKey = 'selected_mo
   const [tempYear, setTempYear] = useState<number>(new Date().getFullYear());
   const [tempMonth, setTempMonth] = useState<number>(new Date().getMonth() + 1);
 
-  // Initialize from localStorage or default to previous month
-  useEffect(() => {
-    if (!value) {
-      const stored = localStorage.getItem(storageKey);
-      const initial = stored || getPreviousMonth();
-      onChange(initial);
-    }
-  }, []);
-
   // Parse current value when it changes
   useEffect(() => {
     if (value) {
@@ -52,13 +43,6 @@ export default function MonthPicker({ value, onChange, storageKey = 'selected_mo
       setTempMonth(parseInt(month));
     }
   }, [value]);
-
-  // Save to localStorage when value changes
-  useEffect(() => {
-    if (value) {
-      localStorage.setItem(storageKey, value);
-    }
-  }, [value, storageKey]);
 
   const handleApply = () => {
     const newValue = `${tempYear}-${String(tempMonth).padStart(2, '0')}`;
