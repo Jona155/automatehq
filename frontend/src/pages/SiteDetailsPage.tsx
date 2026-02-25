@@ -20,12 +20,11 @@ import { downloadBlobFile } from '../utils/fileDownload';
 
 type TabType = 'employees' | 'review' | 'summary';
 
-// Default month for shared Review/Summary tabs (previous month in YYYY-MM)
-function getPreviousMonth(): string {
+// Default month for shared Review/Summary tabs (current month in YYYY-MM)
+function getCurrentMonth(): string {
   const now = new Date();
-  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const year = prevMonth.getFullYear();
-  const month = String(prevMonth.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
   return `${year}-${month}`;
 }
 
@@ -45,7 +44,7 @@ export default function SiteDetailsPage() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('employees');
-  const [selectedMonth, setSelectedMonth] = useState<string>(() => getPreviousMonth());
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => getCurrentMonth());
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [responsibleEmployeeId, setResponsibleEmployeeId] = useState<string>('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
@@ -53,7 +52,7 @@ export default function SiteDetailsPage() {
   const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
   const [isDownloadingSalaryTemplate, setIsDownloadingSalaryTemplate] = useState(false);
   const [salaryModalOpen, setSalaryModalOpen] = useState(false);
-  const [salaryExportMonth, setSalaryExportMonth] = useState<string>(() => getPreviousMonth());
+  const [salaryExportMonth, setSalaryExportMonth] = useState<string>(() => getCurrentMonth());
   const [salaryExportSiteId, setSalaryExportSiteId] = useState<string>('');
   const [salarySites, setSalarySites] = useState<Site[]>([]);
   const [salaryModalError, setSalaryModalError] = useState<string | null>(null);
@@ -61,12 +60,6 @@ export default function SiteDetailsPage() {
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
 
-  // Restore shared month from localStorage when siteId is available
-  useEffect(() => {
-    if (!siteId) return;
-    const stored = localStorage.getItem(`site_details_month_${siteId}`);
-    if (stored) setSelectedMonth(stored);
-  }, [siteId]);
 
   useEffect(() => {
     if (!isAuthenticated || !siteId) return;
