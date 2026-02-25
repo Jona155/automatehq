@@ -1,5 +1,5 @@
 import client from './client';
-import type { WorkCard, DayEntry, EmployeeUploadStatus, MatrixData, WorkCardExtraction } from '../types';
+import type { WorkCard, DayEntry, EmployeeUploadStatus, MatrixData, WorkCardExtraction, Employee } from '../types';
 
 // Helper to normalize month format: converts YYYY-MM to YYYY-MM-01 if needed
 const normalizeMonthFormat = (month: string): string => {
@@ -223,3 +223,11 @@ export const getExtraction = async (cardId: string) => {
   const response = await client.get<{ data: WorkCardExtraction }>(`/work_cards/${cardId}/extraction`);
   return response.data.data;
 };
+
+export async function getMissingWorkCardEmployees(params: {
+  month: string;
+  site_id?: string;
+}): Promise<Employee[]> {
+  const response = await client.get<{ data: Employee[] }>('/work_cards/missing', { params });
+  return response.data.data;
+}
