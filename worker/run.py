@@ -330,6 +330,22 @@ def process_job(
         if matched_employee_id and not work_card.employee_id:
             work_card_repo.update(work_card.id, employee_id=matched_employee_id)
             logger.info(f"Updated work card with matched employee {matched_employee_id}")
+
+        # Derive site_id from the matched employee when the work card has none.
+        if matched_employee_id:
+            matched_employee = employee_repo.get_by_id(matched_employee_id)
+            employee_site_id = matched_employee.site_id if matched_employee else None
+            if employee_site_id:
+                if work_card.site_id is None:
+                    work_card_repo.update_site(work_card.id, employee_site_id, work_card.business_id)
+                    logger.info(f"Derived site_id {employee_site_id} from matched employee")
+                elif str(work_card.site_id) != str(employee_site_id):
+                    logger.warning(
+                        f"Site conflict for work card {work_card.id}: "
+                        f"uploaded hint={work_card.site_id}, employee site={employee_site_id}. "
+                        f"Overriding with employee site."
+                    )
+                    work_card_repo.update_site(work_card.id, employee_site_id, work_card.business_id)
         
         # Update work card review status
         # - If employee is already assigned (single upload) -> NEEDS_REVIEW

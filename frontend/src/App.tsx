@@ -11,6 +11,7 @@ import EmployeeImportPage from './pages/EmployeeImportPage';
 import PublicPortalPage from './pages/PublicPortalPage';
 import AdminPortalPage from './pages/AdminPortalPage';
 import MissingWorkCardsPage from './pages/MissingWorkCardsPage';
+import UnassignedWorkCardsPage from './pages/UnassignedWorkCardsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import TenantGuard from './components/TenantGuard';
 import Layout from './components/Layout';
@@ -46,6 +47,7 @@ function App() {
                 <Route path="/:businessCode/sites/:siteId" element={<SiteDetailsPage />} />
                 <Route path="/:businessCode/sites/:siteId/review" element={<SiteReviewPage />} />
                 <Route path="/:businessCode/missing-work-cards" element={<MissingWorkCardsPage />} />
+                <Route path="/:businessCode/unassigned-work-cards" element={<UnassignedWorkCardsPage />} />
                 <Route element={<AdminRoute />}>
                   <Route path="/:businessCode/users" element={<UsersPage />} />
                   <Route path="/:businessCode/employee-imports" element={<EmployeeImportPage />} />

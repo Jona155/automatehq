@@ -223,15 +223,16 @@ def admin_upload_files():
     claims = g.admin_portal_claims
     business_id = claims.get('business_id')
 
-    site_id = request.form.get('site_id')
+    site_id = request.form.get('site_id') or None
     processing_month_str = request.form.get('processing_month')
 
-    if not site_id or not processing_month_str:
-        return api_response(status_code=400, message="site_id and processing_month are required", error="Bad Request")
+    if not processing_month_str:
+        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
 
-    site = site_repo.get_by_id(site_id)
-    if not site or str(site.business_id) != business_id:
-        return api_response(status_code=403, message="Invalid site", error="Forbidden")
+    if site_id:
+        site = site_repo.get_by_id(site_id)
+        if not site or str(site.business_id) != business_id:
+            return api_response(status_code=403, message="Invalid site", error="Forbidden")
 
     try:
         processing_month = datetime.strptime(processing_month_str, '%Y-%m-%d').date()
@@ -271,7 +272,7 @@ def admin_upload_files():
                 original_filename=filename,
                 mime_type=content_type,
                 file_size_bytes=len(file_data),
-                review_status='NEEDS_REVIEW',
+                review_status='NEEDS_ASSIGNMENT' if not site_id else 'NEEDS_REVIEW',
             )
             file_repo.create(
                 work_card_id=work_card.id,

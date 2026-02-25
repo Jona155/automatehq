@@ -16,6 +16,7 @@ import Modal from '../components/Modal';
 import LoadingIndicator from '../components/LoadingIndicator';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import { downloadBlobFile } from '../utils/fileDownload';
+import BatchUploadModal from '../components/BatchUploadModal';
 
 type SortField = 'site_name' | 'site_code' | 'employee_count' | 'is_active';
 type SortOrder = 'asc' | 'desc';
@@ -62,6 +63,7 @@ export default function SitesPage() {
   const [salaryExportMonth, setSalaryExportMonth] = useState(getDefaultMonth());
   const [isSalaryExporting, setIsSalaryExporting] = useState(false);
   const [salaryExportError, setSalaryExportError] = useState<string | null>(null);
+  const [globalUploadOpen, setGlobalUploadOpen] = useState(false);
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
 
@@ -376,6 +378,16 @@ export default function SitesPage() {
               >
                 <span className="material-symbols-outlined text-lg">chat</span>
                 <span>שליחת הודעות וואטסאפ</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  setGlobalUploadOpen(true);
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">cloud_upload</span>
+                <span>העלאה גלובלית (ללא אתר)</span>
               </button>
             </div>
           )}
@@ -854,6 +866,11 @@ export default function SitesPage() {
           </div>
         </div>
       )}
+      <BatchUploadModal
+        isOpen={globalUploadOpen}
+        onClose={() => setGlobalUploadOpen(false)}
+        onUploadComplete={() => setGlobalUploadOpen(false)}
+      />
     </div>
   );
 }

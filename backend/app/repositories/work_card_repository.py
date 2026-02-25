@@ -4,7 +4,7 @@ from datetime import date
 from sqlalchemy.orm import joinedload
 from sqlalchemy import or_
 from .base import BaseRepository
-from ..models.work_cards import WorkCard
+from ..models.work_cards import WorkCard, WorkCardExtraction
 from ..models.sites import Employee
 from ..utils import utc_now
 
@@ -125,20 +125,70 @@ class WorkCardRepository(BaseRepository[WorkCard]):
             business_id=business_id
         ).all()
     
-    def get_unassigned_cards(self, business_id: UUID) -> List[WorkCard]:
+    def get_unassigned_cards(
+        self,
+        business_id: UUID,
+        month: Optional[date] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
         """
-        Get all work cards without an assigned employee for a business.
-        
+        Get work cards without an assigned employee for a business.
+
+        Returns a dict with 'items', 'total', 'page', 'page_size'.
+        Cards with review_status='NEEDS_ASSIGNMENT' and employee_id IS NULL.
+        Extraction data is eagerly loaded.
+        """
+        query = (
+            self.session.query(WorkCard)
+            .options(joinedload(WorkCard.extraction))
+            .filter(
+                WorkCard.employee_id.is_(None),
+                WorkCard.review_status == 'NEEDS_ASSIGNMENT',
+                WorkCard.business_id == business_id,
+            )
+        )
+
+        if month:
+            query = query.filter(WorkCard.processing_month == month)
+
+        total = query.count()
+        items = (
+            query.order_by(WorkCard.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+
+        return {
+            'items': items,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+        }
+
+    def update_site(self, work_card_id: UUID, site_id: Optional[UUID], business_id: UUID) -> Optional[WorkCard]:
+        """
+        Update the site_id of a work card.
+
         Args:
-            business_id: The business UUID
-        
+            work_card_id: The work card's UUID
+            site_id: The new site UUID (may be None)
+            business_id: The business UUID to verify ownership
+
         Returns:
-            List of WorkCard instances with no employee_id
+            Updated WorkCard instance or None if not found
         """
-        return self.session.query(WorkCard).filter(
-            WorkCard.employee_id.is_(None),
-            WorkCard.business_id == business_id
-        ).all()
+        card = self.session.query(WorkCard).filter_by(
+            id=work_card_id,
+            business_id=business_id,
+        ).first()
+        if not card:
+            return None
+
+        card.site_id = site_id
+        self.session.commit()
+        return card
     
     def get_pending_review(self, business_id: UUID, site_id: Optional[UUID] = None) -> List[WorkCard]:
         """

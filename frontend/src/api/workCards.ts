@@ -231,3 +231,59 @@ export async function getMissingWorkCardEmployees(params: {
   const response = await client.get<{ data: Employee[] }>('/work_cards/missing', { params });
   return response.data.data;
 }
+
+// Upload batch work cards without a site (employee-first flow)
+export const uploadSitelessBatchWorkCards = async (processingMonth: string, files: File[]) => {
+  const formData = new FormData();
+  formData.append('processing_month', normalizeMonthFormat(processingMonth));
+
+  files.forEach((file) => {
+    formData.append('files', file);
+  });
+
+  const response = await client.post<{ data: UploadBatchResponse }>('/work_cards/upload/siteless-batch', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data.data;
+};
+
+export interface UnassignedWorkCard {
+  id: string;
+  business_id: string;
+  site_id: string | null;
+  employee_id: string | null;
+  processing_month: string;
+  source: string;
+  original_filename: string | null;
+  review_status: string;
+  created_at: string;
+  extraction?: {
+    id: string;
+    status: string;
+    extracted_employee_name: string | null;
+    extracted_passport_id: string | null;
+    match_method: string | null;
+    match_confidence: number | null;
+    normalized_result_jsonb: Record<string, unknown> | null;
+  } | null;
+}
+
+export interface UnassignedCardsPage {
+  items: UnassignedWorkCard[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+// Get unassigned work cards (business-wide, no employee)
+export const getUnassignedWorkCards = async (params: { month?: string; page?: number; page_size?: number }) => {
+  const queryParams: Record<string, string> = {};
+  if (params.month) queryParams.month = normalizeMonthFormat(params.month);
+  if (params.page) queryParams.page = String(params.page);
+  if (params.page_size) queryParams.page_size = String(params.page_size);
+
+  const response = await client.get<{ data: UnassignedCardsPage }>('/work_cards/unassigned', { params: queryParams });
+  return response.data.data;
+};

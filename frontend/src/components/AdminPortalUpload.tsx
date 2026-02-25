@@ -72,10 +72,6 @@ export default function AdminPortalUpload({ sessionToken, userName, businessName
   };
 
   const handleUpload = async () => {
-    if (!selectedSiteId) {
-      setError('יש לבחור אתר לפני ההעלאה.');
-      return;
-    }
     if (files.length === 0) {
       setError('יש לבחור קבצים להעלאה.');
       return;
@@ -86,7 +82,7 @@ export default function AdminPortalUpload({ sessionToken, userName, businessName
     try {
       const result = await uploadAdminPortalFiles(
         sessionToken,
-        { site_id: selectedSiteId, processing_month: selectedMonth + '-01' },
+        { site_id: selectedSiteId || undefined, processing_month: selectedMonth + '-01' },
         files,
       );
       setMessage(`הועלו בהצלחה ${result?.uploaded?.length ?? files.length} קבצים.`);
@@ -114,7 +110,7 @@ export default function AdminPortalUpload({ sessionToken, userName, businessName
           onChange={(e) => setSelectedSiteId(e.target.value)}
           className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-white text-right"
         >
-          <option value="">בחר אתר</option>
+          <option value="">בחר אתר (אופציונלי)</option>
           {sites.map((site) => (
             <option key={site.id} value={site.id}>{site.site_name}</option>
           ))}

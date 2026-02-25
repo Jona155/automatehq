@@ -10,7 +10,7 @@ class WorkCard(db.Model):
 
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     business_id = db.Column(UUID(as_uuid=True), db.ForeignKey('businesses.id'), nullable=False)
-    site_id = db.Column(UUID(as_uuid=True), db.ForeignKey('sites.id'), nullable=False)
+    site_id = db.Column(UUID(as_uuid=True), db.ForeignKey('sites.id'), nullable=True)
     employee_id = db.Column(UUID(as_uuid=True), db.ForeignKey('employees.id'), nullable=True)
     processing_month = db.Column(db.Date, nullable=False)
     source = db.Column(db.Text, nullable=False)  # ADMIN_SINGLE, ADMIN_BATCH, etc.

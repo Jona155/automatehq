@@ -74,6 +74,11 @@ export default function Sidebar() {
           {!collapsed && <span>כרטיסי עבודה חסרים</span>}
         </NavLink>
 
+        <NavLink to={`${base}/unassigned-work-cards`} className={linkClass} title={collapsed ? 'כרטיסים לא משויכים' : undefined}>
+          <span className="material-symbols-outlined text-[20px] shrink-0">link_off</span>
+          {!collapsed && <span>כרטיסים לא משויכים</span>}
+        </NavLink>
+
         {isAdmin && !collapsed && (
           <div className="pt-4 pb-2">
             <button

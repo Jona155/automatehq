@@ -1,13 +1,13 @@
 import { useState, useRef } from 'react';
 import Modal from './Modal';
 import MonthPicker from './MonthPicker';
-import { uploadBatchWorkCards } from '../api/workCards';
+import { uploadBatchWorkCards, uploadSitelessBatchWorkCards } from '../api/workCards';
 
 interface BatchUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  siteId: string;
-  siteName: string;
+  siteId?: string;
+  siteName?: string;
   onUploadComplete: () => void;
 }
 
@@ -40,6 +40,7 @@ export default function BatchUploadModal({
   siteName,
   onUploadComplete,
 }: BatchUploadModalProps) {
+  const siteless = !siteId;
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonth());
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -121,7 +122,9 @@ export default function BatchUploadModal({
     setUploadResult(null);
 
     try {
-      const result = await uploadBatchWorkCards(siteId, selectedMonth, selectedFiles);
+      const result = siteless
+        ? await uploadSitelessBatchWorkCards(selectedMonth, selectedFiles)
+        : await uploadBatchWorkCards(siteId!, selectedMonth, selectedFiles);
       
       setUploadResult({
         uploaded: result.uploaded?.length || 0,
@@ -156,13 +159,17 @@ export default function BatchUploadModal({
         {/* Site Info */}
         <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-600 flex items-center justify-center">
-              <span className="material-symbols-outlined">domain</span>
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${siteless ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600' : 'bg-purple-100 dark:bg-purple-900/40 text-purple-600'}`}>
+              <span className="material-symbols-outlined">{siteless ? 'public' : 'domain'}</span>
             </div>
             <div>
-              <div className="font-bold text-slate-900 dark:text-white">{siteName}</div>
+              <div className="font-bold text-slate-900 dark:text-white">
+                {siteless ? 'העלאה גלובלית (ללא אתר)' : siteName}
+              </div>
               <div className="text-sm text-slate-600 dark:text-slate-400">
-                העלאה מרובה - המערכת תזהה את העובדים באופן אוטומטי
+                {siteless
+                  ? 'כרטיסי עבודה יושוו לעובדים אוטומטית ולאתר שלהם'
+                  : 'העלאה מרובה - המערכת תזהה את העובדים באופן אוטומטי'}
               </div>
             </div>
           </div>
@@ -176,7 +183,7 @@ export default function BatchUploadModal({
           <MonthPicker
             value={selectedMonth}
             onChange={setSelectedMonth}
-            storageKey={`batch_upload_month_${siteId}`}
+            storageKey={siteless ? 'batch_upload_month_siteless' : `batch_upload_month_${siteId}`}
           />
         </div>
 

@@ -205,12 +205,18 @@ def update_work_card(card_id):
             data['review_status'] = 'NEEDS_REVIEW'
         elif not has_employee:
             data['review_status'] = 'NEEDS_ASSIGNMENT'
-        
+
+        # Derive site_id from the assigned employee when the card has no site yet.
+        if has_employee and card.site_id is None:
+            assigned_employee = employee_repo.get_by_id(data['employee_id'])
+            if assigned_employee and assigned_employee.site_id:
+                data['site_id'] = str(assigned_employee.site_id)
+
     try:
         updated_card = repo.update(card_id, **data)
         if not updated_card:
             return api_response(status_code=404, message="Work card not found", error="Not Found")
-            
+
         return api_response(data=model_to_dict(updated_card), message="Work card updated successfully")
     except Exception as e:
         return api_response(status_code=500, message="Failed to update work card", error=str(e))
@@ -1031,3 +1037,139 @@ def upload_batch():
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
     except Exception as e:
         return api_response(status_code=500, message="Failed to process batch upload", error=str(e))
+
+
+@work_cards_bp.route('/upload/siteless-batch', methods=['POST'])
+@token_required
+def upload_siteless_batch():
+    """Upload multiple work cards without a site — site is derived from matched employee."""
+    ALLOWED_TYPES = {
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'application/pdf'
+    }
+
+    if 'files' not in request.files:
+        return api_response(status_code=400, message="No files provided", error="Bad Request")
+
+    files = request.files.getlist('files')
+    if not files or len(files) == 0:
+        return api_response(status_code=400, message="No files selected", error="Bad Request")
+
+    processing_month = request.form.get('processing_month')
+    if not processing_month:
+        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
+
+    try:
+        month = datetime.strptime(processing_month, '%Y-%m-%d').date()
+
+        uploaded = []
+        failed = []
+
+        for file in files:
+            if file.filename == '':
+                continue
+
+            content_type = file.content_type or 'application/octet-stream'
+            if content_type not in ALLOWED_TYPES:
+                failed.append({
+                    'filename': file.filename,
+                    'error': 'סוג קובץ לא נתמך. אנא העלה קובץ תמונה או PDF בלבד'
+                })
+                continue
+
+            try:
+                file_data = file.read()
+                filename = secure_filename(file.filename)
+
+                work_card = repo.create(
+                    business_id=g.business_id,
+                    site_id=None,
+                    employee_id=None,
+                    processing_month=month,
+                    source='ADMIN_BATCH',
+                    uploaded_by_user_id=g.current_user.id,
+                    original_filename=filename,
+                    mime_type=content_type,
+                    file_size_bytes=len(file_data),
+                    review_status='NEEDS_ASSIGNMENT',
+                )
+
+                file_repo.create(
+                    work_card_id=work_card.id,
+                    content_type=content_type,
+                    file_name=filename,
+                    image_bytes=file_data,
+                )
+
+                extraction_repo.create(
+                    work_card_id=work_card.id,
+                    status='PENDING',
+                )
+
+                uploaded.append({'filename': filename, 'work_card_id': str(work_card.id)})
+            except Exception as e:
+                failed.append({'filename': file.filename, 'error': str(e)})
+
+        return api_response(
+            data={
+                'uploaded': uploaded,
+                'failed': failed,
+                'summary': {
+                    'total': len(files),
+                    'uploaded': len(uploaded),
+                    'failed': len(failed),
+                },
+            },
+            message=f"Siteless batch upload completed: {len(uploaded)} uploaded, {len(failed)} failed",
+            status_code=201,
+        )
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+    except Exception as e:
+        return api_response(status_code=500, message="Failed to process siteless batch upload", error=str(e))
+
+
+@work_cards_bp.route('/unassigned', methods=['GET'])
+@token_required
+def get_unassigned_work_cards():
+    """Return paginated unassigned work cards (no employee) for the current business."""
+    from datetime import date as date_type
+
+    month_str = request.args.get('month')
+    page = int(request.args.get('page', 1))
+    page_size = int(request.args.get('page_size', 20))
+
+    month = None
+    if month_str:
+        try:
+            month = datetime.strptime(month_str, '%Y-%m-%d').date()
+        except ValueError:
+            return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
+
+    try:
+        result = repo.get_unassigned_cards(
+            business_id=g.business_id,
+            month=month,
+            page=page,
+            page_size=page_size,
+        )
+
+        items_data = []
+        for card in result['items']:
+            card_dict = model_to_dict(card)
+            if card.extraction:
+                card_dict['extraction'] = model_to_dict(card.extraction)
+            items_data.append(card_dict)
+
+        return api_response(data={
+            'items': items_data,
+            'total': result['total'],
+            'page': result['page'],
+            'page_size': result['page_size'],
+        })
+    except Exception as e:
+        return api_response(status_code=500, message="Failed to fetch unassigned work cards", error=str(e))
