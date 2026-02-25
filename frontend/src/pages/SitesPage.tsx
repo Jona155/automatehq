@@ -629,38 +629,38 @@ export default function SitesPage() {
             </table>
             {sortedSites.length > 0 && (
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-6 py-4 border-t border-slate-100 dark:border-slate-700/50 bg-slate-50/60 dark:bg-slate-900/40">
-                <div className="text-sm text-slate-600 dark:text-slate-400">
-                  Page {currentPage} of {totalPages}
-                </div>
-                <div className="flex items-center gap-2 justify-end">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => setCurrentPage(1)}
                     disabled={currentPage === 1}
                     className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   >
-                    First
+                    ראשון
                   </button>
                   <button
                     onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
                     disabled={currentPage === 1}
                     className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   >
-                    Prev
+                    הקודם
                   </button>
                   <button
                     onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
                     disabled={currentPage === totalPages}
                     className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   >
-                    Next
+                    הבא
                   </button>
                   <button
                     onClick={() => setCurrentPage(totalPages)}
                     disabled={currentPage === totalPages}
                     className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   >
-                    Last
+                    אחרון
                   </button>
+                </div>
+                <div className="text-sm text-slate-600 dark:text-slate-400">
+                  עמוד {currentPage} מתוך {totalPages}
                 </div>
               </div>
             )}
