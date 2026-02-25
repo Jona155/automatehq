@@ -69,6 +69,11 @@ export default function Sidebar() {
           {!collapsed && <span>אתרים</span>}
         </NavLink>
 
+        <NavLink to={`${base}/missing-work-cards`} className={linkClass} title={collapsed ? 'כרטיסי עבודה חסרים' : undefined}>
+          <span className="material-symbols-outlined text-[20px] shrink-0">assignment_late</span>
+          {!collapsed && <span>כרטיסי עבודה חסרים</span>}
+        </NavLink>
+
         {isAdmin && !collapsed && (
           <div className="pt-4 pb-2">
             <button

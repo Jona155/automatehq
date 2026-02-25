@@ -5,6 +5,7 @@ from io import BytesIO, StringIO
 import csv
 import zipfile
 import unicodedata
+import logging
 from uuid import UUID
 import re
 from typing import Any, Dict, Optional, Set, Tuple
@@ -12,16 +13,20 @@ from ..repositories.work_card_repository import WorkCardRepository
 from ..repositories.work_card_file_repository import WorkCardFileRepository
 from ..repositories.work_card_extraction_repository import WorkCardExtractionRepository
 from ..repositories.work_card_day_entry_repository import WorkCardDayEntryRepository
+from ..repositories.employee_repository import EmployeeRepository
 from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required, role_required
 from ..extensions import db
 from ..models.sites import Site
+
+logger = logging.getLogger(__name__)
 
 work_cards_bp = Blueprint('work_cards', __name__, url_prefix='/api/work_cards')
 repo = WorkCardRepository()
 file_repo = WorkCardFileRepository()
 extraction_repo = WorkCardExtractionRepository()
 day_entry_repo = WorkCardDayEntryRepository()
+employee_repo = EmployeeRepository()
 
 
 def _normalize_time_value(value: Any) -> Optional[str]:
@@ -79,6 +84,40 @@ def _get_previous_card_context(card: Any) -> Tuple[Optional[Any], Dict[int, Any]
         return None, {}
     previous_entries_by_day = {entry.day_of_month: entry for entry in previous_card.day_entries}
     return previous_card, previous_entries_by_day
+
+@work_cards_bp.route('/missing', methods=['GET'])
+@token_required
+def get_missing_work_card_employees():
+    """Return active employees who have no work card for the given month."""
+    from datetime import date as date_type
+    import uuid as uuid_module
+
+    month_str = request.args.get('month')
+    site_id_str = request.args.get('site_id')
+
+    if not month_str:
+        return api_response(status_code=400, message="month parameter is required", error="Bad Request")
+    try:
+        month = date_type.fromisoformat(month_str)
+    except ValueError:
+        return api_response(status_code=400, message="Invalid month format, use YYYY-MM-DD", error="Bad Request")
+
+    site_id = None
+    if site_id_str:
+        try:
+            site_id = uuid_module.UUID(site_id_str)
+        except ValueError:
+            return api_response(status_code=400, message="Invalid site_id format", error="Bad Request")
+
+    try:
+        employees = employee_repo.get_missing_work_card_employees(
+            business_id=g.business_id, month=month, site_id=site_id
+        )
+        return api_response(data=models_to_list(employees))
+    except Exception as e:
+        logger.exception("Failed to get missing work card employees")
+        return api_response(status_code=500, message="Failed to fetch missing employees", error=str(e))
+
 
 @work_cards_bp.route('', methods=['GET'])
 @token_required

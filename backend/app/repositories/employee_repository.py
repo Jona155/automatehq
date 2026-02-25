@@ -1,6 +1,7 @@
 from typing import Optional, List
 from uuid import UUID
-from sqlalchemy import func
+from datetime import date
+from sqlalchemy import func, exists
 import re
 import unicodedata
 from .base import BaseRepository
@@ -200,6 +201,31 @@ class EmployeeRepository(BaseRepository[Employee]):
             is_active=True
         ).all()
     
+    def get_missing_work_card_employees(
+        self, business_id: UUID, month: date, site_id: Optional[UUID] = None
+    ) -> List[Employee]:
+        """
+        Get active employees who have no work card for the given month.
+        Optionally scoped to a specific site.
+        """
+        from ..models.work_cards import WorkCard
+
+        subquery = exists().where(
+            WorkCard.employee_id == Employee.id,
+            WorkCard.processing_month == month,
+            WorkCard.business_id == business_id,
+        )
+
+        query = self.session.query(Employee).filter(
+            Employee.business_id == business_id,
+            Employee.is_active == True,
+            ~subquery,
+        )
+        if site_id:
+            query = query.filter(Employee.site_id == site_id)
+
+        return query.order_by(Employee.full_name).all()
+
     def get_all_for_business(self, business_id: UUID) -> List[Employee]:
         """
         Get all employees for a business.
