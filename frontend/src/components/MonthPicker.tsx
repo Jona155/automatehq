@@ -30,7 +30,7 @@ const shiftMonth = (value: string, delta: number): string => {
   return `${nextYear}-${nextMonth}`;
 };
 
-export default function MonthPicker({ value, onChange, storageKey = 'selected_month' }: MonthPickerProps) {
+export default function MonthPicker({ value, onChange }: MonthPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [tempYear, setTempYear] = useState<number>(new Date().getFullYear());
   const [tempMonth, setTempMonth] = useState<number>(new Date().getMonth() + 1);
