@@ -23,6 +23,8 @@ const ALLOWED_TYPES = [
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_FILES = 50;
 
+const getFileId = (file: File) => `${file.name}-${file.size}-${file.lastModified}`;
+
 // Helper to get current month in YYYY-MM format
 const getCurrentMonth = (): string => {
   const now = new Date();
@@ -62,12 +64,6 @@ export default function BatchUploadModal({
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
 
-    // Validate total file count
-    if (files.length > MAX_FILES) {
-      setError(`ניתן להעלות עד ${MAX_FILES} קבצים בכל פעם`);
-      return;
-    }
-
     // Validate each file
     const validFiles: File[] = [];
     const errors: string[] = [];
@@ -90,7 +86,23 @@ export default function BatchUploadModal({
       setError(null);
     }
 
-    setSelectedFiles(validFiles);
+    setSelectedFiles((prev) => {
+      const existing = new Map(prev.map((file) => [getFileId(file), file]));
+      validFiles.forEach((file) => {
+        existing.set(getFileId(file), file);
+      });
+      const merged = Array.from(existing.values());
+      if (merged.length > MAX_FILES) {
+        setError(`ניתן להעלות עד ${MAX_FILES} קבצים בכל פעם`);
+        return prev;
+      }
+      return merged;
+    });
+
+    // Reset input so the same file can be re-added after removal
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const handleUploadClick = () => {
