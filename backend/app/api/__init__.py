@@ -8,6 +8,7 @@ from .auth import auth_bp
 from .public_portal import public_portal_bp
 from .dashboard import dashboard_bp
 from .employee_imports import employee_imports_bp
+from .telegram_settings import telegram_settings_bp
 
 def register_blueprints(app: Flask):
     """Register all API blueprints."""
@@ -20,3 +21,4 @@ def register_blueprints(app: Flask):
     app.register_blueprint(public_portal_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(employee_imports_bp)
+    app.register_blueprint(telegram_settings_bp)

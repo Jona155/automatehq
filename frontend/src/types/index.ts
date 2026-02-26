@@ -292,3 +292,11 @@ export interface DashboardSummary {
     rejected: number;
   }>;
 }
+
+export interface TelegramConfig {
+  is_configured: boolean;
+  telegram_chat_id?: number | null;
+  current_processing_month?: string | null;
+  auto_advance_day?: number | null;
+  is_active?: boolean;
+}

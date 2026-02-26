@@ -79,6 +79,11 @@ export default function Sidebar() {
           {!collapsed && <span>כרטיסים לא משויכים</span>}
         </NavLink>
 
+        <NavLink to={`${base}/settings/telegram`} className={linkClass} title={collapsed ? 'הגדרות Telegram' : undefined}>
+          <span className="material-symbols-outlined text-[20px] shrink-0">send</span>
+          {!collapsed && <span>הגדרות Telegram</span>}
+        </NavLink>
+
         {isAdmin && !collapsed && (
           <div className="pt-4 pb-2">
             <button

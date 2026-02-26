@@ -520,7 +520,25 @@ def main_loop(app: Flask):
 
 def main():
     """Entry point."""
+    import threading
     app = create_worker_app()
+
+    if os.environ.get('TELEGRAM_BOT_TOKEN'):
+        try:
+            from telegram_poller import run_telegram_polling_loop
+            t = threading.Thread(
+                target=run_telegram_polling_loop,
+                args=(app,),
+                daemon=True,
+                name='telegram-poller',
+            )
+            t.start()
+            logger.info("Telegram polling thread started")
+        except Exception as e:
+            logger.warning(f"Failed to start Telegram polling thread: {e}")
+    else:
+        logger.info("TELEGRAM_BOT_TOKEN not set — Telegram polling disabled")
+
     main_loop(app)
 
 

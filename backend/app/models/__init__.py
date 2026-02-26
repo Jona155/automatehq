@@ -4,6 +4,7 @@ from .sites import Site, Employee
 from .work_cards import WorkCard, WorkCardFile, WorkCardExtraction, WorkCardDayEntry
 from .audit import ExportRun, AuditEvent
 from .upload_access import UploadAccessRequest
+from .telegram import TelegramBotConfig, TelegramIngestedFile, TelegramPollingState
 
 __all__ = [
     'Business',
@@ -16,5 +17,8 @@ __all__ = [
     'WorkCardDayEntry',
     'ExportRun',
     'AuditEvent',
-    'UploadAccessRequest'
+    'UploadAccessRequest',
+    'TelegramBotConfig',
+    'TelegramIngestedFile',
+    'TelegramPollingState',
 ]
