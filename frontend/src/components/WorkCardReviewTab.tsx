@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import type { WorkCard, DayEntry, WorkCardExtraction, Employee } from '../types';
-import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, getExtraction, updateWorkCard } from '../api/workCards';
+import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
 import MonthPicker from './MonthPicker';
 import { useToast } from '../hooks/useToast';
@@ -163,6 +163,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
   const [extractionsByCardId, setExtractionsByCardId] = useState<Record<string, WorkCardExtraction | null>>({});
   const [isTriggering, setIsTriggering] = useState(false);
+  const [isReextractingHours, setIsReextractingHours] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
@@ -714,6 +715,25 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
       showToast('שגיאה בהפעלת חילוץ', 'error');
     } finally {
       setIsTriggering(false);
+    }
+  };
+
+  // Re-extract hours only (preserves employee assignment, replaces day entries)
+  const handleReextractHours = async () => {
+    if (!selectedCard) return;
+
+    setIsReextractingHours(true);
+    try {
+      const cardId = selectedCard.id;
+      const extractionData = await reextractHours(cardId);
+      setExtraction(extractionData);
+      setExtractionsByCardId(prev => ({ ...prev, [cardId]: extractionData }));
+      showToast('חילוץ שעות מחדש הופעל', 'info');
+    } catch (err) {
+      console.error('Failed to trigger hours re-extraction:', err);
+      showToast('שגיאה בהפעלת חילוץ שעות', 'error');
+    } finally {
+      setIsReextractingHours(false);
     }
   };
 
@@ -1537,6 +1557,23 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                         ? 'חולץ'
                         : 'חלץ נתונים'}
                     </button>
+                    {extraction?.status === 'DONE' && (
+                      <>
+                        <span className="text-slate-300 dark:text-slate-600">|</span>
+                        <button
+                          type="button"
+                          onClick={handleReextractHours}
+                          disabled={isReextractingHours}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-900/30"
+                          title="חלץ שעות מחדש מהתמונה (ללא שינוי שיוך עובד)"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>
+                            {isReextractingHours ? 'progress_activity' : 'refresh'}
+                          </span>
+                          {isReextractingHours ? 'מחלץ...' : 'חלץ שעות מחדש'}
+                        </button>
+                      </>
+                    )}
                   </>
                 )}
               </div>
