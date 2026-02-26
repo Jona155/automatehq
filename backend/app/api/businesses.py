@@ -8,12 +8,14 @@ from flask import Blueprint, request
 from werkzeug.security import generate_password_hash
 from ..repositories.business_repository import BusinessRepository
 from ..repositories.user_repository import UserRepository
+from ..repositories.site_repository import SiteRepository
 from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required, role_required
 
 businesses_bp = Blueprint('businesses', __name__, url_prefix='/api/businesses')
 repo = BusinessRepository()
 user_repo = UserRepository()
+site_repo = SiteRepository()
 
 @businesses_bp.route('', methods=['GET'])
 @token_required
@@ -143,6 +145,19 @@ def deactivate_business(business_id):
         return api_response(message="Business deactivated successfully")
     except Exception as e:
         return api_response(status_code=500, message="Failed to deactivate business", error=str(e))
+
+
+@businesses_bp.route('/<uuid:business_id>/sites', methods=['GET'])
+@token_required
+@role_required('APPLICATION_MANAGER')
+def get_business_sites(business_id):
+    """Get all sites for a specific business."""
+    business = repo.get_by_id(business_id)
+    if not business:
+        return api_response(status_code=404, message="Business not found", error="Not Found")
+
+    sites = site_repo.get_all_for_business(business_id)
+    return api_response(data=models_to_list(sites))
 
 
 @businesses_bp.route('/<uuid:business_id>/users', methods=['GET'])
