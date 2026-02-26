@@ -19,7 +19,7 @@ from passport_normalization import normalize_passport
 logger = logging.getLogger('extraction_worker.extractor')
 
 # Pipeline version for tracking
-PIPELINE_VERSION = "1.3.0"
+PIPELINE_VERSION = "2.0.0"
 
 # OpenAI configuration
 PRIMARY_VISION_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
@@ -161,6 +161,27 @@ class TargetedRowReviewRequest(BaseModel):
     entries: List[WorkRow] = Field(
         default_factory=list,
         description="Reviewed rows for requested days only",
+    )
+
+
+class IdentityExtraction(BaseModel):
+    """Phase 1 result — employee identity only (no day entries)."""
+    employee_name: Optional[str] = Field(None, description="Employee name if visible on card")
+    passport_id_candidates: List[PassportIdCandidate] = Field(
+        default_factory=list,
+        description="All visible passport/ID candidates with approximate location hints",
+    )
+    selected_passport_id_normalized: Optional[str] = Field(
+        None,
+        description="Best normalized passport/ID value selected from candidates",
+    )
+
+
+class DayEntriesExtraction(BaseModel):
+    """Phase 2 result — day entries only (no identity fields)."""
+    entries: List[WorkRow] = Field(
+        default_factory=list,
+        description="List of extracted day entries for visible day labels only",
     )
 
 
@@ -935,6 +956,120 @@ def extract_header_from_full_image(image_bytes: bytes) -> Optional[HeaderInfo]:
     return parsed
 
 
+def _extract_identity_phase(image_bytes: bytes) -> Tuple[Optional[IdentityExtraction], Optional[str]]:
+    """Phase 1 — extract employee name and passport/ID only (one API call, full image)."""
+    try:
+        img = _decode_image_bytes(image_bytes)
+    except ValueError as exc:
+        raise ValueError("Could not decode image for identity extraction") from exc
+
+    base64_image = encode_image_to_base64(img)
+
+    parsed, model_used = _parse_with_model_attempts(
+        request_name="Phase 1 identity extraction",
+        primary_model=PRIMARY_VISION_MODEL,
+        fallback_model=FALLBACK_VISION_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a document identity extraction AI. "
+                    "Your ONLY task is to find the employee name and passport/ID number(s). "
+                    "Do NOT extract work hours, day entries, or any table data. "
+                    "The card may be photographed rotated or flipped — scan the full image regardless of orientation. "
+                    "The card is a Hebrew RTL work card. Employee names may be in Hebrew or Latin script. "
+                    "Passport/ID numbers follow the format: one letter followed by digits (e.g., N11125604, T1234567). "
+                    "These are foreign workers from Sri Lanka, Thailand, Moldova, and similar countries. "
+                    "Scan every region: header, footer, margins, handwritten annotations, near signature fields. "
+                    "Return all passport/ID candidates you find, and select the best normalized value."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Find the employee name and passport/ID number(s) from this work card image. "
+                            "Scan the full image including header, footer, margins, and handwritten notes. "
+                            "Return employee_name, passport_id_candidates (with raw, normalized, source_region, confidence), "
+                            "and selected_passport_id_normalized. "
+                            "If nothing is found, return null for each field."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
+                    },
+                ],
+            },
+        ],
+        response_format=IdentityExtraction,
+    )
+    return parsed, model_used
+
+
+def _extract_day_entries_phase(image_bytes: bytes) -> Tuple[Optional[DayEntriesExtraction], Optional[str]]:
+    """Phase 2 — extract day entries only (one API call, full image)."""
+    try:
+        img = _decode_image_bytes(image_bytes)
+    except ValueError as exc:
+        raise ValueError("Could not decode image for day entries extraction") from exc
+
+    base64_image = encode_image_to_base64(img)
+
+    parsed, model_used = _parse_with_model_attempts(
+        request_name="Phase 2 day entries extraction",
+        primary_model=PRIMARY_VISION_MODEL,
+        fallback_model=FALLBACK_VISION_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a work-hours extraction AI. "
+                    "Your ONLY task is to read the tabular day entries from this work card. "
+                    "Do NOT extract employee name or passport/ID number. "
+                    "IGNORE the signature column and site manager column entirely — they are irrelevant. "
+                    "Extract only: day number, start time, end time, total hours. "
+                    "Day numbers increase from 1 at the top to 31 at the bottom of the table. "
+                    "If day numbers appear to increase bottom-to-top (31 near the top, 1 near the bottom), "
+                    "the card is upside down — mentally rotate 180° so that day 1 is at the top. "
+                    "If the table appears sideways, rotate 90° — but always verify day 1 ends up at the top after rotation. "
+                    "Day labels must be visibly printed in the table; never infer a day from row position alone. "
+                    "Detect OFF_MARK rows: diagonal/horizontal pen lines or crosses indicating no work. "
+                    "For OFF_MARK rows, set start_time/end_time/total_hours to null unless clear time digits are present. "
+                    "Never treat line-only marks as worked hours. "
+                    "Set row_state (WORKED/OFF_MARK/EMPTY/ILLEGIBLE), mark_type (NONE/SINGLE_LINE/CROSS/HATCH), "
+                    "row_confidence (0-1), and evidence tags for each row."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Extract all day entries from this work card table. "
+                            "Only include days where a day number label is visibly printed. "
+                            "IGNORE signature and site manager columns. "
+                            "Orient by day number: day 1 must be at the top, day 31 at the bottom. "
+                            "If a row has only strike/line marks with no clear time digits, set OFF_MARK and null values. "
+                            "Return entries with day, start_time, end_time, total_hours, row_state, mark_type, "
+                            "row_confidence, confidence, and evidence."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
+                    },
+                ],
+            },
+        ],
+        response_format=DayEntriesExtraction,
+    )
+    return parsed, model_used
+
+
 def extract_data_from_crops(crop_images: List[np.ndarray]) -> Dict[str, Any]:
     """
     Extract data from multiple cropped table images.
@@ -1122,31 +1257,83 @@ def _single_pass_result_is_valid(result: Dict[str, Any]) -> bool:
     return True
 
 
+def _build_result_from_phases(
+    identity: IdentityExtraction,
+    day_entries: DayEntriesExtraction,
+) -> Dict[str, Any]:
+    """Combine Phase 1 (identity) + Phase 2 (day entries) into the same dict shape as _build_result_from_single_pass."""
+    best_by_day: Dict[int, Dict[str, Any]] = {}
+    for entry in day_entries.entries:
+        entry_dict = _normalize_entry_payload(entry.model_dump())
+        day = entry_dict.get("day")
+        if not isinstance(day, int) or day < 1 or day > 31:
+            continue
+        existing = best_by_day.get(day)
+        if not existing or _compare_row_preference(existing, entry_dict):
+            best_by_day[day] = entry_dict
+
+    normalized_from_candidates = [
+        normalize_passport(candidate.normalized or candidate.raw)
+        for candidate in identity.passport_id_candidates
+        if candidate.raw
+    ]
+    normalized_from_candidates = [v for v in normalized_from_candidates if v]
+
+    selected_passport_id_normalized = normalize_passport(identity.selected_passport_id_normalized)
+    if not selected_passport_id_normalized and normalized_from_candidates:
+        selected_passport_id_normalized = normalized_from_candidates[0]
+
+    candidate_list = []
+    for candidate in identity.passport_id_candidates:
+        candidate_normalized = normalize_passport(candidate.normalized or candidate.raw)
+        candidate_list.append({
+            "raw": candidate.raw,
+            "normalized": candidate_normalized,
+            "source_region": candidate.source_region,
+            "confidence": candidate.confidence,
+        })
+
+    return {
+        "entries": [best_by_day[day] for day in sorted(best_by_day.keys())],
+        "extracted_employee_name": identity.employee_name,
+        "extracted_passport_id": selected_passport_id_normalized,
+        "passport_id_candidates": candidate_list,
+        "normalized_passport_candidates": normalized_from_candidates,
+        "selected_passport_id_normalized": selected_passport_id_normalized,
+    }
+
+
+def _phased_result_is_valid(result: Dict[str, Any]) -> bool:
+    """Validate a result built from the 3-phase pipeline (delegates to single-pass validator)."""
+    return _single_pass_result_is_valid(result)
+
+
 # ===========================================
 # Main Entry Point
 # ===========================================
 
 def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
     """
-    Main extraction function — processes image bytes through full pipeline.
-    
+    Main extraction function — processes image bytes through the 3-phase pipeline.
+
     Pipeline:
-    1. Single-pass full-image extraction using stronger vision model
-    2. Validate output
-    3. Optional OpenCV + multi-call fallback if validation fails
-    
+    1. Phase 1: Identity extraction (name + passport) — 1 API call
+    2. Phase 2: Day entries extraction — 1 API call
+    3. If Phase 2 fails validation → OpenCV fallback (reuses Phase 1 identity)
+    4. Phase 3 (optional): Targeted re-read for uncertain rows — 0-1 API calls
+
     Args:
         image_bytes: Raw image bytes
-        
+
     Returns:
         Dict containing:
         - entries: List of day entries [{day, start_time, end_time, total_hours}, ...]
         - extracted_employee_name: Employee name if found
         - extracted_passport_id: Passport/ID if found
-        - raw_result: Original combined response
+        - raw_result: Pipeline metadata
         - model_name: Model used for extraction
         - fallback_used: Whether OpenCV fallback path was required
-        
+
         Returns None on complete failure
     """
     try:
@@ -1157,52 +1344,96 @@ def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
             "row_quality_by_day": {},
         }
 
-        logger.info("Starting single-pass full-image extraction...")
-        single_pass, single_pass_model = extract_full_image_single_pass(image_bytes)
-        if not single_pass:
-            raise ValueError("Single-pass extraction returned no result")
+        # --- Phase 1: Identity ---
+        logger.info("Starting Phase 1: identity extraction...")
+        phase1_identity: Optional[IdentityExtraction] = None
+        phase1_model: Optional[str] = None
+        try:
+            phase1_identity, phase1_model = _extract_identity_phase(image_bytes)
+            if phase1_identity is None:
+                logger.warning("Phase 1 identity extraction returned no result; using empty identity")
+                phase1_identity = IdentityExtraction()
+        except Exception as phase1_err:
+            logger.warning("Phase 1 identity extraction failed (non-fatal): %s", phase1_err)
+            phase1_identity = IdentityExtraction()
 
-        result = _build_result_from_single_pass(single_pass)
-        result["entries"], semantic_quality = _apply_semantic_gating(result.get("entries", []))
+        # --- Phase 2: Day entries ---
+        logger.info("Starting Phase 2: day entries extraction...")
+        phase2_entries: Optional[DayEntriesExtraction] = None
+        phase2_model: Optional[str] = None
+        try:
+            phase2_entries, phase2_model = _extract_day_entries_phase(image_bytes)
+            if phase2_entries is None:
+                raise ValueError("Phase 2 day entries extraction returned no result")
+        except Exception as phase2_err:
+            logger.warning("Phase 2 day entries extraction failed: %s", phase2_err)
+            phase2_entries = None
+
         raw_result: Dict[str, Any] = {
-            "strategy": "single_pass_full_image",
-            "single_pass": single_pass.model_dump(),
-            "single_pass_model": single_pass_model,
+            "strategy": "three_phase_pipeline",
+            "phase1_identity": phase1_identity.model_dump() if phase1_identity else None,
+            "phase1_model": phase1_model,
+            "phase2_entries": phase2_entries.model_dump() if phase2_entries else None,
+            "phase2_model": phase2_model,
         }
 
-        if not _single_pass_result_is_valid(result):
+        if phase2_entries is not None:
+            result = _build_result_from_phases(phase1_identity, phase2_entries)
+            result["entries"], semantic_quality = _apply_semantic_gating(result.get("entries", []))
+
+            if not _phased_result_is_valid(result):
+                logger.warning("Phase 2 result failed validation; falling back to OpenCV crops")
+                phase2_entries = None  # trigger fallback below
+
+        if phase2_entries is None:
             fallback_used = True
-            logger.warning("Single-pass extraction failed validation; using OpenCV fallback")
+            logger.info("Using OpenCV fallback for day entries (Phase 1 identity reused)")
 
             crops = crop_tables_from_image_bytes(image_bytes)
             fallback_result = extract_data_from_crops(crops)
 
-            header_result = None
-            try:
-                header_result = extract_header_from_full_image(image_bytes)
-            except Exception as e:
-                logger.error(f"Header extraction failed during fallback: {e}")
-
-            if header_result:
-                if header_result.employee_name:
-                    fallback_result['extracted_employee_name'] = header_result.employee_name
-                if header_result.passport_id:
-                    fallback_result['extracted_passport_id'] = normalize_passport(header_result.passport_id)
+            # Reuse Phase 1 identity — no redundant header API call
+            if phase1_identity.employee_name:
+                fallback_result['extracted_employee_name'] = phase1_identity.employee_name
+            if phase1_identity.selected_passport_id_normalized or phase1_identity.passport_id_candidates:
+                normalized_from_candidates = [
+                    normalize_passport(c.normalized or c.raw)
+                    for c in phase1_identity.passport_id_candidates
+                    if c.raw
+                ]
+                normalized_from_candidates = [v for v in normalized_from_candidates if v]
+                selected = normalize_passport(phase1_identity.selected_passport_id_normalized)
+                if not selected and normalized_from_candidates:
+                    selected = normalized_from_candidates[0]
+                if selected:
+                    fallback_result['extracted_passport_id'] = selected
 
             fallback_result['selected_passport_id_normalized'] = normalize_passport(
                 fallback_result.get('extracted_passport_id')
             )
-            fallback_result['passport_id_candidates'] = []
-            fallback_result['normalized_passport_candidates'] = []
+            candidate_list = [
+                {
+                    "raw": c.raw,
+                    "normalized": normalize_passport(c.normalized or c.raw),
+                    "source_region": c.source_region,
+                    "confidence": c.confidence,
+                }
+                for c in phase1_identity.passport_id_candidates
+            ]
+            normalized_candidates = [
+                c["normalized"] for c in candidate_list if c["normalized"]
+            ]
+            fallback_result['passport_id_candidates'] = candidate_list
+            fallback_result['normalized_passport_candidates'] = normalized_candidates
             fallback_result["entries"], semantic_quality = _apply_semantic_gating(fallback_result.get("entries", []))
             result = fallback_result
             raw_result["fallback"] = {
                 "num_crops": len(crops),
                 "entries": result.get("entries", []),
-                "header_extraction": header_result.model_dump() if header_result else None,
             }
             raw_result["strategy"] = "opencv_fallback"
 
+        # --- Phase 3 (optional): Targeted re-read for uncertain rows ---
         if ENABLE_ROW_REREAD and semantic_quality["review_required_days"]:
             requested_days = list(semantic_quality["review_required_days"])
             try:
@@ -1254,11 +1485,11 @@ def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
         result['raw_result']['normalized_passport_candidates'] = result.get('normalized_passport_candidates', [])
         result['raw_result']['row_quality'] = result.get('row_quality')
         result['raw_result']['template_profile'] = result.get('template_profile')
-        result['model_name'] = single_pass_model or PRIMARY_VISION_MODEL
+        result['model_name'] = phase2_model or phase1_model or PRIMARY_VISION_MODEL
         result['fallback_used'] = fallback_used
 
         return result
-        
+
     except ValueError as e:
         logger.error(f"Image processing error: {e}")
         return None
