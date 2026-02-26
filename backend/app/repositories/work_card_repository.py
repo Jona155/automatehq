@@ -15,6 +15,22 @@ class WorkCardRepository(BaseRepository[WorkCard]):
     def __init__(self):
         super().__init__(WorkCard)
     
+    def get_by_business_month(self, business_id: UUID, month: date) -> List[WorkCard]:
+        """
+        Get all work cards for a business and month across all sites.
+
+        Args:
+            business_id: The business UUID
+            month: The processing month
+
+        Returns:
+            List of WorkCard instances
+        """
+        return self.session.query(WorkCard).filter_by(
+            business_id=business_id,
+            processing_month=month
+        ).all()
+
     def get_by_site_month(self, site_id: UUID, month: date, business_id: UUID) -> List[WorkCard]:
         """
         Get all work cards for a site and month in a business.

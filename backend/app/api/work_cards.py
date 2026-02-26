@@ -1205,3 +1205,82 @@ def get_unassigned_work_cards():
         })
     except Exception as e:
         return api_response(status_code=500, message="Failed to fetch unassigned work cards", error=str(e))
+
+
+@work_cards_bp.route('/reset', methods=['DELETE'])
+@token_required
+@role_required('APPLICATION_MANAGER')
+def reset_work_cards():
+    """Bulk-delete work cards for a business+month, optionally scoped to a single site.
+
+    Body JSON:
+        business_id (str, required)
+        month       (str, required)  — "YYYY-MM"
+        site_id     (str, optional)  — omit to delete all sites for that business+month
+    """
+    from ..repositories.business_repository import BusinessRepository
+    from ..repositories.site_repository import SiteRepository
+    import uuid as uuid_module
+
+    data = request.get_json()
+    if not data:
+        return api_response(status_code=400, message="No data provided", error="Bad Request")
+
+    business_id_str = data.get('business_id')
+    month_str = data.get('month')
+    site_id_str = data.get('site_id')
+
+    if not business_id_str:
+        return api_response(status_code=400, message="business_id is required", error="Bad Request")
+    if not month_str:
+        return api_response(status_code=400, message="month is required", error="Bad Request")
+
+    try:
+        business_id = uuid_module.UUID(business_id_str)
+    except ValueError:
+        return api_response(status_code=400, message="Invalid business_id format", error="Bad Request")
+
+    # Parse "YYYY-MM" into a date (first day of the month)
+    try:
+        month = datetime.strptime(month_str, '%Y-%m').date()
+    except ValueError:
+        try:
+            month = datetime.strptime(month_str, '%Y-%m-%d').date()
+        except ValueError:
+            return api_response(status_code=400, message="Invalid month format. Use YYYY-MM", error="Bad Request")
+
+    # Validate business exists
+    biz_repo = BusinessRepository()
+    if not biz_repo.get_by_id(business_id):
+        return api_response(status_code=404, message="Business not found", error="Not Found")
+
+    site_id = None
+    if site_id_str:
+        try:
+            site_id = uuid_module.UUID(site_id_str)
+        except ValueError:
+            return api_response(status_code=400, message="Invalid site_id format", error="Bad Request")
+
+        # Validate site belongs to this business
+        site_repo_inst = SiteRepository()
+        site = site_repo_inst.get_by_id(site_id)
+        if not site or str(site.business_id) != str(business_id):
+            return api_response(status_code=404, message="Site not found for this business", error="Not Found")
+
+    try:
+        if site_id:
+            cards = repo.get_by_site_month(site_id=site_id, month=month, business_id=business_id)
+        else:
+            cards = repo.get_by_business_month(business_id=business_id, month=month)
+
+        deleted_count = 0
+        for card in cards:
+            db.session.delete(card)
+            deleted_count += 1
+
+        db.session.commit()
+        return api_response(data={'deleted_count': deleted_count}, message=f"Deleted {deleted_count} work cards")
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to reset work cards")
+        return api_response(status_code=500, message="Failed to reset work cards", error=str(e))

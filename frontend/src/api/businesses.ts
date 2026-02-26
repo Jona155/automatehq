@@ -1,5 +1,5 @@
 import client from './client';
-import type { Business, User } from '../types';
+import type { Business, User, Site } from '../types';
 
 export interface CreateBusinessPayload {
   name: string;
@@ -60,5 +60,10 @@ export const getBusinessUsers = async (businessId: string) => {
 
 export const createBusinessUser = async (businessId: string, data: CreateBusinessUserPayload) => {
   const response = await client.post<{ data: User }>(`/businesses/${businessId}/users`, data);
+  return response.data.data;
+};
+
+export const getBusinessSites = async (businessId: string): Promise<Site[]> => {
+  const response = await client.get<{ data: Site[] }>(`/businesses/${businessId}/sites`);
   return response.data.data;
 };

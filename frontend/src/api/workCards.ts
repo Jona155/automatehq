@@ -283,6 +283,17 @@ export interface UnassignedCardsPage {
   page_size: number;
 }
 
+export interface ResetWorkCardsParams {
+  business_id: string;
+  month: string; // "YYYY-MM"
+  site_id?: string;
+}
+
+export const resetWorkCardsForMonth = async (params: ResetWorkCardsParams): Promise<{ deleted_count: number }> => {
+  const response = await client.delete<{ data: { deleted_count: number } }>('/work_cards/reset', { data: params });
+  return response.data.data;
+};
+
 // Get unassigned work cards (business-wide, no employee)
 export const getUnassignedWorkCards = async (params: { month?: string; page?: number; page_size?: number }) => {
   const queryParams: Record<string, string> = {};
