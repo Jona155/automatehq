@@ -907,6 +907,38 @@ def trigger_extraction(card_id):
         return api_response(status_code=500, message="Failed to trigger extraction", error=str(e))
 
 
+@work_cards_bp.route('/<uuid:card_id>/reextract-hours', methods=['POST'])
+@token_required
+@role_required('ADMIN')
+def reextract_hours(card_id):
+    """Re-trigger extraction for hours only, preserving the existing employee assignment."""
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+
+    try:
+        extraction = extraction_repo.get_by_work_card(card_id)
+
+        if extraction:
+            # Delete existing day entries so fresh ones are written by the worker
+            day_entry_repo.delete_by_work_card(card_id)
+            extraction_repo.reset_job_hours_only(extraction.id)
+            extraction = extraction_repo.get_by_id(extraction.id)
+            message = "Hours re-extraction triggered successfully"
+        else:
+            # No prior extraction — create a new HOURS_ONLY job
+            extraction = extraction_repo.create(
+                work_card_id=card_id,
+                status='PENDING',
+                extraction_mode='HOURS_ONLY',
+            )
+            message = "Hours extraction triggered successfully"
+
+        return api_response(data=model_to_dict(extraction), message=message)
+    except Exception as e:
+        return api_response(status_code=500, message="Failed to trigger hours re-extraction", error=str(e))
+
+
 @work_cards_bp.route('/<uuid:card_id>/extraction', methods=['GET'])
 @token_required
 def get_extraction_status(card_id):

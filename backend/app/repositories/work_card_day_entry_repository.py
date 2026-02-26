@@ -10,6 +10,19 @@ class WorkCardDayEntryRepository(BaseRepository[WorkCardDayEntry]):
     def __init__(self):
         super().__init__(WorkCardDayEntry)
     
+    def delete_by_work_card(self, work_card_id: UUID) -> int:
+        """
+        Delete all day entries for a work card.
+
+        Returns:
+            Number of deleted entries
+        """
+        count = self.session.query(WorkCardDayEntry).filter_by(
+            work_card_id=work_card_id
+        ).delete(synchronize_session=False)
+        self.session.commit()
+        return count
+
     def get_by_work_card(self, work_card_id: UUID) -> List[WorkCardDayEntry]:
         """
         Get all day entries for a work card, ordered by day.

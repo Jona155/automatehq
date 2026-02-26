@@ -195,55 +195,73 @@ def process_job(
             return False
         
         logger.info(f"Fetched image ({len(image_bytes)} bytes) for work card {job.work_card_id}")
-        
+
+        hours_only = getattr(job, 'extraction_mode', 'FULL') == 'HOURS_ONLY'
+        if hours_only:
+            logger.info(f"Job {job_id} running in HOURS_ONLY mode — skipping identity matching")
+
         # Run extraction (OpenCV + OpenAI Vision)
         extraction_result = extract_from_image_bytes(image_bytes)
-        
+
         if not extraction_result:
             extraction_repo.mark_failed(job_id, "Extraction returned no results")
             return False
-        
+
         entries = extraction_result.get('entries', [])
         raw_result = extraction_result.get('raw_result', {})
         model_name = extraction_result.get('model_name', 'gpt-5')
         fallback_used = extraction_result.get('fallback_used', False)
-        
+
         logger.info(f"Extracted {len(entries)} day entries")
-        
-        # Match employee by normalized passport with candidate + optional name/site fallback
+
         extracted_passport_id = extraction_result.get('extracted_passport_id')
         normalized_passport_candidates = extraction_result.get('normalized_passport_candidates') or []
         row_quality = extraction_result.get('row_quality') or {}
         review_required_days = row_quality.get('review_required_days') or []
         off_mark_days = row_quality.get('off_mark_days') or []
         row_quality_by_day = row_quality.get('row_quality_by_day') or {}
-        match_result = match_employee(
-            passport_id=extracted_passport_id,
-            passport_candidates=normalized_passport_candidates,
-            business_id=work_card.business_id,
-            employee_repo=employee_repo,
-            employee_name=extraction_result.get('extracted_employee_name'),
-            site_id=work_card.site_id,
-            enable_name_site_fallback=ENABLE_NAME_SITE_MATCH_FALLBACK,
-            enable_fuzzy_passport_match=ENABLE_FUZZY_PASSPORT_MATCH,
-            enable_fuzzy_name_fallback=ENABLE_FUZZY_NAME_FALLBACK,
-        )
-        
-        matched_employee_id = match_result.get('employee_id') if match_result else None
-        match_method = match_result.get('method') if match_result else None
-        match_confidence = match_result.get('confidence') if match_result else None
-        match_is_exact = match_result.get('is_exact') if match_result else None
-        match_is_fuzzy = match_result.get('is_fuzzy') if match_result else None
-        matched_normalized_passport_id = match_result.get('normalized_passport_id') if match_result else None
-        match_candidates = match_result.get('match_candidates') if match_result else []
-        matching_decision_reason = match_result.get('decision_reason') if match_result else None
-        match_distance = match_result.get('distance') if match_result else None
-        match_candidate_count = match_result.get('candidate_count') if match_result else None
-        
-        if matched_employee_id:
-            logger.info(f"Matched employee {matched_employee_id} via {match_method}")
+
+        if hours_only:
+            # Skip identity matching — preserve existing employee assignment
+            matched_employee_id = None
+            match_method = None
+            match_confidence = None
+            match_is_exact = None
+            match_is_fuzzy = None
+            matched_normalized_passport_id = None
+            match_candidates = []
+            matching_decision_reason = 'hours_only_reextraction'
+            match_distance = None
+            match_candidate_count = None
         else:
-            logger.info("No employee match found")
+            # Match employee by normalized passport with candidate + optional name/site fallback
+            match_result = match_employee(
+                passport_id=extracted_passport_id,
+                passport_candidates=normalized_passport_candidates,
+                business_id=work_card.business_id,
+                employee_repo=employee_repo,
+                employee_name=extraction_result.get('extracted_employee_name'),
+                site_id=work_card.site_id,
+                enable_name_site_fallback=ENABLE_NAME_SITE_MATCH_FALLBACK,
+                enable_fuzzy_passport_match=ENABLE_FUZZY_PASSPORT_MATCH,
+                enable_fuzzy_name_fallback=ENABLE_FUZZY_NAME_FALLBACK,
+            )
+
+            matched_employee_id = match_result.get('employee_id') if match_result else None
+            match_method = match_result.get('method') if match_result else None
+            match_confidence = match_result.get('confidence') if match_result else None
+            match_is_exact = match_result.get('is_exact') if match_result else None
+            match_is_fuzzy = match_result.get('is_fuzzy') if match_result else None
+            matched_normalized_passport_id = match_result.get('normalized_passport_id') if match_result else None
+            match_candidates = match_result.get('match_candidates') if match_result else []
+            matching_decision_reason = match_result.get('decision_reason') if match_result else None
+            match_distance = match_result.get('distance') if match_result else None
+            match_candidate_count = match_result.get('candidate_count') if match_result else None
+
+            if matched_employee_id:
+                logger.info(f"Matched employee {matched_employee_id} via {match_method}")
+            else:
+                logger.info("No employee match found")
 
         effective_employee_id = work_card.employee_id or matched_employee_id
         previous_entries_by_day = {}
@@ -287,26 +305,29 @@ def process_job(
                     f"Identity validation for work card {work_card.id}: reason={identity_reason}"
                 )
         
-        # Create day entries incrementally: add only new/different slots.
+        # Create day entries.
+        # In HOURS_ONLY mode the endpoint already cleared existing entries, so we write all fresh.
+        # In FULL mode we add incrementally (skip existing days and previous-card duplicates).
         day_entries_created = 0
         day_entries_skipped_as_duplicate = 0
         for entry in entries:
             day = entry.get('day')
             if day is None or day < 1 or day > 31:
                 continue
-            
-            # Check if entry already exists for this day
-            existing = day_entry_repo.get_by_day(job.work_card_id, day)
-            if existing:
-                logger.debug(f"Day {day} entry already exists, skipping")
-                continue
 
-            previous_entry = previous_entries_by_day.get(day)
-            if previous_entry and not _entry_differs_from_previous(entry, previous_entry):
-                day_entries_skipped_as_duplicate += 1
-                logger.debug(f"Day {day} duplicates previous card, skipping")
-                continue
-            
+            if not hours_only:
+                # Check if entry already exists for this day
+                existing = day_entry_repo.get_by_day(job.work_card_id, day)
+                if existing:
+                    logger.debug(f"Day {day} entry already exists, skipping")
+                    continue
+
+                previous_entry = previous_entries_by_day.get(day)
+                if previous_entry and not _entry_differs_from_previous(entry, previous_entry):
+                    day_entries_skipped_as_duplicate += 1
+                    logger.debug(f"Day {day} duplicates previous card, skipping")
+                    continue
+
             try:
                 day_entry_repo.create(
                     work_card_id=job.work_card_id,
@@ -320,19 +341,21 @@ def process_job(
                 day_entries_created += 1
             except Exception as e:
                 logger.warning(f"Failed to create day entry for day {day}: {e}")
-        
+
         logger.info(
             f"Created {day_entries_created} day entries "
             f"(skipped {day_entries_skipped_as_duplicate} duplicates)"
         )
-        
-        # Update work card with matched employee (if found and not already assigned)
-        if matched_employee_id and not work_card.employee_id:
+
+        # Update work card with matched employee (if found and not already assigned).
+        # Skipped in HOURS_ONLY mode — employee assignment is preserved as-is.
+        if not hours_only and matched_employee_id and not work_card.employee_id:
             work_card_repo.update(work_card.id, employee_id=matched_employee_id)
             logger.info(f"Updated work card with matched employee {matched_employee_id}")
 
         # Derive site_id from the matched employee when the work card has none.
-        if matched_employee_id:
+        # Skipped in HOURS_ONLY mode.
+        if not hours_only and matched_employee_id:
             matched_employee = employee_repo.get_by_id(matched_employee_id)
             employee_site_id = matched_employee.site_id if matched_employee else None
             if employee_site_id:

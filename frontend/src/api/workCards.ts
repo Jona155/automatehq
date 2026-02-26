@@ -218,6 +218,12 @@ export const triggerExtraction = async (cardId: string) => {
   return response.data.data;
 };
 
+// Re-trigger hours-only extraction (preserves employee assignment, replaces day entries)
+export const reextractHours = async (cardId: string) => {
+  const response = await client.post<{ data: WorkCardExtraction }>(`/work_cards/${cardId}/reextract-hours`);
+  return response.data.data;
+};
+
 // Get extraction status for a work card
 export const getExtraction = async (cardId: string) => {
   const response = await client.get<{ data: WorkCardExtraction }>(`/work_cards/${cardId}/extraction`);

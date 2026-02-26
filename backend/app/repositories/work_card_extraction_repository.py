@@ -238,6 +238,26 @@ class WorkCardExtractionRepository(BaseRepository[WorkCardExtraction]):
         self.session.commit()
         return True
     
+    def reset_job_hours_only(self, job_id: UUID) -> bool:
+        """
+        Reset a job to PENDING state in HOURS_ONLY mode (re-extract day entries, skip identity matching).
+
+        Returns:
+            True if reset successfully, False if job not found
+        """
+        job = self.get_by_id(job_id)
+        if not job:
+            return False
+
+        job.status = 'PENDING'
+        job.extraction_mode = 'HOURS_ONLY'
+        job.locked_at = None
+        job.locked_by = None
+        job.started_at = None
+        job.finished_at = None
+        self.session.commit()
+        return True
+
     def get_failed_jobs_for_retry(self, max_attempts: int = 3) -> List[WorkCardExtraction]:
         """
         Get failed jobs that haven't exceeded max retry attempts.

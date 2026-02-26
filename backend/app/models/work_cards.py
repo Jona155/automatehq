@@ -56,6 +56,7 @@ class WorkCardExtraction(db.Model):
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     work_card_id = db.Column(UUID(as_uuid=True), db.ForeignKey('work_cards.id'), unique=True, nullable=False)
     status = db.Column(db.Text, nullable=False, default='PENDING')  # PENDING, RUNNING, DONE, FAILED
+    extraction_mode = db.Column(db.Text, nullable=True, default='FULL')  # FULL, HOURS_ONLY
     attempts = db.Column(db.Integer, nullable=False, default=0)
     last_error = db.Column(db.Text, nullable=True)
 
