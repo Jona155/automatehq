@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
-import type { WorkCard, DayEntry, WorkCardExtraction, Employee } from '../types';
+import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus } from '../types';
 import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
 import MonthPicker from './MonthPicker';
@@ -61,6 +61,7 @@ interface DayEntryRow {
   from_time: string;
   to_time: string;
   total_hours: string;
+  day_status: DayStatus | null;
   latest_from_time: string;
   latest_to_time: string;
   latest_total_hours: string;
@@ -518,6 +519,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
         from_time: normalizedFrom,
         to_time: normalizedTo,
         total_hours: existing?.total_hours?.toString() || '',
+        day_status: existing?.day_status || null,
         latest_from_time: normalizedFrom,
         latest_to_time: normalizedTo,
         latest_total_hours: existing?.total_hours?.toString() || '',
@@ -747,6 +749,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
       updated[dayIndex] = {
         ...updated[dayIndex],
         [field]: value,
+        day_status: null,
         isDirty: true,
       };
 
@@ -760,6 +763,24 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
         }
       }
 
+      return updated;
+    });
+  };
+
+  const handleStatusChange = (dayIndex: number, status: DayStatus | null) => {
+    setDayEntries(prev => {
+      const updated = [...prev];
+      if (updated[dayIndex].isLocked) {
+        return prev;
+      }
+      updated[dayIndex] = {
+        ...updated[dayIndex],
+        day_status: status,
+        from_time: '',
+        to_time: '',
+        total_hours: '',
+        isDirty: true,
+      };
       return updated;
     });
   };
@@ -889,7 +910,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
 
     const { showNoChangesToast = true, showSuccessToast = true } = options ?? {};
     const dirtyEntries = dayEntries.filter(
-      e => !e.isLocked && e.isDirty && (e.from_time || e.to_time || e.total_hours)
+      e => !e.isLocked && e.isDirty && (e.from_time || e.to_time || e.total_hours || e.day_status !== undefined)
     );
 
     if (dirtyEntries.length === 0) {
@@ -906,6 +927,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
         from_time: normalizeTimeToHourMinute(e.from_time) || null,
         to_time: normalizeTimeToHourMinute(e.to_time) || null,
         total_hours: e.total_hours ? parseFloat(e.total_hours) : null,
+        day_status: e.day_status || null,
       }));
 
       await updateDayEntries(selectedCard.id, { entries });
@@ -1841,6 +1863,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                             <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">כניסה</th>
                             <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">יציאה</th>
                             <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">סה"כ</th>
+                            <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">סטטוס</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1903,8 +1926,8 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                                     value={entry.from_time}
                                     onChange={(e) => handleEntryChange(index, 'from_time', e.target.value)}
                                     onFocus={() => activateDay(entry.day_of_month)}
-                                    disabled={entry.isLocked || !isAdmin}
-                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary"
+                                    disabled={entry.isLocked || !isAdmin || !!entry.day_status}
+                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40"
                                     aria-label={`שעת כניסה יום ${entry.day_of_month}`}
                                   />
                                 </td>
@@ -1914,8 +1937,8 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                                     value={entry.to_time}
                                     onChange={(e) => handleEntryChange(index, 'to_time', e.target.value)}
                                     onFocus={() => activateDay(entry.day_of_month)}
-                                    disabled={entry.isLocked || !isAdmin}
-                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary"
+                                    disabled={entry.isLocked || !isAdmin || !!entry.day_status}
+                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40"
                                     aria-label={`שעת יציאה יום ${entry.day_of_month}`}
                                   />
                                 </td>
@@ -1928,11 +1951,25 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                                     value={entry.total_hours}
                                     onChange={(e) => handleEntryChange(index, 'total_hours', e.target.value)}
                                     onFocus={() => activateDay(entry.day_of_month)}
-                                    disabled={entry.isLocked || !isAdmin}
-                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary"
+                                    disabled={entry.isLocked || !isAdmin || !!entry.day_status}
+                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40"
                                     placeholder="0"
                                     aria-label={`סך שעות יום ${entry.day_of_month}`}
                                   />
+                                </td>
+                                <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
+                                  <select
+                                    value={entry.day_status || ''}
+                                    onChange={(e) => handleStatusChange(index, (e.target.value as DayStatus) || null)}
+                                    disabled={entry.isLocked || !isAdmin}
+                                    className="w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary text-sm"
+                                    aria-label={`סטטוס יום ${entry.day_of_month}`}
+                                  >
+                                    <option value="">—</option>
+                                    <option value="VACATION">חופשה</option>
+                                    <option value="SICK">מחלה</option>
+                                    <option value="INTERNATIONAL_VISA">ויזה בינלאומית</option>
+                                  </select>
                                 </td>
                               </tr>
                             );

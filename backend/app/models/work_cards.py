@@ -98,6 +98,7 @@ class WorkCardDayEntry(db.Model):
     from_time = db.Column(db.Time, nullable=True)
     to_time = db.Column(db.Time, nullable=True)
     total_hours = db.Column(db.Numeric(5, 2), nullable=True)
+    day_status = db.Column(db.Text, nullable=True)
     source = db.Column(db.Text, nullable=False, default='EXTRACTED')
     is_valid = db.Column(db.Boolean, nullable=False, default=True)
     validation_errors = db.Column(JSONB, nullable=True)
