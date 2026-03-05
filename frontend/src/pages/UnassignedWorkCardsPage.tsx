@@ -5,6 +5,7 @@ import { getEmployees } from '../api/employees';
 import { useAuth } from '../context/AuthContext';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
+import { getDefaultMonth } from '../utils/monthUtils';
 
 // ── Edit distance & diff utilities ────────────────────────────────────────────
 
@@ -227,13 +228,6 @@ function SuggestionItem({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const getCurrentMonth = (): string => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-};
-
 const formatMonth = (isoDate: string): string => {
   const [year, month] = isoDate.split('-');
   const d = new Date(parseInt(year), parseInt(month) - 1, 1);
@@ -245,7 +239,7 @@ const PAGE_SIZE = 20;
 // ── Page component ────────────────────────────────────────────────────────────
 
 export default function UnassignedWorkCardsPage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
 
   const [cards, setCards] = useState<UnassignedWorkCard[]>([]);
   const [total, setTotal] = useState(0);
@@ -253,7 +247,7 @@ export default function UnassignedWorkCardsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonth());
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [searchQuery, setSearchQuery] = useState('');
 
   // Assign modal state
