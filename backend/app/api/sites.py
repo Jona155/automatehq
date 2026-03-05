@@ -49,6 +49,12 @@ STATUS_LABELS = {
     'NO_UPLOAD': 'ללא העלאה',
 }
 
+STATUS_DAY_LABELS = {
+    'VACATION': 'חופשה',
+    'SICK': 'מחלה',
+    'INTERNATIONAL_VISA': 'ויזה בינלאומית',
+}
+
 def _generate_access_token():
     token = None
     for _ in range(5):
@@ -252,7 +258,7 @@ def _copy_salary_row_template(ws, source_row, target_row):
     ws.row_dimensions[target_row].height = ws.row_dimensions[source_row].height
 
 
-def _populate_salary_template_sheet(ws, employees, matrix, month_date):
+def _populate_salary_template_sheet(ws, employees, matrix, month_date, status_matrix=None):
     """
     Populate salary template:
     - Row 1 remains as header (passport/day columns).
@@ -261,6 +267,8 @@ def _populate_salary_template_sheet(ws, employees, matrix, month_date):
     - Day columns contain numeric hours when available, otherwise remain blank
       (except prefilled 'שבת' values are preserved).
     """
+    if status_matrix is None:
+        status_matrix = {}
     ws.sheet_view.rightToLeft = True
     day_columns = _ensure_salary_template_month_columns(ws, month_date)
     days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
@@ -289,15 +297,21 @@ def _populate_salary_template_sheet(ws, employees, matrix, month_date):
         employee_id_value = (employee.passport_id or '').strip() if employee.passport_id else ''
         ws.cell(row=row_index, column=1, value=employee_id_value)
 
-        employee_days = matrix.get(str(employee.id), {})
+        employee_id_str = str(employee.id)
+        employee_days = matrix.get(employee_id_str, {})
+        employee_statuses = status_matrix.get(employee_id_str, {})
         for day, col in day_columns.items():
-            hours = employee_days.get(day)
             cell = ws.cell(row=row_index, column=col)
-            if hours is None:
-                is_saturday = day <= days_in_month and datetime(month_date.year, month_date.month, day).weekday() == 5
-                cell.value = 'שבת' if is_saturday else None
+            status = employee_statuses.get(day)
+            if status:
+                cell.value = STATUS_DAY_LABELS[status]
             else:
-                cell.value = round(float(hours), 2)
+                hours = employee_days.get(day)
+                if hours is None:
+                    is_saturday = day <= days_in_month and datetime(month_date.year, month_date.month, day).weekday() == 5
+                    cell.value = 'שבת' if is_saturday else None
+                else:
+                    cell.value = round(float(hours), 2)
 
     for row_index in range(employee_start_row + needed_rows, instruction_row):
         clear_row(row_index)
@@ -336,8 +350,11 @@ def _populate_template_core_sheet(
     style_header,
     style_body,
     style_total,
+    status_matrix=None,
 ):
     """Populate a worksheet in the core template format (no fee summary rows)."""
+    if status_matrix is None:
+        status_matrix = {}
     days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
     employee_count = len(employees)
     last_data_col = max(2, employee_count + 1)
@@ -368,10 +385,15 @@ def _populate_template_core_sheet(
         )._style = copy(style_body)
 
         for idx, employee in enumerate(employees, start=2):
-            employee_days = matrix.get(str(employee.id), {})
-            value = employee_days.get(day)
-            if value is None:
-                value = _day_fallback_value(month_date.year, month_date.month, day, days_in_month)
+            employee_id_str = str(employee.id)
+            status = status_matrix.get(employee_id_str, {}).get(day)
+            if status:
+                value = STATUS_DAY_LABELS[status]
+            else:
+                employee_days = matrix.get(employee_id_str, {})
+                value = employee_days.get(day)
+                if value is None:
+                    value = _day_fallback_value(month_date.year, month_date.month, day, days_in_month)
             ws.cell(row=row, column=idx, value=value)._style = copy(style_body)
 
     ws.cell(row=34, column=1, value='סה"כ')._style = copy(style_total)
@@ -389,8 +411,8 @@ def _load_hours_matrix(site_id, processing_month, approved_only, include_inactiv
         include_inactive=include_inactive,
         business_id=g.business_id,
     )
-    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}})
-    return site_data['employees'], site_data['matrix'], site_data['status_map'], month
+    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}})
+    return site_data['employees'], site_data['matrix'], site_data['status_map'], month, site_data['status_matrix']
 
 
 def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, include_inactive, business_id):
@@ -401,7 +423,7 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         return {}
 
     site_results = {
-        site_id: {'employees': [], 'matrix': {}, 'status_map': {}}
+        site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}}
         for site_id in unique_site_ids
     }
 
@@ -469,7 +491,8 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
     day_entries = db.session.query(
         WorkCardDayEntry.work_card_id,
         WorkCardDayEntry.day_of_month,
-        WorkCardDayEntry.total_hours
+        WorkCardDayEntry.total_hours,
+        WorkCardDayEntry.day_status,
     ).filter(
         WorkCardDayEntry.work_card_id.in_(work_card_ids)
     ).all()
@@ -480,7 +503,9 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
             continue
         site_id, employee_id_str = match
 
-        if entry.total_hours is not None:
+        if entry.day_status:
+            site_results[site_id]['status_matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = entry.day_status
+        elif entry.total_hours is not None:
             site_results[site_id]['matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = float(entry.total_hours)
 
     return site_results
@@ -695,7 +720,7 @@ def get_hours_matrix(site_id):
         include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
         try:
-            employees, matrix, status_map, _ = _load_hours_matrix(
+            employees, matrix, status_map, _, _status_matrix = _load_hours_matrix(
                 site_id,
                 processing_month,
                 approved_only,
@@ -744,7 +769,7 @@ def export_monthly_summary(site_id):
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
     try:
-        employees, matrix, status_map, month = _load_hours_matrix(
+        employees, matrix, status_map, month, _status_matrix = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only,
@@ -873,7 +898,7 @@ def export_monthly_summary_batch():
 
         used_sheet_names = set()
         for site in sites:
-            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
+            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}})
             total_employee_count += len(site_data['employees'])
 
             ws = workbook.copy_worksheet(template_ws)
@@ -886,6 +911,7 @@ def export_monthly_summary_batch():
                 style_header=style_header,
                 style_body=style_body,
                 style_total=style_total,
+                status_matrix=site_data['status_matrix'],
             )
 
         if workbook.worksheets and len(workbook.worksheets) > 1:
@@ -948,7 +974,7 @@ def export_salary_template_site(site_id):
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
 
     try:
-        employees, matrix, _, _ = _load_hours_matrix(
+        employees, matrix, _, _, status_matrix = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only=False,
@@ -958,7 +984,7 @@ def export_salary_template_site(site_id):
         template_path = _resolve_salary_template_path(month)
         workbook = load_workbook(template_path)
         ws = workbook.worksheets[0]
-        _populate_salary_template_sheet(ws, employees, matrix, month)
+        _populate_salary_template_sheet(ws, employees, matrix, month, status_matrix)
         ws.title = _safe_sheet_name(site.site_name, set())
     except ValueError as e:
         return api_response(status_code=500, message="Invalid salary template format", error=str(e))
@@ -1033,13 +1059,13 @@ def export_salary_template_batch():
         used_sheet_names = set()
         populated_count = 0
         for site in sites:
-            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}})
+            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}})
             total_employee_count += len(site_data['employees'])
 
             ws = workbook.copy_worksheet(template_ws)
             ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
             try:
-                _populate_salary_template_sheet(ws, site_data['employees'], site_data['matrix'], month)
+                _populate_salary_template_sheet(ws, site_data['employees'], site_data['matrix'], month, site_data['status_matrix'])
                 populated_count += 1
             except ValueError as e:
                 logger.exception(f"Invalid salary template format for site {site.id}")
