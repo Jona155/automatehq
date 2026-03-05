@@ -17,17 +17,9 @@ import Modal from '../components/Modal';
 import MonthPicker from '../components/MonthPicker';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import { downloadBlobFile } from '../utils/fileDownload';
+import { getDefaultMonth } from '../utils/monthUtils';
 
 type TabType = 'employees' | 'review' | 'summary';
-
-// Default month for shared Review/Summary tabs (current month in YYYY-MM)
-function getCurrentMonth(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-}
-
 
 export default function SiteDetailsPage() {
   const { businessCode, siteId } = useParams<{ businessCode: string; siteId: string }>();
@@ -44,7 +36,7 @@ export default function SiteDetailsPage() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('employees');
-  const [selectedMonth, setSelectedMonth] = useState<string>(() => getCurrentMonth());
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [responsibleEmployeeId, setResponsibleEmployeeId] = useState<string>('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
@@ -52,7 +44,7 @@ export default function SiteDetailsPage() {
   const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
   const [isDownloadingSalaryTemplate, setIsDownloadingSalaryTemplate] = useState(false);
   const [salaryModalOpen, setSalaryModalOpen] = useState(false);
-  const [salaryExportMonth, setSalaryExportMonth] = useState<string>(() => getCurrentMonth());
+  const [salaryExportMonth, setSalaryExportMonth] = useState<string>(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [salaryExportSiteId, setSalaryExportSiteId] = useState<string>('');
   const [salarySites, setSalarySites] = useState<Site[]>([]);
   const [salaryModalError, setSalaryModalError] = useState<string | null>(null);

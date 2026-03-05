@@ -15,6 +15,8 @@ import {
 import { getDashboardSummary } from '../api/dashboard';
 import MonthPicker from '../components/MonthPicker';
 import type { DashboardSummary } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { getDefaultMonth } from '../utils/monthUtils';
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   NEEDS_ASSIGNMENT: { label: 'צריך שיוך', color: '#f97316' },
@@ -57,8 +59,9 @@ const buildMonthOptions = (count: number) => {
 export default function DashboardPage() {
   const { businessCode } = useParams<{ businessCode: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const monthOptions = useMemo(() => buildMonthOptions(12), []);
-  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0]?.value ?? '');
+  const [selectedMonth, setSelectedMonth] = useState(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

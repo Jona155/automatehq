@@ -3,6 +3,7 @@ export interface Business {
   name: string;
   code: string;
   is_active: boolean;
+  default_month_cutoff_day?: number | null;
 }
 
 export interface User {

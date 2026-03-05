@@ -32,7 +32,8 @@ def get_user_with_business(user):
             'id': str(business.id),
             'name': business.name,
             'code': business.code,
-            'is_active': business.is_active
+            'is_active': business.is_active,
+            'default_month_cutoff_day': business.default_month_cutoff_day,
         }
 
     return user_data

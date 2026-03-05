@@ -4,22 +4,16 @@ import { getMissingWorkCardEmployees } from '../api/workCards';
 import { getSites } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 import MonthPicker from '../components/MonthPicker';
-
-const getCurrentMonth = (): string => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-};
+import { getDefaultMonth } from '../utils/monthUtils';
 
 export default function MissingWorkCardsPage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonth());
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [filterSiteId, setFilterSiteId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 

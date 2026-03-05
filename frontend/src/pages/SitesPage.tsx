@@ -17,17 +17,10 @@ import LoadingIndicator from '../components/LoadingIndicator';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import { downloadBlobFile } from '../utils/fileDownload';
 import BatchUploadModal from '../components/BatchUploadModal';
+import { getDefaultMonth } from '../utils/monthUtils';
 
 type SortField = 'site_name' | 'site_code' | 'employee_count' | 'is_active';
 type SortOrder = 'asc' | 'desc';
-
-const getDefaultMonth = () => {
-  const now = new Date();
-  const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const year = currentMonth.getFullYear();
-  const month = String(currentMonth.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-};
 
 export default function SitesPage() {
   const { isAuthenticated, user } = useAuth();
@@ -54,13 +47,13 @@ export default function SitesPage() {
   const [selectedSiteIds, setSelectedSiteIds] = useState<string[]>([]);
   const [isBatchSending, setIsBatchSending] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
-  const [batchMonth, setBatchMonth] = useState(getDefaultMonth());
+  const [batchMonth, setBatchMonth] = useState(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [summaryExportOpen, setSummaryExportOpen] = useState(false);
-  const [summaryExportMonth, setSummaryExportMonth] = useState(getDefaultMonth());
+  const [summaryExportMonth, setSummaryExportMonth] = useState(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [isSummaryExporting, setIsSummaryExporting] = useState(false);
   const [summaryExportError, setSummaryExportError] = useState<string | null>(null);
   const [salaryExportOpen, setSalaryExportOpen] = useState(false);
-  const [salaryExportMonth, setSalaryExportMonth] = useState(getDefaultMonth());
+  const [salaryExportMonth, setSalaryExportMonth] = useState(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [isSalaryExporting, setIsSalaryExporting] = useState(false);
   const [salaryExportError, setSalaryExportError] = useState<string | null>(null);
   const [globalUploadOpen, setGlobalUploadOpen] = useState(false);
@@ -225,7 +218,7 @@ export default function SitesPage() {
 
   const handleOpenSummaryExport = () => {
     setSummaryExportError(null);
-    setSummaryExportMonth(getDefaultMonth());
+    setSummaryExportMonth(getDefaultMonth(user?.business?.default_month_cutoff_day));
     setSummaryExportOpen(true);
   };
 
@@ -254,7 +247,7 @@ export default function SitesPage() {
 
   const handleOpenSalaryExport = () => {
     setSalaryExportError(null);
-    setSalaryExportMonth(getDefaultMonth());
+    setSalaryExportMonth(getDefaultMonth(user?.business?.default_month_cutoff_day));
     setSalaryExportOpen(true);
   };
 
