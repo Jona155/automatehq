@@ -15,6 +15,8 @@ import {
 import { getDashboardSummary } from '../api/dashboard';
 import MonthPicker from '../components/MonthPicker';
 import type { DashboardSummary } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { getDefaultMonth } from '../utils/monthUtils';
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   NEEDS_ASSIGNMENT: { label: 'צריך שיוך', color: '#f97316' },
@@ -42,23 +44,11 @@ const formatShortMonth = (month: string) => {
 
 const formatNumber = (value: number) => new Intl.NumberFormat('he-IL').format(value);
 
-const buildMonthOptions = (count: number) => {
-  const now = new Date();
-  const options: Array<{ value: string; label: string }> = [];
-  for (let i = 0; i < count; i += 1) {
-    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    const label = new Intl.DateTimeFormat('he-IL', { month: 'long', year: 'numeric' }).format(date);
-    options.push({ value, label });
-  }
-  return options;
-};
-
 export default function DashboardPage() {
   const { businessCode } = useParams<{ businessCode: string }>();
   const navigate = useNavigate();
-  const monthOptions = useMemo(() => buildMonthOptions(12), []);
-  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0]?.value ?? '');
+  const { user } = useAuth();
+  const [selectedMonth, setSelectedMonth] = useState(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

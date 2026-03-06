@@ -55,17 +55,18 @@ def _normalize_hours_value(value: Any) -> Optional[float]:
         return None
 
 
-def _entry_signature(from_time: Any, to_time: Any, total_hours: Any) -> Tuple[Optional[str], Optional[str], Optional[float]]:
+def _entry_signature(from_time: Any, to_time: Any, total_hours: Any, day_status: Any = None) -> Tuple:
     return (
         _normalize_time_value(from_time),
         _normalize_time_value(to_time),
         _normalize_hours_value(total_hours),
+        day_status,
     )
 
 
 def _entries_equal(a: Any, b: Any) -> bool:
-    return _entry_signature(a.from_time, a.to_time, a.total_hours) == _entry_signature(
-        b.from_time, b.to_time, b.total_hours
+    return _entry_signature(a.from_time, a.to_time, a.total_hours, a.day_status) == _entry_signature(
+        b.from_time, b.to_time, b.total_hours, b.day_status
     )
 
 
@@ -701,7 +702,13 @@ def update_day_entries(card_id):
                 float(total_hours)
             except (ValueError, TypeError):
                 errors['total_hours'] = 'total_hours must be numeric'
-        
+
+        # Validate day_status
+        VALID_DAY_STATUSES = {'VACATION', 'SICK', 'INTERNATIONAL_VISA'}
+        day_status = entry.get('day_status')
+        if day_status is not None and day_status not in VALID_DAY_STATUSES:
+            errors['day_status'] = f"Invalid day_status: {day_status}"
+
         if errors:
             validation_errors.append({'day': day, 'errors': errors})
     
@@ -724,15 +731,18 @@ def update_day_entries(card_id):
             incoming_signature = _entry_signature(
                 entry.get('from_time'),
                 entry.get('to_time'),
-                entry.get('total_hours')
+                entry.get('total_hours'),
+                entry.get('day_status'),
             )
 
             # Approved values from previous card are locked from silent overwrites.
             if day in approved_previous_days:
+                prev = previous_entries_by_day[day]
                 previous_signature = _entry_signature(
-                    previous_entries_by_day[day].from_time,
-                    previous_entries_by_day[day].to_time,
-                    previous_entries_by_day[day].total_hours
+                    prev.from_time,
+                    prev.to_time,
+                    prev.total_hours,
+                    prev.day_status,
                 )
                 if incoming_signature != previous_signature:
                     return api_response(

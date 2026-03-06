@@ -9,6 +9,7 @@ export interface CreateBusinessPayload {
 export interface UpdateBusinessPayload {
   name?: string;
   code?: string;
+  default_month_cutoff_day?: number | null;
 }
 
 export const getBusinesses = async (params?: { active?: boolean }) => {

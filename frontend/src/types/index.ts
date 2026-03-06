@@ -3,6 +3,7 @@ export interface Business {
   name: string;
   code: string;
   is_active: boolean;
+  default_month_cutoff_day?: number | null;
 }
 
 export interface User {
@@ -102,6 +103,8 @@ export interface WorkCard {
   site?: Site;
 }
 
+export type DayStatus = 'VACATION' | 'SICK' | 'INTERNATIONAL_VISA';
+
 export interface DayEntry {
   id: string;
   work_card_id: string;
@@ -109,6 +112,7 @@ export interface DayEntry {
   from_time: string | null;
   to_time: string | null;
   total_hours: number | null;
+  day_status: DayStatus | null;
   source?: string | null;
   is_valid?: boolean;
   has_conflict?: boolean;

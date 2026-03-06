@@ -24,7 +24,7 @@ export default function StarterBusinessesPage() {
   const [businessToDeactivate, setBusinessToDeactivate] = useState<Business | null>(null);
 
   // Business form state
-  const [formData, setFormData] = useState({ name: '', code: '' });
+  const [formData, setFormData] = useState<{ name: string; code: string; default_month_cutoff_day: number | null }>({ name: '', code: '', default_month_cutoff_day: null });
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -86,14 +86,14 @@ export default function StarterBusinessesPage() {
 
   const handleOpenCreate = () => {
     setEditingBusiness(null);
-    setFormData({ name: '', code: '' });
+    setFormData({ name: '', code: '', default_month_cutoff_day: null });
     setFormError(null);
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (business: Business) => {
     setEditingBusiness(business);
-    setFormData({ name: business.name, code: business.code });
+    setFormData({ name: business.name, code: business.code, default_month_cutoff_day: business.default_month_cutoff_day ?? null });
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -126,6 +126,7 @@ export default function StarterBusinessesPage() {
         const payload: UpdateBusinessPayload = {
           name: formData.name,
           code: formData.code,
+          default_month_cutoff_day: formData.default_month_cutoff_day,
         };
         await updateBusiness(editingBusiness.id, payload);
       } else {
@@ -509,6 +510,25 @@ export default function StarterBusinessesPage() {
                   placeholder="my-business"
                 />
                 <p className="text-xs text-slate-500 mt-1">אותיות קטנות באנגלית, מספרים ומקפים בלבד</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  יום מעבר חודש שכר ברירת מחדל
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={28}
+                  dir="ltr"
+                  value={formData.default_month_cutoff_day ?? ''}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    default_month_cutoff_day: e.target.value === '' ? null : parseInt(e.target.value, 10),
+                  })}
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-left"
+                  placeholder="ריק = חודש נוכחי תמיד"
+                />
+                <p className="text-xs text-slate-500 mt-1">1–28. עד יום זה (לא כולל) — ברירת המחדל היא החודש הקודם. ריק = חודש נוכחי תמיד.</p>
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <button
