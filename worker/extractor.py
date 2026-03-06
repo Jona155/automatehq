@@ -767,6 +767,15 @@ def _apply_semantic_gating(entries: List[Dict[str, Any]]) -> Tuple[List[Dict[str
             "evidence": evidence,
         }
 
+        # Fallback: derive total_hours from time pair if still missing
+        if entry.get("total_hours") is None and has_valid_time_pair:
+            derived = _hours_from_time_pair(entry.get("start_time"), entry.get("end_time"))
+            if derived is not None:
+                entry["total_hours"] = derived
+                evidence = entry.get("evidence") or []
+                if "total_derived" not in evidence:
+                    entry["evidence"] = evidence + ["total_derived"]
+
         gated_entries.append(entry)
 
     return gated_entries, {

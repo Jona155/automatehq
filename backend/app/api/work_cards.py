@@ -746,23 +746,31 @@ def update_day_entries(card_id):
             
             # Get existing entry for this day
             existing = day_entry_repo.get_by_day(card_id, day)
-            
+
             # Parse time strings to time objects
             from_time_obj = None
             to_time_obj = None
-            
+
             if entry.get('from_time'):
                 hour, minute = map(int, entry['from_time'].split(':'))
                 from_time_obj = time(hour, minute)
-            
+
             if entry.get('to_time'):
                 hour, minute = map(int, entry['to_time'].split(':'))
                 to_time_obj = time(hour, minute)
-            
+
+            total_hours_val = entry.get('total_hours')
+            if total_hours_val is None and from_time_obj is not None and to_time_obj is not None:
+                delta_minutes = (to_time_obj.hour * 60 + to_time_obj.minute) - \
+                                (from_time_obj.hour * 60 + from_time_obj.minute)
+                if delta_minutes < 0:
+                    delta_minutes += 24 * 60
+                total_hours_val = round(delta_minutes / 60.0, 2)
+
             entry_data = {
                 'from_time': from_time_obj,
                 'to_time': to_time_obj,
-                'total_hours': entry.get('total_hours'),
+                'total_hours': total_hours_val,
                 'updated_by_user_id': g.current_user.id
             }
             
