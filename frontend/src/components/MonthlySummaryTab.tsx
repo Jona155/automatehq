@@ -24,6 +24,13 @@ const getHebrewDayName = (yearMonth: string, day: number): string => {
   return dayNames[date.getDay()];
 };
 
+// Day status Hebrew labels
+const DAY_STATUS_LABELS: Record<string, string> = {
+  VACATION: 'חופשה',
+  SICK: 'מחלה',
+  INTERNATIONAL_VISA: 'ויזה בינלאומית',
+};
+
 // Status colors and labels
 const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
   APPROVED: {
@@ -155,6 +162,9 @@ export default function MonthlySummaryTab({ siteId, selectedMonth, onMonthChange
             <span className="text-xs text-slate-600 dark:text-slate-400">{config.label}</span>
           </div>
         ))}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs italic text-slate-500 dark:text-slate-400">חופשה / מחלה / ויזה</span>
+        </div>
       </div>
 
       {/* Matrix Table */}
@@ -226,13 +236,18 @@ export default function MonthlySummaryTab({ siteId, selectedMonth, onMonthChange
                   {/* Hours cells */}
                   {matrixData.employees.map((employee) => {
                     const hours = matrixData.matrix[employee.id]?.[day];
+                    const dayStatus = matrixData.status_matrix?.[employee.id]?.[day];
                     const config = getCellStyle(employee.id);
                     return (
                       <td
                         key={employee.id}
                         className={`px-2 py-2 text-center border-b border-l border-slate-200 dark:border-slate-700 ${config.bg}`}
                       >
-                        {hours !== undefined && hours !== null ? (
+                        {dayStatus ? (
+                          <span className="text-xs italic text-slate-500 dark:text-slate-400">
+                            {DAY_STATUS_LABELS[dayStatus] ?? dayStatus}
+                          </span>
+                        ) : hours !== undefined && hours !== null ? (
                           <span className={`font-medium ${config.text}`}>
                             {hours.toFixed(1)}
                           </span>
