@@ -1025,18 +1025,12 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
     }
   };
 
-  const handlePrimaryReviewAction = async () => {
+  const handleApproveWithSave = async () => {
     if (!selectedCard || !user) return;
-
-    const isApproved = selectedCard.review_status === 'APPROVED';
-
     if (hasUnsavedChanges) {
-      const saved = await saveDayEntries({ showNoChangesToast: false, showSuccessToast: isApproved });
+      const saved = await saveDayEntries({ showNoChangesToast: false, showSuccessToast: false });
       if (!saved) return;
-      if (isApproved) return;
     }
-
-    if (isApproved) return;
     await handleApprove();
   };
 
@@ -1173,6 +1167,15 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
 
   // Check if there are unsaved changes
   const hasUnsavedChanges = dayEntries.some(e => e.isDirty);
+
+  const handleTableKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && hasUnsavedChanges && !isSaving) {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'SELECT') return;
+      e.preventDefault();
+      saveDayEntries();
+    }
+  }, [hasUnsavedChanges, isSaving, saveDayEntries]);
 
   const imagePanelWidth = 'w-full lg:w-[54%]';
   const tablePanelWidth = 'w-full lg:w-[46%]';
@@ -1522,10 +1525,25 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                     {isAdmin && (
                       <div className="flex items-stretch gap-2">
                         <button
-                          onClick={handlePrimaryReviewAction}
-                          disabled={isSaving || !selectedCard.employee_id || (selectedCard.review_status === 'APPROVED' && !hasUnsavedChanges)}
+                          onClick={() => saveDayEntries()}
+                          disabled={!hasUnsavedChanges || isSaving}
                           className={`h-9 px-4 rounded-lg transition-colors font-medium text-xs flex items-center gap-1.5 ${
-                            selectedCard.review_status === 'APPROVED' && !hasUnsavedChanges
+                            !hasUnsavedChanges || isSaving
+                              ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed dark:bg-slate-800 dark:border-slate-700'
+                              : 'bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600'
+                          }`}
+                          title={!hasUnsavedChanges ? 'אין שינויים לשמירה' : 'שמור שינויים'}
+                        >
+                          <span className={`material-symbols-outlined text-base ${isSaving ? 'animate-spin' : ''}`}>
+                            {isSaving ? 'progress_activity' : 'save'}
+                          </span>
+                          <span>{isSaving ? 'שומר...' : 'שמור'}</span>
+                        </button>
+                        <button
+                          onClick={handleApproveWithSave}
+                          disabled={isSaving || !selectedCard.employee_id || selectedCard.review_status === 'APPROVED'}
+                          className={`h-9 px-4 rounded-lg transition-colors font-medium text-xs flex items-center gap-1.5 ${
+                            selectedCard.review_status === 'APPROVED'
                               ? 'bg-green-50 text-green-600 border border-green-200 cursor-default dark:bg-green-900/20 dark:text-green-400 dark:border-green-800'
                             : !selectedCard.employee_id
                               ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed dark:bg-slate-800 dark:border-slate-700'
@@ -1534,31 +1552,13 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                               : 'bg-green-600 text-white hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600'
                           }`}
                           title={
-                            !selectedCard.employee_id
-                              ? 'יש לשייך עובד תחילה'
-                              : selectedCard.review_status === 'APPROVED' && hasUnsavedChanges
-                              ? 'שמור שינויים'
-                              : selectedCard.review_status === 'APPROVED'
-                              ? 'הכרטיס כבר מאושר'
-                              : hasUnsavedChanges
-                              ? 'שמור שינויים ואשר'
-                              : 'אשר כרטיס'
+                            !selectedCard.employee_id ? 'יש לשייך עובד תחילה'
+                            : selectedCard.review_status === 'APPROVED' ? 'הכרטיס כבר מאושר'
+                            : 'אשר כרטיס'
                           }
                         >
-                          <span className={`material-symbols-outlined text-base ${isSaving ? 'animate-spin' : ''}`}>
-                            {isSaving ? 'progress_activity' : hasUnsavedChanges ? 'save' : selectedCard.review_status === 'APPROVED' && !hasUnsavedChanges ? 'check_circle' : 'check_circle'}
-                          </span>
-                          <span>
-                            {isSaving
-                              ? 'שומר...'
-                              : selectedCard.review_status === 'APPROVED' && hasUnsavedChanges
-                              ? 'שמור שינויים'
-                              : hasUnsavedChanges
-                              ? 'שמור ואשר'
-                              : selectedCard.review_status === 'APPROVED'
-                              ? 'מאושר'
-                              : 'אשר'}
-                          </span>
+                          <span className="material-symbols-outlined text-base">check_circle</span>
+                          <span>{selectedCard.review_status === 'APPROVED' ? 'מאושר' : 'אשר'}</span>
                         </button>
                         <button
                           onClick={() => setShowRejectModal(true)}
@@ -1897,7 +1897,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                       <p className="text-sm text-slate-500 dark:text-slate-400">אין שורות להצגה</p>
                     </div>
                   ) : (
-                    <div ref={tableScrollRef} className="flex-1 overflow-auto" role="region" aria-label="טבלת שעות עבודה">
+                    <div ref={tableScrollRef} className="flex-1 overflow-auto" role="region" aria-label="טבלת שעות עבודה" onKeyDown={handleTableKeyDown}>
                       <table className="w-full text-sm">
                         <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800 z-10">
                           <tr className="text-slate-600 dark:text-slate-400">
@@ -2020,6 +2020,20 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                           })}
                         </tbody>
                       </table>
+                      {hasUnsavedChanges && (
+                        <div className="sticky bottom-0 z-10 bg-white/90 dark:bg-slate-900/90 backdrop-blur border-t border-slate-200 dark:border-slate-700 px-4 py-2 flex items-center justify-between">
+                          <span className="text-xs text-amber-600 dark:text-amber-400">
+                            יש שינויים שלא נשמרו
+                          </span>
+                          <button
+                            onClick={() => saveDayEntries()}
+                            disabled={isSaving}
+                            className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
+                          >
+                            {isSaving ? 'שומר...' : 'שמור'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
