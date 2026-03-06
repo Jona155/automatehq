@@ -154,3 +154,81 @@ def test_phased_result_is_valid_rejects_duplicate_days():
     # Manually inject a duplicate to verify the validator catches it
     result["entries"].append({"day": 3, "start_time": "10:00", "end_time": "19:00", "total_hours": 9.0})
     assert _phased_result_is_valid(result) is False
+
+
+def test_fallback_derives_total_hours_for_non_worked_state():
+    entries, quality = _apply_semantic_gating([
+        {
+            "day": 5,
+            "start_time": "08:00",
+            "end_time": "16:00",
+            "total_hours": None,
+            "row_state": "ILLEGIBLE",
+            "row_confidence": 0.90,
+        }
+    ])
+
+    assert entries[0]["total_hours"] == 8.0
+
+
+def test_fallback_derives_overnight_shift():
+    entries, quality = _apply_semantic_gating([
+        {
+            "day": 6,
+            "start_time": "22:00",
+            "end_time": "06:00",
+            "total_hours": None,
+            "row_state": "ILLEGIBLE",
+            "row_confidence": 0.90,
+        }
+    ])
+
+    assert entries[0]["total_hours"] == 8.0
+
+
+def test_fallback_no_derivation_without_end_time():
+    entries, quality = _apply_semantic_gating([
+        {
+            "day": 8,
+            "start_time": "08:00",
+            "end_time": None,
+            "total_hours": None,
+            "row_state": "ILLEGIBLE",
+            "row_confidence": 0.90,
+        }
+    ])
+
+    assert entries[0]["total_hours"] is None
+
+
+def test_fallback_does_not_overwrite_existing_total_hours():
+    entries, quality = _apply_semantic_gating([
+        {
+            "day": 10,
+            "start_time": "08:00",
+            "end_time": "17:00",
+            "total_hours": 7.5,
+            "row_state": "WORKED",
+            "row_confidence": 0.95,
+        }
+    ])
+
+    # 7.5 is within 1h of derived 9.0, so no conflict — value is preserved
+    assert entries[0]["total_hours"] == 7.5
+
+
+def test_fallback_adds_total_derived_evidence():
+    entries, quality = _apply_semantic_gating([
+        {
+            "day": 12,
+            "start_time": "09:00",
+            "end_time": "17:00",
+            "total_hours": None,
+            "row_state": "ILLEGIBLE",
+            "row_confidence": 0.90,
+            "evidence": ["some_flag"],
+        }
+    ])
+
+    assert entries[0]["total_hours"] == 8.0
+    assert "total_derived" in entries[0]["evidence"]
