@@ -141,6 +141,7 @@ export interface EmployeeUploadStatus {
 export interface MatrixData {
   employees: Employee[];
   matrix: Record<string, Record<number, number>>; // employee_id -> day -> hours
+  status_matrix: Record<string, Record<number, string>>; // employee_id -> day -> day_status
   status_map: Record<string, string | null>; // employee_id -> review_status
 }
 

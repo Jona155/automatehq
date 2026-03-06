@@ -1890,6 +1890,8 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                                     ? 'bg-red-50 dark:bg-red-900/10'
                                     : entry.isDirty
                                     ? 'bg-yellow-50 dark:bg-yellow-900/10'
+                                    : entry.day_status
+                                    ? 'bg-purple-50 dark:bg-purple-900/10'
                                     : ''
                                 }`}
                               >
