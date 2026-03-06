@@ -22,7 +22,7 @@ import { getDefaultMonth } from '../utils/monthUtils';
 type TabType = 'employees' | 'review' | 'summary';
 
 export default function SiteDetailsPage() {
-  const { businessCode, siteId } = useParams<{ businessCode: string; siteId: string }>();
+  const { siteId } = useParams<{ businessCode: string; siteId: string }>();
   const { isAuthenticated, user } = useAuth();
   const { isAdmin } = usePermissions();
   const [site, setSite] = useState<Site | null>(null);
@@ -116,11 +116,6 @@ export default function SiteDetailsPage() {
 
   const handleBack = () => {
     navigate(`/${user?.business?.code}/sites`);
-  };
-
-  const handleOpenReviewMode = () => {
-    if (!siteId || !businessCode) return;
-    navigate(`/${businessCode}/sites/${siteId}/review?selectedMonth=${encodeURIComponent(selectedMonth)}`);
   };
 
   const handleUploadClick = (employee: Employee) => {
