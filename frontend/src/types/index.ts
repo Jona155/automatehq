@@ -99,8 +99,23 @@ export interface WorkCard {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  source?: string | null;
+  original_filename?: string | null;
   employee?: Employee;
   site?: Site;
+}
+
+export interface CardGroup {
+  groupKey: string;
+  employee: Employee | null;
+  extractedName: string | null;
+  extractedPassportId: string | null;
+  cards: WorkCard[];
+  cardCount: number;
+  aggregateStatus: WorkCard['review_status'];
+  hasMultiple: boolean;
+  earliestUpload: string;
+  latestUpload: string;
 }
 
 export type DayStatus = 'VACATION' | 'SICK' | 'INTERNATIONAL_VISA';
