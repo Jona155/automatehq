@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus } from '../types';
 import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
@@ -13,6 +14,22 @@ interface WorkCardReviewTabProps {
   onMonthChange: (value: string) => void;
   monthStorageKey: string;
   isAdmin?: boolean;
+  isEmbedded?: boolean;
+  initialCardId?: string;
+}
+
+function ReviewOverlay({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/40 backdrop-blur-[2px]">
+      <button
+        onClick={onClick}
+        className="flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-slate-800 shadow-lg hover:bg-slate-50 transition-colors"
+      >
+        <span className="material-symbols-outlined text-lg">open_in_full</span>
+        <span>פתח במצב סקירה מלא</span>
+      </button>
+    </div>
+  );
 }
 
 // Get number of days in a month
@@ -145,7 +162,7 @@ const useDayImageZoneMapping = (extraction: WorkCardExtraction | null) => {
   }, [extraction]);
 };
 
-function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey, isAdmin = true }: WorkCardReviewTabProps) {
+function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey, isAdmin = true, isEmbedded = false, initialCardId }: WorkCardReviewTabProps) {
   const AUTO_ADVANCE_STORAGE_KEY = 'workCardReview:autoAdvance';
   const [workCards, setWorkCards] = useState<WorkCard[]>([]);
   const [selectedCard, setSelectedCard] = useState<WorkCard | null>(null);
@@ -194,6 +211,24 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const { showToast, ToastContainer } = useToast();
   const { user } = useAuth();
+  const { businessCode, siteId: siteIdParam } = useParams<{ businessCode: string; siteId: string }>();
+  const navigate = useNavigate();
+
+  const initialCardIdRef = useRef(initialCardId);
+  useEffect(() => {
+    if (!initialCardIdRef.current || !workCards.length) return;
+    const match = workCards.find(c => c.id === initialCardIdRef.current);
+    if (match) {
+      setSelectedCard(match);
+      initialCardIdRef.current = undefined;
+    }
+  }, [workCards]);
+
+  const handleOpenInReviewMode = () => {
+    const cardParam = selectedCard ? `&cardId=${selectedCard.id}` : '';
+    navigate(`/${businessCode}/sites/${siteIdParam}/review?selectedMonth=${encodeURIComponent(selectedMonth)}${cardParam}`);
+  };
+
   const filterCards = useCallback((cards: WorkCard[]) => {
     const search = cardSearch.trim().toLowerCase();
 
@@ -1461,6 +1496,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                   </div>
 
                   {/* Zone 3 — Actions */}
+                  {!isEmbedded && (
                   <div className="flex items-center gap-2 shrink-0">
                     {!selectedCard.employee_id && (
                       <button
@@ -1535,6 +1571,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                       </div>
                     )}
                   </div>
+                  )}
                 </div>
               </div>
 
@@ -1601,7 +1638,9 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
               </div>
               <div className="flex flex-col lg:flex-row lg:h-[640px]">
                 {/* Image Panel */}
-                <div className={`${imagePanelWidth} lg:border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-100 dark:bg-slate-900 h-[400px] lg:h-auto`}>
+                <div className={`${imagePanelWidth} relative group`}>
+                {isEmbedded && <ReviewOverlay onClick={handleOpenInReviewMode} />}
+                <div className="flex flex-col lg:border-l border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 h-[400px] lg:h-full">
                   <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
                     <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
                       <span className="material-symbols-outlined text-lg">image</span>
@@ -1711,9 +1750,12 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                     </div>
                   </div>
                 </div>
+                </div>
 
                 {/* Day Entries Panel */}
-                <div className={`${tablePanelWidth} flex flex-col border-t border-slate-200 dark:border-slate-700 lg:border-t-0`}>
+                <div className={`${tablePanelWidth} relative group`}>
+                {isEmbedded && <ReviewOverlay onClick={handleOpenInReviewMode} />}
+                <div className="flex flex-col border-t border-slate-200 dark:border-slate-700 lg:border-t-0 h-full">
                   <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-4">
                     <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2 shrink-0">
                       <span className="material-symbols-outlined text-lg">table_chart</span>
@@ -1980,6 +2022,7 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
                       </table>
                     </div>
                   )}
+                </div>
                 </div>
               </div>
             </div>
