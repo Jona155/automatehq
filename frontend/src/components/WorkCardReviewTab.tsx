@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus } from '../types';
+import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup } from '../types';
 import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
 import MonthPicker from './MonthPicker';
@@ -69,6 +69,27 @@ const getFirstName = (fullName: string | null | undefined): string => {
   if (!fullName) return '';
   const [firstName] = fullName.trim().split(/\s+/);
   return firstName || fullName;
+};
+
+const formatDate = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+};
+
+const formatDateTime = (iso: string) => {
+  const d = new Date(iso);
+  return `${formatDate(iso)} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+};
+
+const sourceLabel = (source: string) => (({
+  ADMIN_SINGLE: 'העלאה ידנית', ADMIN_BATCH: 'העלאה קבוצתית',
+  PUBLIC_PORTAL: 'פורטל ציבורי', WHATSAPP: 'וואטסאפ',
+} as Record<string, string>)[source] || source);
+
+const calcAggregateStatus = (statuses: WorkCard['review_status'][]): WorkCard['review_status'] => {
+  if (statuses.includes('NEEDS_ASSIGNMENT')) return 'NEEDS_ASSIGNMENT';
+  if (statuses.includes('NEEDS_REVIEW')) return 'NEEDS_REVIEW';
+  return 'APPROVED';
 };
 
 type ReviewMode = 'queue' | 'focus';
@@ -188,7 +209,8 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [cardSearch, setCardSearch] = useState('');
   const [listFilter, setListFilter] = useState<'all' | 'unassigned' | 'assigned'>('all');
   const [reviewMode, setReviewMode] = useState<ReviewMode>('queue');
-const [showDirtyOnly, setShowDirtyOnly] = useState(false);
+  const [showDirtyOnly, setShowDirtyOnly] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [jumpToDay, setJumpToDay] = useState('');
   const [activeDay, setActiveDay] = useState<number | null>(null);
   const [imageScale, setImageScale] = useState(1);
@@ -269,6 +291,99 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
     () => [...filteredCards.unassigned, ...filteredCards.assigned],
     [filteredCards.unassigned, filteredCards.assigned]
   );
+
+  const groupedCards = useMemo((): CardGroup[] => {
+    const search = cardSearch.trim().toLowerCase();
+
+    const matchesGroup = (group: Omit<CardGroup, 'aggregateStatus' | 'hasMultiple' | 'earliestUpload' | 'latestUpload'>) => {
+      if (!search) return true;
+      const name = group.employee?.full_name?.toLowerCase() || '';
+      const passport = group.employee?.passport_id?.toLowerCase() || '';
+      const extractedName = group.extractedName?.toLowerCase() || '';
+      const extractedPassport = group.extractedPassportId?.toLowerCase() || '';
+      return (
+        name.includes(search) ||
+        passport.includes(search) ||
+        extractedName.includes(search) ||
+        extractedPassport.includes(search) ||
+        group.cards.some(c => String(c.id).toLowerCase().includes(search) ||
+          (c.original_filename?.toLowerCase() || '').includes(search))
+      );
+    };
+
+    const employeeMap = new Map<string, WorkCard[]>();
+    const passportMap = new Map<string, WorkCard[]>();
+    const singletons: WorkCard[] = [];
+
+    workCards.forEach(card => {
+      if (card.employee_id) {
+        const existing = employeeMap.get(card.employee_id);
+        if (existing) existing.push(card);
+        else employeeMap.set(card.employee_id, [card]);
+      } else {
+        const passportId = extractionsByCardId[card.id]?.extracted_passport_id;
+        if (passportId) {
+          const existing = passportMap.get(passportId);
+          if (existing) existing.push(card);
+          else passportMap.set(passportId, [card]);
+        } else {
+          singletons.push(card);
+        }
+      }
+    });
+
+    const toGroup = (key: string, cards: WorkCard[]): CardGroup => {
+      const sorted = [...cards].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const employee = sorted[0].employee ?? null;
+      const extraction = extractionsByCardId[sorted[0].id];
+      return {
+        groupKey: key,
+        employee,
+        extractedName: extraction?.extracted_employee_name ?? null,
+        extractedPassportId: extraction?.extracted_passport_id ?? null,
+        cards: sorted,
+        cardCount: sorted.length,
+        aggregateStatus: calcAggregateStatus(sorted.map(c => c.review_status)),
+        hasMultiple: sorted.length > 1,
+        earliestUpload: sorted[sorted.length - 1].created_at,
+        latestUpload: sorted[0].created_at,
+      };
+    };
+
+    const groups: CardGroup[] = [];
+
+    // Assigned groups
+    if (listFilter !== 'unassigned') {
+      employeeMap.forEach((cards, empId) => {
+        const g = toGroup(`emp:${empId}`, cards);
+        if (matchesGroup(g)) groups.push(g);
+      });
+    }
+
+    // Unassigned groups (passport-grouped)
+    if (listFilter !== 'assigned') {
+      passportMap.forEach((cards, passport) => {
+        const g = toGroup(`passport:${passport}`, cards);
+        if (matchesGroup(g)) groups.push(g);
+      });
+      singletons.forEach(card => {
+        const g = toGroup(`unknown:${card.id}`, [card]);
+        if (matchesGroup(g)) groups.push(g);
+      });
+    }
+
+    // Sort: unassigned first, then by name
+    groups.sort((a, b) => {
+      const aUnassigned = !a.employee;
+      const bUnassigned = !b.employee;
+      if (aUnassigned !== bUnassigned) return aUnassigned ? -1 : 1;
+      const aName = a.employee?.full_name || a.extractedName || '';
+      const bName = b.employee?.full_name || b.extractedName || '';
+      return aName.localeCompare(bName);
+    });
+
+    return groups;
+  }, [workCards, extractionsByCardId, cardSearch, listFilter]);
 
   const selectedVisibleIndex = useMemo(
     () => (selectedCard ? visibleCards.findIndex((card) => card.id === selectedCard.id) : -1),
@@ -1228,10 +1343,10 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
           <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-600 dark:text-slate-400">
-                {workCards.length} כרטיסים
+                {groupedCards.length} עובדים · {workCards.length} כרטיסים
               </span>
               <span className="text-xs text-slate-500 dark:text-slate-500">
-                {filteredCards.assigned.length + filteredCards.unassigned.length} מוצגים
+                {groupedCards.length} מוצגים
               </span>
             </div>
             <div className="relative">
@@ -1282,112 +1397,127 @@ const [showDirtyOnly, setShowDirtyOnly] = useState(false);
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto">
-              {/* Unassigned Cards Section */}
-              {filteredCards.unassigned.length > 0 && (
-                <div>
-                  <div className="px-4 py-2 bg-orange-50 dark:bg-orange-900/20 border-b border-orange-200 dark:border-orange-800 sticky top-0 z-10">
-                    <div className="flex items-center gap-2 text-orange-700 dark:text-orange-400">
-                      <span className="material-symbols-outlined text-sm">warning</span>
-                      <span className="text-xs font-semibold">ממתינים לשיוך ({filteredCards.unassigned.length})</span>
-                    </div>
-                  </div>
-                  {filteredCards.unassigned.map((card) => (
-                    <button
-                      key={card.id}
-                      onClick={() => setSelectedCard(card)}
-                      className={`w-full px-4 py-3 text-right border-b border-orange-200 dark:border-orange-800 hover:bg-orange-50 dark:hover:bg-orange-900/30 transition-colors bg-orange-50/50 dark:bg-orange-900/10 ${
-                        selectedCard?.id === card.id
-                          ? 'bg-primary/10 border-r-4 border-r-primary'
-                          : ''
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-600 flex items-center justify-center font-bold text-xs uppercase shrink-0">
-                          <span className="material-symbols-outlined text-lg">help</span>
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-medium text-slate-900 dark:text-white truncate">
-                            {getFirstName(extractionsByCardId[card.id]?.extracted_employee_name) || 'עובד לא מזוהה'}
-                          </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                            {extractionsByCardId[card.id]?.extracted_passport_id
-                              ? `ת.ז/דרכון: ${extractionsByCardId[card.id]?.extracted_passport_id}`
-                              : 'ת.ז/דרכון לא זוהה'}
-                          </div>
-                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-400">
-                              ממתין לשיוך
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Assigned Cards Section */}
-              {filteredCards.assigned.length > 0 && (
-                <div>
-                  {filteredCards.unassigned.length > 0 && (
-                    <div className="px-4 py-2 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
-                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">כרטיסים משויכים ({filteredCards.assigned.length})</span>
-                    </div>
-                  )}
-                  {filteredCards.assigned.map((card) => (
-                    <button
-                      key={card.id}
-                      onClick={() => setSelectedCard(card)}
-                      className={`w-full px-4 py-3 text-right border-b border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
-                        selectedCard?.id === card.id
-                          ? 'bg-primary/10 border-r-4 border-r-primary'
-                          : ''
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 flex items-center justify-center font-bold text-xs uppercase shrink-0">
-                          {card.employee?.full_name
-                            ? card.employee.full_name
-                                .split(' ')
-                                .map((word) => word[0])
-                                .join('')
-                                .slice(0, 2)
-                            : '??'}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-medium text-slate-900 dark:text-white truncate">
-                            {getFirstName(card.employee?.full_name) || 'עובד לא ידוע'}
-                          </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                            {card.employee?.passport_id
-                              ? `ת.ז/דרכון: ${card.employee.passport_id}`
-                              : 'ת.ז/דרכון לא הוזן'}
-                          </div>
-                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                              card.review_status === 'APPROVED'
-                                ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
-                                : card.review_status === 'NEEDS_REVIEW'
-                                ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
-                                : 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-400'
-                            }`}>
-                              {card.review_status === 'APPROVED' ? 'מאושר' :
-                               card.review_status === 'NEEDS_REVIEW' ? 'ממתין לסקירה' :
-                               card.review_status === 'NEEDS_ASSIGNMENT' ? 'ממתין לשיוך' :
-                               card.review_status}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {filteredCards.assigned.length === 0 && filteredCards.unassigned.length === 0 && (
+              {groupedCards.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
                   <span className="material-symbols-outlined text-4xl text-slate-300 dark:text-slate-600 mb-2">manage_search</span>
                   <p className="text-sm text-slate-500 dark:text-slate-400">אין תוצאות לחיפוש/סינון</p>
                 </div>
+              ) : (
+                groupedCards.map((group) => {
+                  const isExpanded = expandedGroups.has(group.groupKey) || group.cards.some(c => c.id === selectedCard?.id);
+                  const isActive = group.cards.some(c => c.id === selectedCard?.id);
+                  const isUnassigned = !group.employee;
+
+                  const avatarContent = group.employee
+                    ? group.employee.full_name.split(' ').map(w => w[0]).join('').slice(0, 2)
+                    : null;
+
+                  const statusBadge = (status: WorkCard['review_status'], small?: boolean) => {
+                    const label = status === 'APPROVED' ? 'מאושר' :
+                      status === 'NEEDS_REVIEW' ? 'ממתין לסקירה' :
+                      status === 'NEEDS_ASSIGNMENT' ? 'ממתין לשיוך' : status;
+                    const cls = status === 'APPROVED'
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
+                      : status === 'NEEDS_REVIEW'
+                      ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
+                      : 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-400';
+                    return (
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls} ${small ? 'text-[10px]' : ''}`}>
+                        {label}
+                      </span>
+                    );
+                  };
+
+                  return (
+                    <div key={group.groupKey} className="border-b border-slate-200 dark:border-slate-700">
+                      {/* Group header row */}
+                      <button
+                        onClick={() => {
+                          if (group.cardCount === 1) {
+                            setSelectedCard(group.cards[0]);
+                          } else {
+                            setExpandedGroups(prev => {
+                              const next = new Set(prev);
+                              if (next.has(group.groupKey)) next.delete(group.groupKey);
+                              else next.add(group.groupKey);
+                              return next;
+                            });
+                          }
+                        }}
+                        className={`w-full px-4 py-3 text-right flex items-center gap-3 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                          isActive ? 'bg-primary/10 border-r-4 border-r-primary' : ''
+                        } ${isUnassigned ? 'bg-orange-50/50 dark:bg-orange-900/10' : ''}`}
+                      >
+                        {/* Avatar */}
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs uppercase shrink-0 ${
+                          isUnassigned
+                            ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-600'
+                            : 'bg-blue-100 dark:bg-blue-900/40 text-blue-600'
+                        }`}>
+                          {avatarContent ?? <span className="material-symbols-outlined text-lg">help</span>}
+                        </div>
+
+                        {/* Identity + meta */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-slate-900 dark:text-white truncate">
+                              {getFirstName(group.employee?.full_name || group.extractedName) || 'עובד לא מזוהה'}
+                            </span>
+                            {group.cardCount > 1 && (
+                              <span className="shrink-0 text-xs font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-full px-1.5">
+                                ×{group.cardCount}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                            {(group.employee?.passport_id || group.extractedPassportId)
+                              ? `ת.ז/דרכון: ${group.employee?.passport_id || group.extractedPassportId}`
+                              : 'ת.ז/דרכון לא זוהה'}
+                          </div>
+                          <div className="mt-1 flex items-center gap-2 flex-wrap">
+                            {statusBadge(group.aggregateStatus)}
+                            {group.cardCount > 1 && (
+                              <span className="text-xs text-slate-400 dark:text-slate-500">
+                                {formatDate(group.earliestUpload)} – {formatDate(group.latestUpload)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Expand chevron (only for multi-card groups) */}
+                        {group.cardCount > 1 && (
+                          <span className="material-symbols-outlined text-slate-400 shrink-0">
+                            {isExpanded ? 'expand_less' : 'expand_more'}
+                          </span>
+                        )}
+                      </button>
+
+                      {/* Expanded individual card rows */}
+                      {isExpanded && group.cardCount > 1 && group.cards.map(card => (
+                        <button
+                          key={card.id}
+                          onClick={() => setSelectedCard(card)}
+                          className={`w-full pl-4 pr-12 py-2.5 text-right border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 transition-colors bg-slate-50 dark:bg-slate-900/30 hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                            selectedCard?.id === card.id ? 'bg-primary/10 border-r-4 border-r-primary' : ''
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs text-slate-500 dark:text-slate-400">{formatDateTime(card.created_at)}</span>
+                              {statusBadge(card.review_status, true)}
+                            </div>
+                            {card.original_filename && (
+                              <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{card.original_filename}</div>
+                            )}
+                            {card.source && (
+                              <div className="text-xs text-slate-400 dark:text-slate-500">{sourceLabel(card.source)}</div>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })
               )}
             </div>
           )}
