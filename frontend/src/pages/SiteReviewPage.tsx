@@ -19,6 +19,7 @@ export default function SiteReviewPage() {
   const initialCollapsedRef = useRef(collapsed);
 
   const selectedMonth = searchParams.get('selectedMonth') || getPreviousMonth();
+  const cardId = searchParams.get('cardId') || undefined;
   const shouldAutoCollapse = searchParams.get('sidebar') !== 'keep';
 
   useEffect(() => {
@@ -68,6 +69,7 @@ export default function SiteReviewPage() {
           selectedMonth={selectedMonth}
           onMonthChange={handleMonthChange}
           monthStorageKey={`site_review_month_${siteId}`}
+          initialCardId={cardId}
         />
       </div>
     </div>

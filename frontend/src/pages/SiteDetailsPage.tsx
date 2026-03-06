@@ -472,24 +472,14 @@ export default function SiteDetailsPage() {
 
         {activeTab === 'review' && (
           <div className="flex flex-col">
-            <div className="flex justify-end px-6 pt-4 shrink-0">
-              <button
-                onClick={handleOpenReviewMode}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 transition-colors"
-              >
-                <span className="material-symbols-outlined text-[18px]">open_in_new</span>
-                <span>פתח מצב סקירה</span>
-              </button>
-            </div>
-            <div>
-              <WorkCardReviewTab
-                siteId={siteId!}
-                selectedMonth={selectedMonth}
-                onMonthChange={setSelectedMonth}
-                monthStorageKey={`site_details_month_${siteId}`}
-                isAdmin={isAdmin}
-              />
-            </div>
+            <WorkCardReviewTab
+              siteId={siteId!}
+              selectedMonth={selectedMonth}
+              onMonthChange={setSelectedMonth}
+              monthStorageKey={`site_details_month_${siteId}`}
+              isAdmin={isAdmin}
+              isEmbedded={true}
+            />
           </div>
         )}
 
