@@ -15,15 +15,28 @@ class WorkCardExtractionRepository(BaseRepository[WorkCardExtraction]):
     def get_pending_jobs(self, limit: int = 10) -> List[WorkCardExtraction]:
         """
         Get pending extraction jobs that are not locked.
-        
+
         Args:
             limit: Maximum number of jobs to return
-            
+
         Returns:
             List of WorkCardExtraction instances with PENDING status
         """
         return self.session.query(WorkCardExtraction).filter_by(
             status='PENDING'
+        ).filter(
+            WorkCardExtraction.locked_at.is_(None)
+        ).limit(limit).all()
+
+    def get_pending_split_jobs(self, limit: int = 10) -> List[WorkCardExtraction]:
+        """
+        Get pending PDF-split jobs that are not locked.
+
+        Returns:
+            List of WorkCardExtraction instances with PENDING_SPLIT status
+        """
+        return self.session.query(WorkCardExtraction).filter_by(
+            status='PENDING_SPLIT'
         ).filter(
             WorkCardExtraction.locked_at.is_(None)
         ).limit(limit).all()
@@ -194,7 +207,7 @@ class WorkCardExtractionRepository(BaseRepository[WorkCardExtraction]):
         return self.session.query(WorkCardExtraction).filter(
             WorkCardExtraction.locked_at.isnot(None),
             WorkCardExtraction.locked_at < cutoff_time,
-            WorkCardExtraction.status.in_(['PENDING', 'RUNNING'])
+            WorkCardExtraction.status.in_(['PENDING', 'RUNNING', 'PENDING_SPLIT'])
         ).all()
     
     def release_lock(self, job_id: UUID) -> bool:
@@ -238,6 +251,20 @@ class WorkCardExtractionRepository(BaseRepository[WorkCardExtraction]):
         self.session.commit()
         return True
     
+    def reset_split_job(self, job_id: UUID) -> bool:
+        """Reset a PDF-split job to PENDING_SPLIT state (for retry after a stale lock)."""
+        job = self.get_by_id(job_id)
+        if not job:
+            return False
+
+        job.status = 'PENDING_SPLIT'
+        job.locked_at = None
+        job.locked_by = None
+        job.started_at = None
+        job.finished_at = None
+        self.session.commit()
+        return True
+
     def reset_job_hours_only(self, job_id: UUID) -> bool:
         """
         Reset a job to PENDING state in HOURS_ONLY mode (re-extract day entries, skip identity matching).
