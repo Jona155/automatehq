@@ -18,7 +18,6 @@ from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required, role_required
 from ..extensions import db
 from ..models.sites import Site
-from ..services.pdf_upload_helper import expand_uploaded_file
 
 logger = logging.getLogger(__name__)
 
@@ -858,48 +857,58 @@ def upload_single():
         file_data = file.read()
         filename = secure_filename(file.filename)
 
-        # Expand file (handles PDF splitting)
-        try:
-            pages = expand_uploaded_file(file_data, content_type, filename)
-        except ValueError as pdf_err:
-            return api_response(status_code=400, message=str(pdf_err), error="Bad Request")
-
-        if len(pages) > 1:
-            return api_response(
-                status_code=400,
-                message="העלאה בודדת לא תומכת ב-PDF עם מספר כרטיסים. השתמש בהעלאה מרובה.",
-                error="Multi-card PDF not allowed for single upload"
+        if content_type == 'application/pdf':
+            # Store raw PDF and let the worker split it — keeps heavy libs off the web dyno
+            work_card = repo.create(
+                business_id=g.business_id,
+                site_id=site_id,
+                employee_id=employee_id,
+                processing_month=month,
+                source='ADMIN_SINGLE',
+                uploaded_by_user_id=g.current_user.id,
+                original_filename=filename,
+                mime_type='application/pdf',
+                file_size_bytes=len(file_data),
+                source_page_number=None,
+                source_page_position=None,
+                review_status='SPLITTING',
             )
-
-        page = pages[0]
-
-        # Create work card
-        work_card = repo.create(
-            business_id=g.business_id,
-            site_id=site_id,
-            employee_id=employee_id,
-            processing_month=month,
-            source='ADMIN_SINGLE',
-            uploaded_by_user_id=g.current_user.id,
-            original_filename=filename,
-            mime_type=page['original_content_type'],
-            file_size_bytes=len(page['image_bytes']),
-            source_page_number=page['page_number'],
-            source_page_position=page['page_position'],
-            review_status='NEEDS_REVIEW',
-        )
-
-        file_repo.create(
-            work_card_id=work_card.id,
-            content_type=page['content_type'],
-            file_name=filename,
-            image_bytes=page['image_bytes'],
-        )
-
-        extraction_repo.create(
-            work_card_id=work_card.id,
-            status='PENDING',
-        )
+            file_repo.create(
+                work_card_id=work_card.id,
+                content_type='application/pdf',
+                file_name=filename,
+                image_bytes=file_data,
+            )
+            extraction_repo.create(
+                work_card_id=work_card.id,
+                status='PENDING_SPLIT',
+            )
+        else:
+            # Image: store directly and queue for extraction
+            work_card = repo.create(
+                business_id=g.business_id,
+                site_id=site_id,
+                employee_id=employee_id,
+                processing_month=month,
+                source='ADMIN_SINGLE',
+                uploaded_by_user_id=g.current_user.id,
+                original_filename=filename,
+                mime_type=content_type,
+                file_size_bytes=len(file_data),
+                source_page_number=None,
+                source_page_position=None,
+                review_status='NEEDS_REVIEW',
+            )
+            file_repo.create(
+                work_card_id=work_card.id,
+                content_type=content_type,
+                file_name=filename,
+                image_bytes=file_data,
+            )
+            extraction_repo.create(
+                work_card_id=work_card.id,
+                status='PENDING',
+            )
 
         return api_response(
             data=model_to_dict(work_card),
@@ -1050,13 +1059,8 @@ def upload_batch():
                 file_data = file.read()
                 filename = secure_filename(file.filename)
 
-                try:
-                    pages = expand_uploaded_file(file_data, content_type, filename)
-                except ValueError as pdf_err:
-                    failed.append({'filename': file.filename, 'error': str(pdf_err)})
-                    continue
-
-                for page in pages:
+                if content_type == 'application/pdf':
+                    # Store raw PDF and let the worker split it
                     work_card = repo.create(
                         business_id=g.business_id,
                         site_id=site_id,
@@ -1065,30 +1069,59 @@ def upload_batch():
                         source='ADMIN_BATCH',
                         uploaded_by_user_id=g.current_user.id,
                         original_filename=filename,
-                        mime_type=page['original_content_type'],
-                        file_size_bytes=len(page['image_bytes']),
-                        source_page_number=page['page_number'],
-                        source_page_position=page['page_position'],
-                        review_status='NEEDS_ASSIGNMENT',
+                        mime_type='application/pdf',
+                        file_size_bytes=len(file_data),
+                        source_page_number=None,
+                        source_page_position=None,
+                        review_status='SPLITTING',
                     )
-
                     file_repo.create(
                         work_card_id=work_card.id,
-                        content_type=page['content_type'],
+                        content_type='application/pdf',
                         file_name=filename,
-                        image_bytes=page['image_bytes'],
+                        image_bytes=file_data,
                     )
-
+                    extraction_repo.create(
+                        work_card_id=work_card.id,
+                        status='PENDING_SPLIT',
+                    )
+                    uploaded.append({
+                        'filename': filename,
+                        'work_card_id': str(work_card.id),
+                        'page_number': None,
+                        'page_position': None,
+                    })
+                else:
+                    # Image: store directly and queue for extraction
+                    work_card = repo.create(
+                        business_id=g.business_id,
+                        site_id=site_id,
+                        employee_id=None,
+                        processing_month=month,
+                        source='ADMIN_BATCH',
+                        uploaded_by_user_id=g.current_user.id,
+                        original_filename=filename,
+                        mime_type=content_type,
+                        file_size_bytes=len(file_data),
+                        source_page_number=None,
+                        source_page_position=None,
+                        review_status='NEEDS_ASSIGNMENT',
+                    )
+                    file_repo.create(
+                        work_card_id=work_card.id,
+                        content_type=content_type,
+                        file_name=filename,
+                        image_bytes=file_data,
+                    )
                     extraction_repo.create(
                         work_card_id=work_card.id,
                         status='PENDING',
                     )
-
                     uploaded.append({
                         'filename': filename,
                         'work_card_id': str(work_card.id),
-                        'page_number': page['page_number'],
-                        'page_position': page['page_position'],
+                        'page_number': None,
+                        'page_position': None,
                     })
             except Exception as e:
                 failed.append({
@@ -1161,13 +1194,8 @@ def upload_siteless_batch():
                 file_data = file.read()
                 filename = secure_filename(file.filename)
 
-                try:
-                    pages = expand_uploaded_file(file_data, content_type, filename)
-                except ValueError as pdf_err:
-                    failed.append({'filename': file.filename, 'error': str(pdf_err)})
-                    continue
-
-                for page in pages:
+                if content_type == 'application/pdf':
+                    # Store raw PDF and let the worker split it
                     work_card = repo.create(
                         business_id=g.business_id,
                         site_id=None,
@@ -1176,30 +1204,59 @@ def upload_siteless_batch():
                         source='ADMIN_BATCH',
                         uploaded_by_user_id=g.current_user.id,
                         original_filename=filename,
-                        mime_type=page['original_content_type'],
-                        file_size_bytes=len(page['image_bytes']),
-                        source_page_number=page['page_number'],
-                        source_page_position=page['page_position'],
-                        review_status='NEEDS_ASSIGNMENT',
+                        mime_type='application/pdf',
+                        file_size_bytes=len(file_data),
+                        source_page_number=None,
+                        source_page_position=None,
+                        review_status='SPLITTING',
                     )
-
                     file_repo.create(
                         work_card_id=work_card.id,
-                        content_type=page['content_type'],
+                        content_type='application/pdf',
                         file_name=filename,
-                        image_bytes=page['image_bytes'],
+                        image_bytes=file_data,
                     )
-
+                    extraction_repo.create(
+                        work_card_id=work_card.id,
+                        status='PENDING_SPLIT',
+                    )
+                    uploaded.append({
+                        'filename': filename,
+                        'work_card_id': str(work_card.id),
+                        'page_number': None,
+                        'page_position': None,
+                    })
+                else:
+                    # Image: store directly and queue for extraction
+                    work_card = repo.create(
+                        business_id=g.business_id,
+                        site_id=None,
+                        employee_id=None,
+                        processing_month=month,
+                        source='ADMIN_BATCH',
+                        uploaded_by_user_id=g.current_user.id,
+                        original_filename=filename,
+                        mime_type=content_type,
+                        file_size_bytes=len(file_data),
+                        source_page_number=None,
+                        source_page_position=None,
+                        review_status='NEEDS_ASSIGNMENT',
+                    )
+                    file_repo.create(
+                        work_card_id=work_card.id,
+                        content_type=content_type,
+                        file_name=filename,
+                        image_bytes=file_data,
+                    )
                     extraction_repo.create(
                         work_card_id=work_card.id,
                         status='PENDING',
                     )
-
                     uploaded.append({
                         'filename': filename,
                         'work_card_id': str(work_card.id),
-                        'page_number': page['page_number'],
-                        'page_position': page['page_position'],
+                        'page_number': None,
+                        'page_position': None,
                     })
             except Exception as e:
                 failed.append({'filename': file.filename, 'error': str(e)})

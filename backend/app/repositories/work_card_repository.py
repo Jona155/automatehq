@@ -34,12 +34,12 @@ class WorkCardRepository(BaseRepository[WorkCard]):
     def get_by_site_month(self, site_id: UUID, month: date, business_id: UUID) -> List[WorkCard]:
         """
         Get all work cards for a site and month in a business.
-        
+
         Args:
             site_id: The site's UUID
             month: The processing month
             business_id: The business UUID
-            
+
         Returns:
             List of WorkCard instances
         """
@@ -47,6 +47,8 @@ class WorkCardRepository(BaseRepository[WorkCard]):
             site_id=site_id,
             processing_month=month,
             business_id=business_id
+        ).filter(
+            WorkCard.review_status != 'SPLITTING'
         ).all()
     
     def get_by_site_month_with_employee(self, site_id: UUID, month: date, business_id: UUID) -> List[WorkCard]:
@@ -67,6 +69,8 @@ class WorkCardRepository(BaseRepository[WorkCard]):
             site_id=site_id,
             processing_month=month,
             business_id=business_id
+        ).filter(
+            WorkCard.review_status != 'SPLITTING'
         ).order_by(WorkCard.created_at.desc()).all()
     
     def get_by_employee_month(self, employee_id: UUID, month: date, business_id: UUID) -> List[WorkCard]:

@@ -41,6 +41,7 @@ from app.repositories import (
 
 from extractor import extract_from_image_bytes, PIPELINE_VERSION
 from matcher import match_employee, diagnose_identity_mismatch
+from app.services.pdf_splitter import split_pdf_to_card_images
 
 # Configure logging
 logging.basicConfig(
@@ -154,6 +155,101 @@ def _to_json_safe(value: Any) -> Any:
     if isinstance(value, decimal.Decimal):
         return float(value)
     return value
+
+
+def process_split_job(
+    extraction_repo: WorkCardExtractionRepository,
+    file_repo: WorkCardFileRepository,
+    work_card_repo: WorkCardRepository,
+    job_id: uuid.UUID,
+) -> bool:
+    """
+    Split a raw PDF work card into per-card PNG child work cards, then delete
+    the container. Each child gets its own PENDING extraction job.
+
+    Returns True on success, False on failure.
+    """
+    logger.info(f"Processing split job {job_id}")
+
+    work_card = None  # kept in scope for error handler
+
+    try:
+        job = extraction_repo.get_by_id(job_id)
+        if not job:
+            logger.error(f"Split job {job_id} not found")
+            return False
+
+        extraction_repo.mark_running(job_id)
+        extraction_repo.increment_attempts(job_id)
+
+        work_card = work_card_repo.get_by_id(job.work_card_id)
+        if not work_card:
+            extraction_repo.mark_failed(job_id, "Work card not found")
+            return False
+
+        pdf_bytes = file_repo.get_image_bytes(job.work_card_id)
+        if not pdf_bytes:
+            extraction_repo.mark_failed(job_id, "PDF file not found")
+            return False
+
+        logger.info(f"Splitting PDF ({len(pdf_bytes)} bytes) for work card {job.work_card_id}")
+        cards = split_pdf_to_card_images(pdf_bytes)
+
+        if not cards:
+            extraction_repo.mark_failed(job_id, "PDF produced no card images")
+            work_card_repo.update_review_status(work_card.id, 'NEEDS_REVIEW', work_card.business_id)
+            return False
+
+        logger.info(f"PDF split into {len(cards)} card(s)")
+
+        initial_status = 'NEEDS_REVIEW' if work_card.employee_id else 'NEEDS_ASSIGNMENT'
+
+        for card_image in cards:
+            child = work_card_repo.create(
+                business_id=work_card.business_id,
+                site_id=work_card.site_id,
+                employee_id=work_card.employee_id,
+                processing_month=work_card.processing_month,
+                source=work_card.source,
+                uploaded_by_user_id=work_card.uploaded_by_user_id,
+                original_filename=work_card.original_filename,
+                mime_type='application/pdf',
+                file_size_bytes=len(card_image.image_bytes),
+                source_page_number=card_image.page_number,
+                source_page_position=card_image.position,
+                review_status=initial_status,
+            )
+            file_repo.create(
+                work_card_id=child.id,
+                content_type='image/png',
+                file_name=work_card.original_filename,
+                image_bytes=card_image.image_bytes,
+            )
+            extraction_repo.create(
+                work_card_id=child.id,
+                status='PENDING',
+            )
+
+        # Delete the container card — cascades to its file and extraction records
+        work_card_repo.delete(work_card.id)
+
+        logger.info(f"Split job {job_id} done: created {len(cards)} child work cards")
+        return True
+
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {str(e)}"
+        logger.error(f"Split job {job_id} failed: {error_msg}")
+        logger.error(traceback.format_exc())
+
+        try:
+            extraction_repo.mark_failed(job_id, error_msg)
+            if work_card:
+                # Surface the container card so an admin can see the failure
+                work_card_repo.update_review_status(work_card.id, 'NEEDS_REVIEW', work_card.business_id)
+        except Exception as mark_err:
+            logger.error(f"Failed to mark split job as failed: {mark_err}")
+
+        return False
 
 
 def process_job(
@@ -426,27 +522,33 @@ def process_job(
         return False
 
 
-def recover_stale_locks(extraction_repo: WorkCardExtractionRepository) -> int:
+def recover_stale_locks(
+    extraction_repo: WorkCardExtractionRepository,
+    work_card_repo: WorkCardRepository,
+) -> int:
     """
     Recover jobs with stale locks (worker crashed mid-processing).
-    
+
     Returns:
         Number of jobs recovered
     """
     stale_jobs = extraction_repo.get_stale_locks(minutes=STALE_LOCK_MINUTES)
     recovered = 0
-    
+
     for job in stale_jobs:
         if job.attempts >= MAX_RETRY_ATTEMPTS:
-            # Max retries exceeded, mark as failed
             logger.warning(f"Job {job.id} exceeded max attempts ({job.attempts}), marking failed")
             extraction_repo.mark_failed(job.id, f"Max retry attempts ({MAX_RETRY_ATTEMPTS}) exceeded")
         else:
-            # Reset job for retry
             logger.info(f"Recovering stale job {job.id} (locked at {job.locked_at})")
-            extraction_repo.reset_job(job.id)
+            # Detect whether this was a PDF split job by checking the work card status
+            work_card = work_card_repo.get_by_id(job.work_card_id)
+            if work_card and work_card.review_status == 'SPLITTING':
+                extraction_repo.reset_split_job(job.id)
+            else:
+                extraction_repo.reset_job(job.id)
             recovered += 1
-    
+
     return recovered
 
 
@@ -466,31 +568,55 @@ def main_loop(app: Flask):
         while True:
             try:
                 # Recover any stale locks first
-                recovered = recover_stale_locks(extraction_repo)
+                recovered = recover_stale_locks(extraction_repo, work_card_repo)
                 if recovered:
                     logger.info(f"Recovered {recovered} stale jobs")
-                
-                # Get pending jobs
+
+                # PDF split jobs take priority — they're fast and unblock regular extraction
+                split_jobs = extraction_repo.get_pending_split_jobs(limit=1)
+                if split_jobs:
+                    job = split_jobs[0]
+                    logger.info(f"Found pending split job {job.id}")
+                    claimed = extraction_repo.claim_job(job.id, WORKER_ID)
+                    if not claimed:
+                        logger.info(f"Split job {job.id} was claimed by another worker")
+                        time.sleep(1)
+                        continue
+                    logger.info(f"Claimed split job {job.id}")
+                    success = process_split_job(
+                        extraction_repo=extraction_repo,
+                        file_repo=file_repo,
+                        work_card_repo=work_card_repo,
+                        job_id=job.id,
+                    )
+                    if success:
+                        logger.info(f"Split job {job.id} processed successfully")
+                    else:
+                        logger.warning(f"Split job {job.id} processing failed")
+                    time.sleep(1)
+                    continue
+
+                # Regular extraction jobs
                 pending_jobs = extraction_repo.get_pending_jobs(limit=1)
-                
+
                 if not pending_jobs:
                     logger.debug("No pending jobs found")
                     time.sleep(POLL_INTERVAL)
                     continue
-                
+
                 job = pending_jobs[0]
                 logger.info(f"Found pending job {job.id}")
-                
+
                 # Try to claim the job (optimistic locking)
                 claimed = extraction_repo.claim_job(job.id, WORKER_ID)
-                
+
                 if not claimed:
                     logger.info(f"Job {job.id} was claimed by another worker")
                     time.sleep(1)  # Brief pause before next poll
                     continue
-                
+
                 logger.info(f"Claimed job {job.id}")
-                
+
                 # Process the job
                 success = process_job(
                     extraction_repo=extraction_repo,
@@ -500,12 +626,12 @@ def main_loop(app: Flask):
                     employee_repo=employee_repo,
                     job_id=job.id
                 )
-                
+
                 if success:
                     logger.info(f"Job {job.id} processed successfully")
                 else:
                     logger.warning(f"Job {job.id} processing failed")
-                
+
                 # Small delay before next iteration
                 time.sleep(1)
                 
