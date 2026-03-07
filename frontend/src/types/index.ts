@@ -101,6 +101,8 @@ export interface WorkCard {
   updated_at: string;
   source?: string | null;
   original_filename?: string | null;
+  source_page_number?: number | null;
+  source_page_position?: 'TOP' | 'BOTTOM' | 'FULL' | null;
   employee?: Employee;
   site?: Site;
 }

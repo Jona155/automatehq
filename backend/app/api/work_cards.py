@@ -18,6 +18,7 @@ from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required, role_required
 from ..extensions import db
 from ..models.sites import Site
+from ..services.pdf_upload_helper import expand_uploaded_file
 
 logger = logging.getLogger(__name__)
 
@@ -852,42 +853,54 @@ def upload_single():
     try:
         # Parse processing_month
         month = datetime.strptime(processing_month, '%Y-%m-%d').date()
-        
+
         # Read file data
         file_data = file.read()
-        content_type = file.content_type or 'application/octet-stream'
         filename = secure_filename(file.filename)
-        
+
+        # Expand file (handles PDF splitting)
+        try:
+            pages = expand_uploaded_file(file_data, content_type, filename)
+        except ValueError as pdf_err:
+            return api_response(status_code=400, message=str(pdf_err), error="Bad Request")
+
+        if len(pages) > 1:
+            return api_response(
+                status_code=400,
+                message="העלאה בודדת לא תומכת ב-PDF עם מספר כרטיסים. השתמש בהעלאה מרובה.",
+                error="Multi-card PDF not allowed for single upload"
+            )
+
+        page = pages[0]
+
         # Create work card
-        work_card_data = {
-            'business_id': g.business_id,
-            'site_id': site_id,
-            'employee_id': employee_id,
-            'processing_month': month,
-            'source': 'ADMIN_SINGLE',
-            'uploaded_by_user_id': g.current_user.id,
-            'original_filename': filename,
-            'mime_type': content_type,
-            'file_size_bytes': len(file_data),
-            'review_status': 'NEEDS_REVIEW'
-        }
-        
-        work_card = repo.create(**work_card_data)
-        
-        # Create work card file
+        work_card = repo.create(
+            business_id=g.business_id,
+            site_id=site_id,
+            employee_id=employee_id,
+            processing_month=month,
+            source='ADMIN_SINGLE',
+            uploaded_by_user_id=g.current_user.id,
+            original_filename=filename,
+            mime_type=page['original_content_type'],
+            file_size_bytes=len(page['image_bytes']),
+            source_page_number=page['page_number'],
+            source_page_position=page['page_position'],
+            review_status='NEEDS_REVIEW',
+        )
+
         file_repo.create(
             work_card_id=work_card.id,
-            content_type=content_type,
+            content_type=page['content_type'],
             file_name=filename,
-            image_bytes=file_data
+            image_bytes=page['image_bytes'],
         )
-        
-        # Automatically trigger extraction
+
         extraction_repo.create(
             work_card_id=work_card.id,
-            status='PENDING'
+            status='PENDING',
         )
-        
+
         return api_response(
             data=model_to_dict(work_card),
             message="Work card uploaded successfully",
@@ -1034,50 +1047,55 @@ def upload_batch():
                 continue
                 
             try:
-                # Read file data
                 file_data = file.read()
                 filename = secure_filename(file.filename)
-                
-                # Create work card (employee_id = NULL for unknown uploads)
-                work_card_data = {
-                    'business_id': g.business_id,
-                    'site_id': site_id,
-                    'employee_id': None,  # Unknown employee
-                    'processing_month': month,
-                    'source': 'ADMIN_BATCH',
-                    'uploaded_by_user_id': g.current_user.id,
-                    'original_filename': filename,
-                    'mime_type': content_type,
-                    'file_size_bytes': len(file_data),
-                    'review_status': 'NEEDS_ASSIGNMENT'
-                }
-                
-                work_card = repo.create(**work_card_data)
-                
-                # Create work card file
-                file_repo.create(
-                    work_card_id=work_card.id,
-                    content_type=content_type,
-                    file_name=filename,
-                    image_bytes=file_data
-                )
-                
-                # Automatically trigger extraction
-                extraction_repo.create(
-                    work_card_id=work_card.id,
-                    status='PENDING'
-                )
-                
-                uploaded.append({
-                    'filename': filename,
-                    'work_card_id': str(work_card.id)
-                })
+
+                try:
+                    pages = expand_uploaded_file(file_data, content_type, filename)
+                except ValueError as pdf_err:
+                    failed.append({'filename': file.filename, 'error': str(pdf_err)})
+                    continue
+
+                for page in pages:
+                    work_card = repo.create(
+                        business_id=g.business_id,
+                        site_id=site_id,
+                        employee_id=None,
+                        processing_month=month,
+                        source='ADMIN_BATCH',
+                        uploaded_by_user_id=g.current_user.id,
+                        original_filename=filename,
+                        mime_type=page['original_content_type'],
+                        file_size_bytes=len(page['image_bytes']),
+                        source_page_number=page['page_number'],
+                        source_page_position=page['page_position'],
+                        review_status='NEEDS_ASSIGNMENT',
+                    )
+
+                    file_repo.create(
+                        work_card_id=work_card.id,
+                        content_type=page['content_type'],
+                        file_name=filename,
+                        image_bytes=page['image_bytes'],
+                    )
+
+                    extraction_repo.create(
+                        work_card_id=work_card.id,
+                        status='PENDING',
+                    )
+
+                    uploaded.append({
+                        'filename': filename,
+                        'work_card_id': str(work_card.id),
+                        'page_number': page['page_number'],
+                        'page_position': page['page_position'],
+                    })
             except Exception as e:
                 failed.append({
                     'filename': file.filename,
                     'error': str(e)
                 })
-        
+
         return api_response(
             data={
                 'uploaded': uploaded,
@@ -1143,32 +1161,46 @@ def upload_siteless_batch():
                 file_data = file.read()
                 filename = secure_filename(file.filename)
 
-                work_card = repo.create(
-                    business_id=g.business_id,
-                    site_id=None,
-                    employee_id=None,
-                    processing_month=month,
-                    source='ADMIN_BATCH',
-                    uploaded_by_user_id=g.current_user.id,
-                    original_filename=filename,
-                    mime_type=content_type,
-                    file_size_bytes=len(file_data),
-                    review_status='NEEDS_ASSIGNMENT',
-                )
+                try:
+                    pages = expand_uploaded_file(file_data, content_type, filename)
+                except ValueError as pdf_err:
+                    failed.append({'filename': file.filename, 'error': str(pdf_err)})
+                    continue
 
-                file_repo.create(
-                    work_card_id=work_card.id,
-                    content_type=content_type,
-                    file_name=filename,
-                    image_bytes=file_data,
-                )
+                for page in pages:
+                    work_card = repo.create(
+                        business_id=g.business_id,
+                        site_id=None,
+                        employee_id=None,
+                        processing_month=month,
+                        source='ADMIN_BATCH',
+                        uploaded_by_user_id=g.current_user.id,
+                        original_filename=filename,
+                        mime_type=page['original_content_type'],
+                        file_size_bytes=len(page['image_bytes']),
+                        source_page_number=page['page_number'],
+                        source_page_position=page['page_position'],
+                        review_status='NEEDS_ASSIGNMENT',
+                    )
 
-                extraction_repo.create(
-                    work_card_id=work_card.id,
-                    status='PENDING',
-                )
+                    file_repo.create(
+                        work_card_id=work_card.id,
+                        content_type=page['content_type'],
+                        file_name=filename,
+                        image_bytes=page['image_bytes'],
+                    )
 
-                uploaded.append({'filename': filename, 'work_card_id': str(work_card.id)})
+                    extraction_repo.create(
+                        work_card_id=work_card.id,
+                        status='PENDING',
+                    )
+
+                    uploaded.append({
+                        'filename': filename,
+                        'work_card_id': str(work_card.id),
+                        'page_number': page['page_number'],
+                        'page_position': page['page_position'],
+                    })
             except Exception as e:
                 failed.append({'filename': file.filename, 'error': str(e)})
 
@@ -1294,10 +1326,23 @@ def reset_work_cards():
             return api_response(status_code=404, message="Site not found for this business", error="Not Found")
 
     try:
+        from ..models.audit import AuditEvent
+        from ..models.telegram import TelegramIngestedFile
+
         if site_id:
             cards = repo.get_by_site_month(site_id=site_id, month=month, business_id=business_id)
         else:
             cards = repo.get_by_business_month(business_id=business_id, month=month)
+
+        card_ids = [card.id for card in cards]
+
+        if card_ids:
+            db.session.query(AuditEvent).filter(AuditEvent.work_card_id.in_(card_ids)).update(
+                {AuditEvent.work_card_id: None}, synchronize_session=False
+            )
+            db.session.query(TelegramIngestedFile).filter(TelegramIngestedFile.work_card_id.in_(card_ids)).update(
+                {TelegramIngestedFile.work_card_id: None}, synchronize_session=False
+            )
 
         deleted_count = 0
         for card in cards:

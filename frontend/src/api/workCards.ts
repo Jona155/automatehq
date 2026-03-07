@@ -120,9 +120,8 @@ export const uploadSingleWorkCard = async (
   formData.append('file', file);
 
   const response = await client.post<{ data: WorkCard }>('/work_cards/upload/single', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120_000,
   });
   return response.data.data;
 };
@@ -138,9 +137,8 @@ export const uploadBatchWorkCards = async (siteId: string, processingMonth: stri
   });
 
   const response = await client.post<{ data: UploadBatchResponse }>('/work_cards/upload/batch', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120_000,
   });
   return response.data.data;
 };
@@ -248,9 +246,8 @@ export const uploadSitelessBatchWorkCards = async (processingMonth: string, file
   });
 
   const response = await client.post<{ data: UploadBatchResponse }>('/work_cards/upload/siteless-batch', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120_000,
   });
   return response.data.data;
 };
