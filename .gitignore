@@ -41,3 +41,6 @@ poc-worker/
 #debug app
 .\worker\templates
 worker\debug_app
+
+# Claude Code local config
+.claude/
