@@ -8,3 +8,6 @@ PyJWT>=2.8.0
 gunicorn
 twilio>=8.0.0
 openpyxl>=3.1
+PyMuPDF>=1.23
+opencv-python-headless>=4.8
+openai>=1.0

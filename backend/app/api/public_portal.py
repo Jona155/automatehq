@@ -12,6 +12,7 @@ from ..repositories.user_repository import UserRepository
 from ..repositories.business_repository import BusinessRepository
 from ..utils import normalize_phone, utc_now
 from .utils import api_response
+from ..services.pdf_upload_helper import expand_uploaded_file
 from ..auth_utils import encode_portal_token, portal_token_required, admin_portal_token_required
 
 public_portal_bp = Blueprint('public_portal', __name__, url_prefix='/api/public')
@@ -135,32 +136,43 @@ def upload_files():
             file_data = file.read()
             filename = secure_filename(file.filename)
 
-            work_card_data = {
-                'business_id': portal_claims['business_id'],
-                'site_id': portal_claims['site_id'],
-                'employee_id': None,
-                'processing_month': processing_month,
-                'source': 'RESPONSIBLE_EMPLOYEE',
-                'uploaded_by_user_id': None,
-                'original_filename': filename,
-                'mime_type': content_type,
-                'file_size_bytes': len(file_data),
-                'review_status': 'NEEDS_REVIEW'
-            }
+            try:
+                pages = expand_uploaded_file(file_data, content_type, filename)
+            except ValueError as pdf_err:
+                failed.append({'filename': file.filename, 'error': str(pdf_err)})
+                continue
 
-            work_card = work_card_repo.create(**work_card_data)
-            file_repo.create(
-                work_card_id=work_card.id,
-                content_type=content_type,
-                file_name=filename,
-                image_bytes=file_data
-            )
-            extraction_repo.create(
-                work_card_id=work_card.id,
-                status='PENDING'
-            )
-
-            uploaded.append({'id': str(work_card.id), 'filename': filename})
+            for page in pages:
+                work_card = work_card_repo.create(
+                    business_id=portal_claims['business_id'],
+                    site_id=portal_claims['site_id'],
+                    employee_id=None,
+                    processing_month=processing_month,
+                    source='RESPONSIBLE_EMPLOYEE',
+                    uploaded_by_user_id=None,
+                    original_filename=filename,
+                    mime_type=page['original_content_type'],
+                    file_size_bytes=len(page['image_bytes']),
+                    source_page_number=page['page_number'],
+                    source_page_position=page['page_position'],
+                    review_status='NEEDS_REVIEW',
+                )
+                file_repo.create(
+                    work_card_id=work_card.id,
+                    content_type=page['content_type'],
+                    file_name=filename,
+                    image_bytes=page['image_bytes'],
+                )
+                extraction_repo.create(
+                    work_card_id=work_card.id,
+                    status='PENDING',
+                )
+                uploaded.append({
+                    'id': str(work_card.id),
+                    'filename': filename,
+                    'page_number': page['page_number'],
+                    'page_position': page['page_position'],
+                })
         except Exception as e:
             failed.append({'filename': file.filename, 'error': str(e)})
 
@@ -262,30 +274,43 @@ def admin_upload_files():
             file_data = file.read()
             filename = secure_filename(file.filename)
 
-            work_card = work_card_repo.create(
-                business_id=business_id,
-                site_id=site_id,
-                employee_id=None,
-                processing_month=processing_month,
-                source='ADMIN_PORTAL',
-                uploaded_by_user_id=None,
-                original_filename=filename,
-                mime_type=content_type,
-                file_size_bytes=len(file_data),
-                review_status='NEEDS_ASSIGNMENT' if not site_id else 'NEEDS_REVIEW',
-            )
-            file_repo.create(
-                work_card_id=work_card.id,
-                content_type=content_type,
-                file_name=filename,
-                image_bytes=file_data,
-            )
-            extraction_repo.create(
-                work_card_id=work_card.id,
-                status='PENDING',
-            )
+            try:
+                pages = expand_uploaded_file(file_data, content_type, filename)
+            except ValueError as pdf_err:
+                failed.append({'filename': file.filename, 'error': str(pdf_err)})
+                continue
 
-            uploaded.append({'id': str(work_card.id), 'filename': filename})
+            for page in pages:
+                work_card = work_card_repo.create(
+                    business_id=business_id,
+                    site_id=site_id,
+                    employee_id=None,
+                    processing_month=processing_month,
+                    source='ADMIN_PORTAL',
+                    uploaded_by_user_id=None,
+                    original_filename=filename,
+                    mime_type=page['original_content_type'],
+                    file_size_bytes=len(page['image_bytes']),
+                    source_page_number=page['page_number'],
+                    source_page_position=page['page_position'],
+                    review_status='NEEDS_ASSIGNMENT' if not site_id else 'NEEDS_REVIEW',
+                )
+                file_repo.create(
+                    work_card_id=work_card.id,
+                    content_type=page['content_type'],
+                    file_name=filename,
+                    image_bytes=page['image_bytes'],
+                )
+                extraction_repo.create(
+                    work_card_id=work_card.id,
+                    status='PENDING',
+                )
+                uploaded.append({
+                    'id': str(work_card.id),
+                    'filename': filename,
+                    'page_number': page['page_number'],
+                    'page_position': page['page_position'],
+                })
         except Exception as e:
             failed.append({'filename': file.filename, 'error': str(e)})
 

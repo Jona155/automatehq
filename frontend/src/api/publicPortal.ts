@@ -28,6 +28,7 @@ export const uploadPortalFiles = async (sessionToken: string, files: File[]) => 
       Authorization: `Bearer ${sessionToken}`,
       'Content-Type': 'multipart/form-data',
     },
+    timeout: 120_000,
   });
   return response.data.data;
 };
@@ -66,6 +67,7 @@ export const uploadAdminPortalFiles = async (
       Authorization: `Bearer ${sessionToken}`,
       'Content-Type': 'multipart/form-data',
     },
+    timeout: 120_000,
   });
   return response.data.data;
 };

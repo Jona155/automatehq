@@ -23,6 +23,8 @@ class WorkCard(db.Model):
     approved_by_user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'), nullable=True)
     approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
     notes = db.Column(db.Text, nullable=True)
+    source_page_number = db.Column(db.Integer, nullable=True)
+    source_page_position = db.Column(db.Text, nullable=True)  # TOP, BOTTOM, FULL
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
