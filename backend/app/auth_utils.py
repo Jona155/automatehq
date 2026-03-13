@@ -150,11 +150,25 @@ def token_required(f):
             if not current_user:
                  return jsonify({'message': 'User not found', 'success': False, 'error': 'Unauthorized'}), 401
             
-            # APPLICATION_MANAGER users have no business association
+            # APPLICATION_MANAGER users have no business association by default,
+            # but can operate within a tenant context via X-Business-Id header
             if current_user.role == 'APPLICATION_MANAGER':
                 from flask import g
                 g.current_user = current_user
-                g.business_id = None
+                x_business_id = request.headers.get('X-Business-Id')
+                if x_business_id:
+                    from .repositories.business_repository import BusinessRepository
+                    business_repo = BusinessRepository()
+                    target_business = business_repo.get_by_id(x_business_id)
+                    if not target_business or not target_business.is_active:
+                        return jsonify({
+                            'message': 'Selected business not found or inactive',
+                            'success': False,
+                            'error': 'Forbidden'
+                        }), 403
+                    g.business_id = target_business.id
+                else:
+                    g.business_id = None
                 return f(*args, **kwargs)
 
             # Verify user's business exists and is active

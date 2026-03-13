@@ -322,3 +322,42 @@ export interface TelegramConfig {
   auto_advance_day?: number | null;
   is_active?: boolean;
 }
+
+export interface TelegramAdminConfig {
+  id: string;
+  business_id: string;
+  business_name: string;
+  business_code: string;
+  telegram_chat_id: number;
+  current_processing_month: string | null;
+  auto_advance_day: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TelegramValidation {
+  valid: boolean;
+  chat_title?: string;
+  chat_type?: string;
+  error?: string;
+}
+
+export interface TelegramLogEntry {
+  id: string;
+  file_unique_id: string;
+  status: 'INGESTED' | 'SKIPPED' | 'ERROR';
+  error_message: string | null;
+  telegram_username: string | null;
+  telegram_user_id: number | null;
+  message_timestamp: string | null;
+  processed_at: string;
+  work_card_id: string | null;
+}
+
+export interface TelegramLogsResponse {
+  items: TelegramLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}

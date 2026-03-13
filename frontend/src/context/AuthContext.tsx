@@ -15,6 +15,9 @@ interface AuthContextType {
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
+  selectedBusiness: Business | null;
+  selectBusiness: (business: Business) => void;
+  clearSelectedBusiness: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,6 +26,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(() => {
+    const raw = localStorage.getItem('selectedBusiness');
+    try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+  });
 
   // Derive business from user
   const business = user?.business || null;
@@ -68,8 +75,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('selectedBusiness');
     setToken(null);
     setUser(null);
+    setSelectedBusiness(null);
+  };
+
+  const selectBusiness = (business: Business) => {
+    localStorage.setItem('selectedBusiness', JSON.stringify(business));
+    setSelectedBusiness(business);
+  };
+
+  const clearSelectedBusiness = () => {
+    localStorage.removeItem('selectedBusiness');
+    setSelectedBusiness(null);
   };
 
   return (
@@ -80,7 +99,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       login,
       logout,
       isAuthenticated: !!user,
-      isLoading
+      isLoading,
+      selectedBusiness,
+      selectBusiness,
+      clearSelectedBusiness,
     }}>
       {children}
     </AuthContext.Provider>

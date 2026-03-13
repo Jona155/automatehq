@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import type { Business, User, Site } from '../types';
 import {
   getBusinesses,
@@ -12,9 +14,11 @@ import {
 } from '../api/businesses';
 import type { CreateBusinessPayload, UpdateBusinessPayload, CreateBusinessUserPayload } from '../api/businesses';
 import { resetWorkCardsForMonth } from '../api/workCards';
-import { registerTelegramChat } from '../api/telegram';
+import TelegramManagementDrawer from '../components/TelegramManagementDrawer';
 
 export default function StarterBusinessesPage() {
+  const navigate = useNavigate();
+  const { selectBusiness } = useAuth();
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,13 +51,9 @@ export default function StarterBusinessesPage() {
   const [drawerSites, setDrawerSites] = useState<Site[]>([]);
   const [isSitesLoading, setIsSitesLoading] = useState(false);
 
-  // Telegram modal state
-  const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
+  // Telegram management drawer state
+  const [isTelegramDrawerOpen, setIsTelegramDrawerOpen] = useState(false);
   const [telegramBusiness, setTelegramBusiness] = useState<Business | null>(null);
-  const [telegramChatId, setTelegramChatId] = useState('');
-  const [telegramError, setTelegramError] = useState<string | null>(null);
-  const [isTelegramSubmitting, setIsTelegramSubmitting] = useState(false);
-  const [telegramSuccessMsg, setTelegramSuccessMsg] = useState<string | null>(null);
 
   // Reset work cards modal state
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
@@ -268,34 +268,15 @@ export default function StarterBusinessesPage() {
     }
   };
 
-  // --- Telegram chat registration ---
-  const handleOpenTelegramModal = (business: Business) => {
-    setTelegramBusiness(business);
-    setTelegramChatId('');
-    setTelegramError(null);
-    setTelegramSuccessMsg(null);
-    setIsTelegramModalOpen(true);
+  const handleEnterBusiness = (business: Business) => {
+    selectBusiness(business);
+    navigate(`/${business.code}/dashboard`);
   };
 
-  const handleTelegramSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!telegramBusiness) return;
-    const chatIdNum = parseInt(telegramChatId, 10);
-    if (!telegramChatId.trim() || isNaN(chatIdNum)) {
-      setTelegramError('יש להזין מזהה צ\'אט תקין (מספר שלם)');
-      return;
-    }
-    setIsTelegramSubmitting(true);
-    setTelegramError(null);
-    try {
-      await registerTelegramChat(telegramBusiness.id, chatIdNum);
-      setTelegramSuccessMsg(`הצ'אט קושר בהצלחה לעסק ${telegramBusiness.name}`);
-      setTelegramChatId('');
-    } catch (err: any) {
-      setTelegramError(err.response?.data?.message || 'שגיאה בקישור הצ\'אט');
-    } finally {
-      setIsTelegramSubmitting(false);
-    }
+  // --- Telegram management drawer ---
+  const handleOpenTelegramDrawer = (business: Business) => {
+    setTelegramBusiness(business);
+    setIsTelegramDrawerOpen(true);
   };
 
   const handleOpenResetModal = (site: Site) => {
@@ -420,9 +401,9 @@ export default function StarterBusinessesPage() {
                           <span className="material-symbols-outlined">person_add</span>
                         </button>
                         <button
-                          onClick={() => handleOpenTelegramModal(business)}
+                          onClick={() => handleOpenTelegramDrawer(business)}
                           className="p-2 text-[#617989] hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
-                          title="קישור Telegram"
+                          title="ניהול Telegram"
                         >
                           <span className="material-symbols-outlined">send</span>
                         </button>
@@ -433,6 +414,15 @@ export default function StarterBusinessesPage() {
                         >
                           <span className="material-symbols-outlined">delete_sweep</span>
                         </button>
+                        {business.is_active && (
+                          <button
+                            onClick={() => handleEnterBusiness(business)}
+                            className="p-2 text-[#617989] hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
+                            title="כנס לעסק"
+                          >
+                            <span className="material-symbols-outlined">login</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => handleOpenEdit(business)}
                           className="p-2 text-[#617989] hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
@@ -811,70 +801,12 @@ export default function StarterBusinessesPage() {
         </div>
       )}
 
-      {/* Telegram Chat Registration Modal */}
-      {isTelegramModalOpen && telegramBusiness && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
-                <span className="material-symbols-outlined">send</span>
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">קישור Telegram</h3>
-                <p className="text-sm text-slate-500">{telegramBusiness.name}</p>
-              </div>
-            </div>
-            <form onSubmit={handleTelegramSubmit} className="p-6 space-y-4">
-              {telegramError && (
-                <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm rounded-lg border border-red-100 dark:border-red-800">
-                  {telegramError}
-                </div>
-              )}
-              {telegramSuccessMsg && (
-                <div className="p-3 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-sm rounded-lg border border-green-100 dark:border-green-800 flex items-center gap-2">
-                  <span className="material-symbols-outlined text-base">check_circle</span>
-                  {telegramSuccessMsg}
-                </div>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  מזהה צ'אט (Chat ID)
-                </label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={telegramChatId}
-                  onChange={(e) => setTelegramChatId(e.target.value)}
-                  className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all font-mono"
-                  placeholder="-1001234567890"
-                  autoComplete="off"
-                />
-                <p className="text-xs text-slate-500 mt-1">
-                  ניתן למצוא את ה-Chat ID על ידי הוספת @userinfobot לקבוצה ושליחת הודעה
-                </p>
-              </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsTelegramModalOpen(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
-                >
-                  סגור
-                </button>
-                <button
-                  type="submit"
-                  disabled={isTelegramSubmitting || !telegramChatId.trim()}
-                  className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50 flex items-center gap-2"
-                >
-                  {isTelegramSubmitting && (
-                    <span className="material-symbols-outlined animate-spin text-base">progress_activity</span>
-                  )}
-                  {isTelegramSubmitting ? 'מקשר...' : 'קשר צ\'אט'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* Telegram Management Drawer */}
+      {isTelegramDrawerOpen && telegramBusiness && (
+        <TelegramManagementDrawer
+          business={telegramBusiness}
+          onClose={() => setIsTelegramDrawerOpen(false)}
+        />
       )}
 
       {/* Reset Work Cards Modal */}
