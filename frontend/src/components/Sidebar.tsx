@@ -8,12 +8,12 @@ const SIDEBAR_WIDTH_EXPANDED = 'w-64';
 const SIDEBAR_WIDTH_COLLAPSED = 'w-16';
 
 export default function Sidebar() {
-  const { logout, business } = useAuth();
+  const { logout, business, selectedBusiness } = useAuth();
   const { collapsed, toggle } = useSidebar();
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isApplicationManager } = usePermissions();
   const [isAdminOpen, setIsAdminOpen] = useState(true);
 
-  const base = `/${business?.code || 'default'}`;
+  const base = `/${business?.code || selectedBusiness?.code || 'default'}`;
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     `flex items-center rounded-lg transition-colors text-sm font-medium ${
@@ -84,7 +84,7 @@ export default function Sidebar() {
           {!collapsed && <span>הגדרות Telegram</span>}
         </NavLink>
 
-        {isAdmin && !collapsed && (
+        {(isAdmin || isApplicationManager) && !collapsed && (
           <div className="pt-4 pb-2">
             <button
               type="button"
@@ -97,7 +97,7 @@ export default function Sidebar() {
           </div>
         )}
 
-        {isAdmin && (!collapsed ? isAdminOpen : true) && (
+        {(isAdmin || isApplicationManager) && (!collapsed ? isAdminOpen : true) && (
           <div className="space-y-1">
             <NavLink to={`${base}/users`} className={linkClass} title={collapsed ? 'משתמשים' : undefined}>
               <span className="material-symbols-outlined text-[20px] shrink-0">person</span>

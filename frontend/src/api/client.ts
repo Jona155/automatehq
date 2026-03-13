@@ -67,6 +67,15 @@ client.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    const selectedBusiness = localStorage.getItem('selectedBusiness');
+    if (selectedBusiness) {
+      try {
+        const parsed = JSON.parse(selectedBusiness);
+        if (parsed?.id) {
+          config.headers['X-Business-Id'] = parsed.id;
+        }
+      } catch { /* ignore malformed */ }
+    }
     return config;
   },
   (error) => {

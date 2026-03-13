@@ -5,6 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .base import BaseRepository
 from ..models.telegram import TelegramBotConfig, TelegramIngestedFile, TelegramPollingState
+from ..models.business import Business
 from ..extensions import db
 from ..utils import utc_now
 
@@ -18,6 +19,19 @@ class TelegramConfigRepository(BaseRepository[TelegramBotConfig]):
 
     def get_by_chat_id(self, chat_id: int) -> Optional[TelegramBotConfig]:
         return self.session.query(TelegramBotConfig).filter_by(telegram_chat_id=chat_id).first()
+
+    def get_all_with_business(self) -> list:
+        return (
+            self.session.query(TelegramBotConfig, Business)
+            .join(Business, TelegramBotConfig.business_id == Business.id)
+            .all()
+        )
+
+    def delete_by_id(self, config_id: UUID) -> None:
+        config = self.get_by_id(config_id)
+        if config:
+            self.session.delete(config)
+            self.session.commit()
 
     def advance_month_if_due(self, config: TelegramBotConfig) -> bool:
         """Check if month should auto-advance and do so. Returns True if advanced."""
@@ -52,6 +66,16 @@ class TelegramIngestedFileRepository(BaseRepository[TelegramIngestedFile]):
             .filter_by(file_unique_id=file_unique_id)
             .exists()
         ).scalar()
+
+    def get_by_chat_id_paginated(self, chat_id: int, limit: int = 20, offset: int = 0):
+        query = (
+            self.session.query(TelegramIngestedFile)
+            .filter_by(telegram_chat_id=chat_id)
+            .order_by(TelegramIngestedFile.processed_at.desc())
+        )
+        total = query.count()
+        items = query.offset(offset).limit(limit).all()
+        return items, total
 
 
 class TelegramPollingStateRepository:
