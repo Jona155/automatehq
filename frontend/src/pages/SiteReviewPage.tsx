@@ -41,7 +41,7 @@ export default function SiteReviewPage() {
   }
 
   const handleBack = () => {
-    navigate(`/${businessCode}/sites/${siteId}`);
+    navigate(`/${businessCode}/sites/${siteId}?tab=review&selectedMonth=${encodeURIComponent(selectedMonth)}`);
   };
 
   const handleMonthChange = (value: string) => {

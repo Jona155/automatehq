@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import type { Site, Employee } from '../types';
 import { downloadMonthlySummary, downloadSalaryTemplate, getSite, getSites, updateSite } from '../api/sites';
 import { getEmployees } from '../api/employees';
@@ -25,6 +25,7 @@ export default function SiteDetailsPage() {
   const { siteId } = useParams<{ businessCode: string; siteId: string }>();
   const { isAuthenticated, user } = useAuth();
   const { isAdmin } = usePermissions();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [site, setSite] = useState<Site | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -35,8 +36,13 @@ export default function SiteDetailsPage() {
   const [batchUploadModalOpen, setBatchUploadModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [activeTab, setActiveTab] = useState<TabType>('employees');
-  const [selectedMonth, setSelectedMonth] = useState<string>(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    const tabParam = searchParams.get('tab');
+    return (tabParam === 'review' || tabParam === 'summary') ? tabParam : 'employees';
+  });
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    return searchParams.get('selectedMonth') || getDefaultMonth(user?.business?.default_month_cutoff_day);
+  });
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [responsibleEmployeeId, setResponsibleEmployeeId] = useState<string>('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
@@ -111,6 +117,13 @@ export default function SiteDetailsPage() {
       abortController.abort();
     };
   }, [isAuthenticated, siteId]);
+
+  useEffect(() => {
+    if (searchParams.get('tab') || searchParams.get('selectedMonth')) {
+      setSearchParams({}, { replace: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useOnClickOutside(actionsRef, () => setActionsOpen(false), actionsOpen);
 
