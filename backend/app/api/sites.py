@@ -720,7 +720,7 @@ def get_hours_matrix(site_id):
         include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
         try:
-            employees, matrix, status_map, _, _status_matrix = _load_hours_matrix(
+            employees, matrix, status_map, _, status_matrix = _load_hours_matrix(
                 site_id,
                 processing_month,
                 approved_only,
@@ -730,7 +730,8 @@ def get_hours_matrix(site_id):
             response = api_response(data={
                 'employees': models_to_list(employees),
                 'matrix': matrix,
-                'status_map': status_map
+                'status_map': status_map,
+                'status_matrix': status_matrix,
             })
             return response
         except ValueError as e:
@@ -769,7 +770,7 @@ def export_monthly_summary(site_id):
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
     try:
-        employees, matrix, status_map, month, _status_matrix = _load_hours_matrix(
+        employees, matrix, status_map, month, status_matrix = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only,
@@ -793,17 +794,22 @@ def export_monthly_summary(site_id):
     for employee in employees:
         employee_id_str = str(employee.id)
         employee_days = matrix.get(employee_id_str, {})
+        employee_day_statuses = status_matrix.get(employee_id_str, {})
         total_hours = sum(employee_days.values()) if employee_days else 0
         status_key = status_map.get(employee_id_str) or 'NO_UPLOAD'
         status_label = STATUS_LABELS.get(status_key, status_key)
 
         day_values = []
         for day in range(1, days_in_month + 1):
-            hours = employee_days.get(day)
-            if hours is None:
-                day_values.append('')
+            day_status = employee_day_statuses.get(day)
+            if day_status:
+                day_values.append(STATUS_DAY_LABELS.get(day_status, day_status))
             else:
-                day_values.append(f"{hours:.1f}")
+                hours = employee_days.get(day)
+                if hours is None:
+                    day_values.append('')
+                else:
+                    day_values.append(f"{hours:.1f}")
 
         writer.writerow([
             employee.full_name,
