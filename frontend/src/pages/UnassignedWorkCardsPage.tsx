@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { Employee } from '../types';
-import { getUnassignedWorkCards, updateWorkCard, type UnassignedWorkCard } from '../api/workCards';
+import { getUnassignedWorkCards, updateWorkCard, getWorkCardFile, type UnassignedWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
 import { useAuth } from '../context/AuthContext';
 import MonthPicker from '../components/MonthPicker';
@@ -260,6 +260,11 @@ export default function UnassignedWorkCardsPage() {
   const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const [showManualSearch, setShowManualSearch] = useState(false);
 
+  // Image preview state
+  const [cardImageUrl, setCardImageUrl] = useState<string | null>(null);
+  const [isLoadingImage, setIsLoadingImage] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const fetchCards = async (page: number) => {
@@ -343,6 +348,21 @@ export default function UnassignedWorkCardsPage() {
     setAssignError(null);
     setShowAllSuggestions(false);
     setShowManualSearch(false);
+    // Fetch the work card image
+    if (cardImageUrl) URL.revokeObjectURL(cardImageUrl);
+    setCardImageUrl(null);
+    setImageError(false);
+    setIsLoadingImage(true);
+    getWorkCardFile(card.id)
+      .then((blob) => setCardImageUrl(URL.createObjectURL(blob)))
+      .catch(() => setImageError(true))
+      .finally(() => setIsLoadingImage(false));
+  };
+
+  const handleCloseAssign = () => {
+    if (cardImageUrl) URL.revokeObjectURL(cardImageUrl);
+    setCardImageUrl(null);
+    setAssignCard(null);
   };
 
   const handleConfirmAssign = async () => {
@@ -555,11 +575,39 @@ export default function UnassignedWorkCardsPage() {
       {/* Assign Employee Modal */}
       <Modal
         isOpen={!!assignCard}
-        onClose={() => setAssignCard(null)}
+        onClose={handleCloseAssign}
         title="שיוך עובד לכרטיס עבודה"
-        maxWidth="sm"
+        maxWidth="4xl"
       >
-        <div className="flex flex-col gap-4" dir="rtl">
+        <div className="flex gap-6" dir="ltr">
+          {/* ── Image panel ── */}
+          <div className="flex-1 min-w-0 flex flex-col gap-3">
+            <div className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-right" dir="rtl">
+              תמונת כרטיס העבודה
+            </div>
+            <div className="bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-center min-h-[300px] overflow-auto">
+              {isLoadingImage ? (
+                <div className="flex flex-col items-center gap-2 text-slate-400 p-8">
+                  <span className="material-symbols-outlined text-3xl animate-spin">progress_activity</span>
+                  <span className="text-sm">טוען תמונה...</span>
+                </div>
+              ) : imageError ? (
+                <div className="flex flex-col items-center gap-2 text-slate-400 p-8">
+                  <span className="material-symbols-outlined text-3xl">broken_image</span>
+                  <span className="text-sm">לא ניתן לטעון את התמונה</span>
+                </div>
+              ) : cardImageUrl ? (
+                <img
+                  src={cardImageUrl}
+                  alt="כרטיס עבודה"
+                  className="max-w-full max-h-[65vh] object-contain rounded-lg"
+                />
+              ) : null}
+            </div>
+          </div>
+
+          {/* ── Assignment form ── */}
+          <div className="w-80 shrink-0 flex flex-col gap-4" dir="rtl">
           {/* Card info */}
           {assignCard && (
             <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg text-sm">
@@ -707,14 +755,15 @@ export default function UnassignedWorkCardsPage() {
               {isAssigning ? 'משייך...' : 'אשר שיוך'}
             </button>
             <button
-              onClick={() => setAssignCard(null)}
+              onClick={handleCloseAssign}
               disabled={isAssigning}
               className="px-4 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors font-medium disabled:opacity-50"
             >
               ביטול
             </button>
           </div>
-        </div>
+          </div> {/* end form panel */}
+        </div> {/* end two-column flex */}
       </Modal>
     </div>
   );
