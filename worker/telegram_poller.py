@@ -96,7 +96,7 @@ def _send_reply(chat_id: int, message_id: int, text: str) -> None:
         logger.warning(f"[Telegram] Failed to send reply: {e}")
 
 
-def _ingest_image(image_bytes: bytes, file_unique_id: str, config, app_context) -> str:
+def _ingest_image(image_bytes: bytes, file_unique_id: str, config, app_context, telegram_caption=None) -> str:
     """
     Create WorkCard + WorkCardFile + WorkCardExtraction(PENDING).
     Returns the work_card_id as a string.
@@ -116,6 +116,7 @@ def _ingest_image(image_bytes: bytes, file_unique_id: str, config, app_context) 
         mime_type='image/jpeg',
         file_size_bytes=len(image_bytes),
         review_status='NEEDS_ASSIGNMENT',
+        telegram_caption=telegram_caption,
     )
 
     file_repo.create(
@@ -154,6 +155,15 @@ def poll_once(flask_app) -> None:
         errors = 0
         max_update_id = offset - 1
 
+        # Build caption lookup from media groups: only the first message carries the caption
+        media_group_captions: dict[str, str] = {}
+        for u in updates:
+            msg = u.get('message') or u.get('channel_post') or {}
+            mgid = msg.get('media_group_id')
+            cap = msg.get('caption')
+            if mgid and cap:
+                media_group_captions[mgid] = cap
+
         for update in updates:
             update_id = update.get('update_id', 0)
             max_update_id = max(max_update_id, update_id)
@@ -178,6 +188,12 @@ def poll_once(flask_app) -> None:
                 datetime.fromtimestamp(message_date, tz=timezone.utc) if message_date else None
             )
 
+            # Extract caption and media_group_id
+            media_group_id = message.get('media_group_id')
+            caption = message.get('caption') or media_group_captions.get(media_group_id or '', None)
+            if caption:
+                caption = caption[:1024]
+
             ingested_record_kwargs = dict(
                 file_unique_id=file_unique_id,
                 telegram_update_id=update_id,
@@ -185,6 +201,8 @@ def poll_once(flask_app) -> None:
                 telegram_username=telegram_username,
                 telegram_chat_id=chat_id,
                 message_timestamp=message_timestamp,
+                telegram_caption=caption,
+                media_group_id=media_group_id,
             )
 
             # Dedup check
@@ -221,7 +239,7 @@ def poll_once(flask_app) -> None:
                     raise RuntimeError(f"Could not download file_path={file_path}")
 
                 # Ingest
-                work_card_id = _ingest_image(image_bytes, file_unique_id, config, flask_app)
+                work_card_id = _ingest_image(image_bytes, file_unique_id, config, flask_app, telegram_caption=caption)
 
                 ingested_repo.create(
                     **ingested_record_kwargs,
@@ -232,7 +250,10 @@ def poll_once(flask_app) -> None:
 
                 # Send acknowledgement
                 if chat_id and message_id:
-                    _send_reply(chat_id, message_id, '\u2713 Work card received')
+                    reply_text = '\u2713 Work card received'
+                    if caption:
+                        reply_text += f' ({caption[:40]})'
+                    _send_reply(chat_id, message_id, reply_text)
 
             except Exception as e:
                 logger.error(f"[Telegram] Failed to ingest update_id={update_id}: {e}")

@@ -83,7 +83,7 @@ const formatDateTime = (iso: string) => {
 
 const sourceLabel = (source: string) => (({
   ADMIN_SINGLE: 'העלאה ידנית', ADMIN_BATCH: 'העלאה קבוצתית',
-  PUBLIC_PORTAL: 'פורטל ציבורי', WHATSAPP: 'וואטסאפ',
+  PUBLIC_PORTAL: 'פורטל ציבורי', WHATSAPP: 'וואטסאפ', TELEGRAM: 'טלגרם',
 } as Record<string, string>)[source] || source);
 
 const calcAggregateStatus = (statuses: WorkCard['review_status'][]): WorkCard['review_status'] => {
@@ -1511,6 +1511,11 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             )}
                             {card.source && (
                               <div className="text-xs text-slate-400 dark:text-slate-500">{sourceLabel(card.source)}</div>
+                            )}
+                            {card.telegram_caption && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                                {card.telegram_caption}
+                              </span>
                             )}
                           </div>
                         </button>

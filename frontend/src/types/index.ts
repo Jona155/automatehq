@@ -123,6 +123,7 @@ export interface WorkCard {
   original_filename?: string | null;
   source_page_number?: number | null;
   source_page_position?: 'TOP' | 'BOTTOM' | 'FULL' | null;
+  telegram_caption?: string | null;
   employee?: Employee;
   site?: Site;
 }
@@ -373,6 +374,8 @@ export interface TelegramLogEntry {
   message_timestamp: string | null;
   processed_at: string;
   work_card_id: string | null;
+  telegram_caption?: string | null;
+  media_group_id?: string | null;
 }
 
 export interface TelegramLogsResponse {

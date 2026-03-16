@@ -25,6 +25,7 @@ class WorkCard(db.Model):
     notes = db.Column(db.Text, nullable=True)
     source_page_number = db.Column(db.Integer, nullable=True)
     source_page_position = db.Column(db.Text, nullable=True)  # TOP, BOTTOM, FULL
+    telegram_caption = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

@@ -504,6 +504,11 @@ export default function UnassignedWorkCardsPage() {
                         <span className="text-[#617989] dark:text-slate-400 text-sm truncate max-w-[180px] block">
                           {card.original_filename ?? '—'}
                         </span>
+                        {card.telegram_caption && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 mt-1" title={card.telegram_caption}>
+                            {card.telegram_caption.length > 40 ? card.telegram_caption.slice(0, 40) + '\u2026' : card.telegram_caption}
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cls}`}>
