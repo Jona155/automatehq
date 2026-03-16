@@ -723,6 +723,9 @@ export default function TelegramManagementDrawer({ business, onClose }: Props) {
                             {log.error_message && (
                               <p className="text-xs text-red-500 dark:text-red-400 mt-0.5 truncate">{log.error_message}</p>
                             )}
+                            {log.telegram_caption && (
+                              <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5 truncate">{log.telegram_caption}</p>
+                            )}
                             {log.work_card_id && (
                               <p className="text-xs text-primary mt-0.5 font-mono truncate">{log.work_card_id}</p>
                             )}

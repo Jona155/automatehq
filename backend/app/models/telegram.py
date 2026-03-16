@@ -35,6 +35,8 @@ class TelegramIngestedFile(db.Model):
     work_card_id = db.Column(UUID(as_uuid=True), db.ForeignKey('work_cards.id'), nullable=True)
     status = db.Column(db.Text, nullable=False)  # INGESTED, SKIPPED, ERROR
     error_message = db.Column(db.Text, nullable=True)
+    telegram_caption = db.Column(db.Text, nullable=True)
+    media_group_id = db.Column(db.Text, nullable=True)
     processed_at = db.Column(db.DateTime(timezone=True), default=utc_now)
 
 

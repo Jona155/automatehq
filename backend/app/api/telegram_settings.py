@@ -335,6 +335,8 @@ def get_admin_logs(business_id):
                 'message_timestamp': item.message_timestamp.isoformat() if item.message_timestamp else None,
                 'processed_at': item.processed_at.isoformat() if item.processed_at else None,
                 'work_card_id': str(item.work_card_id) if item.work_card_id else None,
+                'telegram_caption': item.telegram_caption,
+                'media_group_id': item.media_group_id,
             }
 
         return api_response(data={

@@ -262,6 +262,7 @@ export interface UnassignedWorkCard {
   original_filename: string | null;
   review_status: string;
   created_at: string;
+  telegram_caption?: string | null;
   extraction?: {
     id: string;
     status: string;
