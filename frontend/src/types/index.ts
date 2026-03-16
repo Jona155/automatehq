@@ -29,6 +29,7 @@ export interface Site {
   updated_at: string;
   employee_count?: number;
   responsible_employee_id?: string | null;
+  hourly_tariff?: number | null;
 }
 
 export type EmployeeStatus = 'ACTIVE' | 'REPORTED_IN_SPARK' | 'REPORTED_RETURNED_FROM_ESCAPE';
@@ -72,6 +73,25 @@ export interface EmployeeImportRow {
 
 export interface EmployeeImportSummary {
   create: number;
+  update: number;
+  no_change: number;
+  error: number;
+  total: number;
+}
+
+export interface SiteTariffImportRow {
+  row_number: number;
+  site_name_from_file: string;
+  matched_site_id: string | null;
+  matched_site_name: string | null;
+  current_tariff: number | null;
+  new_tariff: number | null;
+  action: 'update' | 'no_change' | 'error';
+  errors: string[];
+  warnings: string[];
+}
+
+export interface SiteTariffImportSummary {
   update: number;
   no_change: number;
   error: number;

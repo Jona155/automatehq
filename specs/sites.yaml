@@ -117,6 +117,13 @@ paths:
                   type: string
                 is_active:
                   type: boolean
+                responsible_employee_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                hourly_tariff:
+                  type: number
+                  nullable: true
       responses:
         '200':
           description: Site updated
@@ -283,6 +290,14 @@ components:
         updated_at:
           type: string
           format: date-time
+        responsible_employee_id:
+          type: string
+          format: uuid
+          nullable: true
+        hourly_tariff:
+          type: number
+          nullable: true
+          description: Hourly billing rate in shekels
         employee_count:
           type: integer
           description: Included only if requested

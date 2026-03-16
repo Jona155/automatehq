@@ -17,6 +17,7 @@ class Site(db.Model):
         db.ForeignKey('employees.id', ondelete='SET NULL'),
         nullable=True
     )
+    hourly_tariff = db.Column(db.Numeric(10, 2), nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
