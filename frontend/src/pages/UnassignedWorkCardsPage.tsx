@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import type { Employee } from '../types';
 import { getUnassignedWorkCards, updateWorkCard, getWorkCardFile, type UnassignedWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
+import { getSites } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
@@ -188,10 +189,12 @@ function SuggestionItem({
   suggestion,
   isSelected,
   onSelect,
+  siteName,
 }: {
   suggestion: PassportSuggestion;
   isSelected: boolean;
   onSelect: () => void;
+  siteName?: string;
 }) {
   const isExact = suggestion.editDistance === 0;
   return (
@@ -213,6 +216,12 @@ function SuggestionItem({
         </div>
         <div className="flex-1 min-w-0 text-right" dir="rtl">
           <div className="text-sm font-medium text-slate-900 dark:text-white">{suggestion.employee.full_name}</div>
+          {siteName && (
+            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[12px]">location_on</span>
+              {siteName}
+            </div>
+          )}
           {isExact ? (
             <div className="text-xs text-green-600 dark:text-green-400 mt-0.5 font-mono">
               {suggestion.employee.passport_id} — ת.ז. זהה לחלוטין
@@ -253,6 +262,7 @@ export default function UnassignedWorkCardsPage() {
   // Assign modal state
   const [assignCard, setAssignCard] = useState<UnassignedWorkCard | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [siteMap, setSiteMap] = useState<Record<string, string>>({});
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [isAssigning, setIsAssigning] = useState(false);
@@ -300,6 +310,13 @@ export default function UnassignedWorkCardsPage() {
     getEmployees({ active: true })
       .then(setEmployees)
       .catch((err) => console.error('Failed to fetch employees:', err));
+    getSites()
+      .then((sites) => {
+        const map: Record<string, string> = {};
+        for (const s of sites) map[s.id] = s.site_name;
+        setSiteMap(map);
+      })
+      .catch((err) => console.error('Failed to fetch sites:', err));
   }, [isAuthenticated]);
 
   // Compute passport suggestions for all currently displayed cards
@@ -647,6 +664,7 @@ export default function UnassignedWorkCardsPage() {
                     suggestion={s}
                     isSelected={selectedEmployeeId === s.employee.id}
                     onSelect={() => setSelectedEmployeeId(s.employee.id)}
+                    siteName={s.employee.site_id ? siteMap[s.employee.site_id] : undefined}
                   />
                 ))}
               </div>
@@ -736,6 +754,12 @@ export default function UnassignedWorkCardsPage() {
                       <div>
                         <div className="text-sm font-medium text-slate-900 dark:text-white">{emp.full_name}</div>
                         <div className="text-xs text-slate-500 dark:text-slate-400">{emp.passport_id}</div>
+                        {emp.site_id && siteMap[emp.site_id] && (
+                          <div className="text-xs text-slate-400 dark:text-slate-500 flex items-center gap-0.5">
+                            <span className="material-symbols-outlined text-[11px]">location_on</span>
+                            {siteMap[emp.site_id]}
+                          </div>
+                        )}
                       </div>
                       {selectedEmployeeId === emp.id && (
                         <span className="material-symbols-outlined text-primary text-lg shrink-0">check_circle</span>
