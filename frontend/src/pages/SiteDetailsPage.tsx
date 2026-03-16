@@ -45,6 +45,8 @@ export default function SiteDetailsPage() {
   });
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [responsibleEmployeeId, setResponsibleEmployeeId] = useState<string>('');
+  const [hourlyTariff, setHourlyTariff] = useState<string>('');
+  const [hourlyTariffError, setHourlyTariffError] = useState<string | null>(null);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
@@ -152,15 +154,23 @@ export default function SiteDetailsPage() {
 
   const handleOpenSettings = () => {
     setResponsibleEmployeeId(site?.responsible_employee_id || '');
+    setHourlyTariff(site?.hourly_tariff != null ? String(site.hourly_tariff) : '');
+    setHourlyTariffError(null);
     setSettingsModalOpen(true);
   };
 
   const handleSaveSettings = async () => {
     if (!siteId) return;
+    if (hourlyTariff !== '' && parseFloat(hourlyTariff) < 0) {
+      setHourlyTariffError('התעריף חייב להיות מספר חיובי');
+      return;
+    }
+    setHourlyTariffError(null);
     setIsSavingSettings(true);
     try {
       const payload = {
         responsible_employee_id: responsibleEmployeeId || null,
+        hourly_tariff: hourlyTariff !== '' ? parseFloat(hourlyTariff) : null,
       };
       const updated = await updateSite(siteId, payload);
       setSite(updated);
@@ -599,6 +609,26 @@ export default function SiteDetailsPage() {
                 ))}
             </select>
             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">העובד האחראי יהיה ברירת המחדל ליצירת קישורי גישה להעלאת כרטיסים.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">תעריף לשעה</label>
+            <div className="relative flex items-center">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={hourlyTariff}
+                onChange={(e) => { setHourlyTariff(e.target.value); setHourlyTariffError(null); }}
+                className="w-full pl-4 pr-8 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                placeholder="0.00"
+                dir="ltr"
+              />
+              <span className="absolute right-3 text-slate-500 dark:text-slate-400 text-sm">₪</span>
+            </div>
+            {hourlyTariffError && (
+              <p className="mt-1 text-xs text-red-500">{hourlyTariffError}</p>
+            )}
           </div>
 
           <div className="flex justify-end gap-3">

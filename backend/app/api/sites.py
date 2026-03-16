@@ -607,6 +607,11 @@ def update_site(site_id):
         # Don't allow changing business_id
         data.pop('business_id', None)
 
+        if 'hourly_tariff' in data:
+            val = data.get('hourly_tariff')
+            if val is not None and float(val) < 0:
+                return api_response(status_code=400, message="תעריף לשעה חייב להיות חיובי", error="Bad Request")
+
         if 'responsible_employee_id' in data:
             responsible_employee_id = data.get('responsible_employee_id')
             if not responsible_employee_id:

@@ -17,6 +17,7 @@ import LoadingIndicator from '../components/LoadingIndicator';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import { downloadBlobFile } from '../utils/fileDownload';
 import BatchUploadModal from '../components/BatchUploadModal';
+import SiteTariffImportModal from '../components/SiteTariffImportModal';
 import { getDefaultMonth } from '../utils/monthUtils';
 
 type SortField = 'site_name' | 'site_code' | 'employee_count' | 'is_active';
@@ -57,6 +58,7 @@ export default function SitesPage() {
   const [isSalaryExporting, setIsSalaryExporting] = useState(false);
   const [salaryExportError, setSalaryExportError] = useState<string | null>(null);
   const [globalUploadOpen, setGlobalUploadOpen] = useState(false);
+  const [tariffImportOpen, setTariffImportOpen] = useState(false);
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
 
@@ -381,6 +383,16 @@ export default function SitesPage() {
               >
                 <span className="material-symbols-outlined text-lg">cloud_upload</span>
                 <span>העלאה גלובלית (ללא אתר)</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  setTariffImportOpen(true);
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">upload_file</span>
+                <span>ייבוא תעריפים מקובץ</span>
               </button>
             </div>
           )}
@@ -863,6 +875,14 @@ export default function SitesPage() {
         isOpen={globalUploadOpen}
         onClose={() => setGlobalUploadOpen(false)}
         onUploadComplete={() => setGlobalUploadOpen(false)}
+      />
+      <SiteTariffImportModal
+        isOpen={tariffImportOpen}
+        onClose={() => setTariffImportOpen(false)}
+        onApplied={() => {
+          fetchSites();
+          showToast('התעריפים עודכנו בהצלחה', 'success');
+        }}
       />
     </div>
   );
