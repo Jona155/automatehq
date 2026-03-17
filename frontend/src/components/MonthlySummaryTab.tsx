@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { getHoursMatrix } from '../api/workCards';
 import type { MatrixData } from '../types';
 import MonthPicker from './MonthPicker';
+import { DAY_STATUS_LABELS } from '../constants/dayStatus';
 
 interface MonthlySummaryTabProps {
   siteId: string;
@@ -22,13 +23,6 @@ const getHebrewDayName = (yearMonth: string, day: number): string => {
   const date = new Date(year, month - 1, day);
   const dayNames = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
   return dayNames[date.getDay()];
-};
-
-// Day status Hebrew labels
-const DAY_STATUS_LABELS: Record<string, string> = {
-  VACATION: 'חופשה',
-  SICK: 'מחלה',
-  INTERNATIONAL_VISA: 'ויזה בינלאומית',
 };
 
 // Status colors and labels
