@@ -2086,6 +2086,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       month={selectedMonth}
                       dayEntries={dayEntries}
                       onApply={handleBulkApply}
+                      onClose={() => setShowBulkPanel(false)}
                       disabled={!isAdmin}
                     />
                   )}
