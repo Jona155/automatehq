@@ -7,6 +7,7 @@ import MonthPicker from './MonthPicker';
 import { useToast } from '../hooks/useToast';
 import { useAuth } from '../context/AuthContext';
 import Modal from './Modal';
+import BulkDayUpdatePanel from './BulkDayUpdatePanel';
 
 interface WorkCardReviewTabProps {
   siteId: string;
@@ -212,6 +213,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [showDirtyOnly, setShowDirtyOnly] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [jumpToDay, setJumpToDay] = useState('');
+  const [showBulkPanel, setShowBulkPanel] = useState(false);
   const [activeDay, setActiveDay] = useState<number | null>(null);
   const [imageScale, setImageScale] = useState(1);
   const [imageRotation, setImageRotation] = useState(0);
@@ -707,6 +709,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
     // Clear previous UI while loading the next card
     setImageUrl(null);
+    setShowBulkPanel(false);
 
     const fetchCardDetails = async () => {
       setIsLoadingImage(true);
@@ -933,6 +936,47 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       };
       return updated;
     });
+  };
+
+  const handleBulkApply = (selectedDays: number[], values: {
+    from_time?: string;
+    to_time?: string;
+    total_hours?: string;
+    day_status?: DayStatus | null;
+  }) => {
+    setDayEntries(prev => {
+      const selected = new Set(selectedDays);
+      const updated = [...prev];
+      for (let i = 0; i < updated.length; i++) {
+        if (!selected.has(updated[i].day_of_month)) continue;
+        if (updated[i].isLocked) continue;
+
+        const entry = { ...updated[i], isDirty: true };
+
+        if (values.day_status) {
+          entry.day_status = values.day_status;
+          entry.from_time = '';
+          entry.to_time = '';
+          entry.total_hours = '';
+        } else {
+          if (values.from_time) entry.from_time = values.from_time;
+          if (values.to_time) entry.to_time = values.to_time;
+          if (values.total_hours) entry.total_hours = values.total_hours;
+          if (values.from_time || values.to_time || values.total_hours) {
+            entry.day_status = null;
+          }
+          const effectiveFrom = values.from_time || entry.from_time;
+          const effectiveTo = values.to_time || entry.to_time;
+          if ((values.from_time || values.to_time) && effectiveFrom && effectiveTo && !values.total_hours) {
+            const calculated = calculateHours(effectiveFrom, effectiveTo);
+            if (calculated !== null) entry.total_hours = calculated.toString();
+          }
+        }
+        updated[i] = entry;
+      }
+      return updated;
+    });
+    showToast(`עודכנו ${selectedDays.length} ימים`, 'success');
   };
 
   const resetImageTransform = useCallback(() => {
@@ -1892,10 +1936,25 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                 {isEmbedded && <ReviewOverlay onClick={handleOpenInReviewMode} />}
                 <div className="flex flex-col border-t border-slate-200 dark:border-slate-700 lg:border-t-0 h-full">
                   <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-4">
-                    <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2 shrink-0">
-                      <span className="material-symbols-outlined text-lg">table_chart</span>
-                      שעות עבודה
-                    </h4>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
+                        <span className="material-symbols-outlined text-lg">table_chart</span>
+                        שעות עבודה
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={() => setShowBulkPanel(prev => !prev)}
+                        disabled={!selectedCard || isEmbedded}
+                        className={`px-2 py-1 rounded-lg text-xs flex items-center gap-1 transition-colors ${
+                          showBulkPanel
+                            ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+                            : 'border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        } disabled:opacity-50`}
+                      >
+                        <span className="material-symbols-outlined text-sm">calendar_month</span>
+                        עדכון מרובה
+                      </button>
+                    </div>
                     <div className="flex items-center gap-3 flex-wrap justify-end">
                       <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
                         <input
@@ -2021,6 +2080,15 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                     )}
 
                   </div>
+
+                  {showBulkPanel && selectedCard && (
+                    <BulkDayUpdatePanel
+                      month={selectedMonth}
+                      dayEntries={dayEntries}
+                      onApply={handleBulkApply}
+                      disabled={!isAdmin}
+                    />
+                  )}
 
                   {isLoadingEntries ? (
                     <div className="flex-1 flex items-center justify-center">
