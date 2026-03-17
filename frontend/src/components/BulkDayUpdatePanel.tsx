@@ -21,6 +21,7 @@ interface BulkDayUpdatePanelProps {
     total_hours?: string;
     day_status?: DayStatus | null;
   }) => void;
+  onClose: () => void;
   disabled?: boolean;
 }
 
@@ -30,7 +31,7 @@ const INPUT_BASE_CLASS = 'w-full px-2 py-1.5 rounded-lg border text-sm border-sl
 const inputClass = (dimmed: boolean) =>
   `${INPUT_BASE_CLASS} ${dimmed ? 'bg-slate-100 dark:bg-slate-700 opacity-50' : 'bg-white dark:bg-slate-800'}`;
 
-export default function BulkDayUpdatePanel({ month, dayEntries, onApply, disabled }: BulkDayUpdatePanelProps) {
+export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose, disabled }: BulkDayUpdatePanelProps) {
   const [selectedDays, setSelectedDays] = useState<Set<number>>(new Set());
   const [fromTime, setFromTime] = useState('');
   const [toTime, setToTime] = useState('');
@@ -106,6 +107,22 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, disable
 
   return (
     <div className="mx-4 mb-3 p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h5 className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+          <span className="material-symbols-outlined text-base">calendar_month</span>
+          עדכון מרובה
+        </h5>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+          aria-label="סגור עדכון מרובה"
+        >
+          <span className="material-symbols-outlined text-lg">close</span>
+        </button>
+      </div>
+
       {/* Calendar Grid */}
       <div>
         <div className="grid grid-cols-7 gap-1 mb-1">
