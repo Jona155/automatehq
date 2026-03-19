@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
 import { getDefaultMonth } from '../utils/monthUtils';
+import PageBanner from '../components/PageBanner';
 
 // ── Edit distance & diff utilities ────────────────────────────────────────────
 
@@ -436,6 +437,28 @@ export default function UnassignedWorkCardsPage() {
           </p>
         </div>
       </div>
+
+      {/* Page Guide Banner */}
+      <PageBanner
+        storageKey="unassigned-work-cards"
+        title="מדריך לדף כרטיסים לא משויכים"
+        icon="lightbulb"
+        summary={
+          <p>דף זה מציג כרטיסי עבודה שהועלו למערכת אך טרם שויכו לעובד — למשל כרטיסים שהגיעו דרך טלגרם או העלאה ציבורית ללא זיהוי.</p>
+        }
+        details={
+          <>
+            <p className="font-semibold mb-1">מה ניתן לעשות כאן:</p>
+            <ul className="space-y-1 list-disc list-inside">
+              <li><strong>סינון לפי חודש</strong> — בחרו חודש עיבוד כדי לצמצם את רשימת הכרטיסים</li>
+              <li><strong>חיפוש</strong> — חפשו לפי שם שחולץ, תעודת זהות או שם קובץ</li>
+              <li><strong>שיוך עובד</strong> — לחצו ״שייך עובד״ כדי לפתוח את חלון השיוך, שם תוכלו לראות את תמונת הכרטיס ולבחור עובד</li>
+              <li><strong>המלצות מערכת</strong> — המערכת משווה את הת.ז. שחולצה מהכרטיס לעובדים קיימים ומציעה התאמות אוטומטיות עם דירוג ביטחון</li>
+              <li><strong>חיפוש ידני</strong> — אם אין המלצות מתאימות, ניתן לחפש ולבחור עובד ידנית מתוך הרשימה המלאה</li>
+            </ul>
+          </>
+        }
+      />
 
       {/* Controls */}
       <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 p-4">
