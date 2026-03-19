@@ -373,7 +373,8 @@ def _populate_template_core_sheet(
     for idx, employee in enumerate(employees, start=2):
         passport_value = (employee.passport_id or '').strip() if employee.passport_id else ''
         ws.cell(row=1, column=idx, value=passport_value)._style = copy(style_header)
-        ws.cell(row=2, column=idx, value=employee.full_name or '')._style = copy(style_body)
+        first_name = (employee.full_name or '').split()[0] if employee.full_name else ''
+        ws.cell(row=2, column=idx, value=first_name)._style = copy(style_body)
 
     # Body rows: fixed 31-day structure (rows 3..33)
     for day in range(1, 32):
@@ -788,65 +789,99 @@ def export_monthly_summary(site_id):
         traceback.print_exc()
         return api_response(status_code=500, message="Failed to export summary", error=str(e))
 
-    days_in_month = calendar.monthrange(month.year, month.month)[1]
-    day_headers = [str(day) for day in range(1, days_in_month + 1)]
-    headers = ['employee_name', 'employee_id', 'status', *day_headers, 'total_hours']
+    try:
+        template_path = _resolve_summary_template_path()
+        workbook = load_workbook(template_path)
+    except Exception as e:
+        logger.exception("Failed to load summary export template")
+        return api_response(status_code=500, message="Failed to load export template", error=str(e))
 
-    csv_buffer = StringIO()
-    writer = csv.writer(csv_buffer)
-    writer.writerow(headers)
+    ws = workbook.worksheets[0]
+    style_header = copy(ws['B1']._style)
+    style_body = copy(ws['B3']._style)
+    style_total = copy(ws['A34']._style)
 
-    for employee in employees:
-        employee_id_str = str(employee.id)
-        employee_days = matrix.get(employee_id_str, {})
-        employee_day_statuses = status_matrix.get(employee_id_str, {})
-        total_hours = sum(employee_days.values()) if employee_days else 0
-        status_key = status_map.get(employee_id_str) or 'NO_UPLOAD'
-        status_label = STATUS_LABELS.get(status_key, status_key)
+    ws.title = _safe_sheet_name(site.site_name, set())
 
-        day_values = []
-        for day in range(1, days_in_month + 1):
-            day_status = employee_day_statuses.get(day)
-            if day_status:
-                day_values.append(STATUS_DAY_LABELS.get(day_status, day_status))
-            else:
-                hours = employee_days.get(day)
-                if hours is None:
-                    day_values.append('')
-                else:
-                    day_values.append(f"{hours:.1f}")
-
-        writer.writerow([
-            employee.full_name,
-            employee_id_str,
-            status_label,
-            *day_values,
-            f"{total_hours:.1f}" if total_hours > 0 else ''
-        ])
-
-    day_totals = []
-    for day in range(1, days_in_month + 1):
-        day_total = sum(matrix.get(str(employee.id), {}).get(day, 0) for employee in employees)
-        day_totals.append(f"{day_total:.1f}" if day_total > 0 else '')
-
-    grand_total = sum(
-        matrix.get(str(employee.id), {}).get(day, 0)
-        for employee in employees
-        for day in range(1, days_in_month + 1)
+    _populate_template_core_sheet(
+        ws,
+        employees,
+        matrix,
+        month,
+        style_header=style_header,
+        style_body=style_body,
+        style_total=style_total,
+        status_matrix=status_matrix,
     )
 
-    writer.writerow(['TOTAL', '', '', *day_totals, f"{grand_total:.1f}" if grand_total > 0 else ''])
+    # Remove extra sheets from template
+    for extra_ws in workbook.worksheets[1:]:
+        workbook.remove(extra_ws)
 
-    csv_bytes = csv_buffer.getvalue().encode('utf-8-sig')
-    output = BytesIO(csv_bytes)
+    # Add tariff/fee summary rows matching the template's colored area.
+    # The template has pre-styled (colored) cells at fixed columns 8-9 for
+    # rows 33-34 (site total) and 36-38 (tariff).  We capture those styles,
+    # clear the fixed positions, and re-apply at the correct dynamic columns
+    # which depend on the actual employee count.
+    TMPL_VALUE_COL = 8   # template's fixed value column
+    TMPL_LABEL_COL = 9   # template's fixed label column
+
+    employee_count = len(employees)
+    last_data_col = max(2, employee_count + 1)
+    value_col = last_data_col + 1
+    label_col = value_col + 1
+
+    # Capture styles from the template's colored cells
+    style_site_total = copy(ws.cell(row=33, column=TMPL_VALUE_COL)._style)
+    style_tariff = copy(ws.cell(row=36, column=TMPL_VALUE_COL)._style)
+    style_tariff_label = copy(ws.cell(row=36, column=TMPL_LABEL_COL)._style)
+
+    # Clear the template's fixed colored cells (values already cleared by
+    # _populate_template_core_sheet, but styles/fills remain)
+    tmpl_rows = [33, 34, 36, 37, 38]
+    for r in tmpl_rows:
+        for c in (TMPL_VALUE_COL, TMPL_LABEL_COL):
+            cell = ws.cell(row=r, column=c)
+            cell.value = None
+            cell._style = copy(style_body)
+
+    if site.hourly_tariff is not None:
+        tariff = float(site.hourly_tariff)
+        tariff_int = int(tariff) if tariff == int(tariff) else tariff
+
+        # Grand total: sum of all employee totals (row 34, cols 2..last_data_col)
+        total_letters = [get_column_letter(c) for c in range(2, last_data_col + 1)]
+        grand_total_formula = '=SUM(' + ','.join(f'{cl}34' for cl in total_letters) + ')'
+        value_col_letter = get_column_letter(value_col)
+
+        # Row 33 (last day row): site total label
+        ws.cell(row=33, column=value_col, value='סה"כ שעות לאתר:')._style = copy(style_site_total)
+
+        # Row 34 (total row): grand total value
+        ws.cell(row=34, column=value_col, value=grand_total_formula)._style = copy(style_site_total)
+
+        # Row 36: tariff per hour
+        ws.cell(row=36, column=value_col, value=f'{tariff_int} ₪')._style = copy(style_tariff)
+        ws.cell(row=36, column=label_col, value='מחיר לשעה')._style = copy(style_tariff_label)
+
+        # Row 37: cost without VAT  (= grand_total * tariff literal)
+        ws.cell(row=37, column=value_col, value=f'={value_col_letter}34*{tariff_int}')._style = copy(style_tariff)
+        ws.cell(row=37, column=label_col, value='מחיר ללא מע"מ')._style = copy(style_tariff_label)
+
+        # Row 38: cost with VAT (×1.18)
+        ws.cell(row=38, column=value_col, value=f'={value_col_letter}37*1.18')._style = copy(style_tariff)
+        ws.cell(row=38, column=label_col, value='מחיר כולל מע"מ')._style = copy(style_tariff_label)
+
+    output = BytesIO()
+    workbook.save(output)
     output.seek(0)
 
     site_label = _safe_label(site.site_name) or str(site_id)
-    download_name = f"monthly_summary_{site_label}_{month.strftime('%Y-%m')}.csv"
+    download_name = f"monthly_summary_{site_label}_{month.strftime('%Y-%m')}.xlsx"
 
     return send_file(
         output,
-        mimetype='text/csv',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         as_attachment=True,
         download_name=download_name
     )
