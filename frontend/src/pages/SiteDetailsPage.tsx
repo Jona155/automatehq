@@ -194,7 +194,7 @@ export default function SiteDetailsPage() {
         approved_only: false,
         include_inactive: false,
       });
-      downloadBlobFile(blob, `monthly_summary_${site.site_name}_${selectedMonth}.csv`);
+      downloadBlobFile(blob, `monthly_summary_${site.site_name}_${selectedMonth}.xlsx`);
     } catch (err: any) {
       console.error('Failed to download summary CSV:', err);
       showToast(err?.response?.data?.message || 'שגיאה בהורדת הסיכום החודשי', 'error');
@@ -351,7 +351,7 @@ export default function SiteDetailsPage() {
                 disabled={isDownloadingSummary}
               >
                 <span className="material-symbols-outlined text-lg">table_view</span>
-                <span>{isDownloadingSummary ? 'מוריד סיכום (CSV)...' : 'הורדת סיכום (CSV)'}</span>
+                <span>{isDownloadingSummary ? 'מוריד סיכום (XLSX)...' : 'הורדת סיכום (XLSX)'}</span>
               </button>
               <button
                 onClick={() => {
@@ -395,7 +395,7 @@ export default function SiteDetailsPage() {
               <li><strong>העלאה מרובה</strong> — כפתור ״העלאה מרובה״ מאפשר העלאת מספר כרטיסי עבודה בבת אחת</li>
               <li><strong>הגדרות אתר</strong> — עדכון תעריף שעתי ועובד אחראי (דרך ״פעולות באתר״)</li>
               <li><strong>הורדת כרטיסים</strong> — ייצוא כרטיסי עבודה מאושרים לקובץ</li>
-              <li><strong>הורדת סיכום CSV</strong> — הורדת דוח סיכום חודשי בפורמט CSV</li>
+              <li><strong>הורדת סיכום XLSX</strong> — הורדת דוח סיכום חודשי בפורמט XLSX</li>
               <li><strong>תבנית שכר ל-Wave</strong> — הורדת קובץ שכר מוכן לייבוא למערכת Wave</li>
             </ul>
           </>
