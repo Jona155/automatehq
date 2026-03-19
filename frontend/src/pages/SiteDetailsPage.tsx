@@ -18,6 +18,7 @@ import MonthPicker from '../components/MonthPicker';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import { downloadBlobFile } from '../utils/fileDownload';
 import { getDefaultMonth } from '../utils/monthUtils';
+import PageBanner from '../components/PageBanner';
 
 type TabType = 'employees' | 'review' | 'summary';
 
@@ -372,6 +373,34 @@ export default function SiteDetailsPage() {
         </div>}
         </div>
       </div>
+
+      {/* Page Guide Banner */}
+      <PageBanner
+        storageKey="site-details"
+        title="מדריך לדף האתר"
+        icon="lightbulb"
+        summary={
+          <p>בדף זה ניתן לנהל את האתר, לצפות בעובדים, להעלות כרטיסי עבודה, לסקור את הנתונים שחולצו ולייצא דוחות לשכר.</p>
+        }
+        details={
+          <>
+            <p className="font-semibold mb-1">ניווט בין לשוניות:</p>
+            <ul className="space-y-1 list-disc list-inside">
+              <li><strong>רשימת עובדים</strong> — צפייה בכל עובדי האתר, העלאת כרטיס עבודה לעובד בודד, ויצירת קישורי גישה להעלאה עצמית</li>
+              <li><strong>סקירת כרטיסי עבודה</strong> — בדיקה ועריכה של נתוני השעות שחולצו מהכרטיסים, התאמת עובדים, ואישור סופי</li>
+              <li><strong>סיכום חודשי</strong> — טבלת סיכום שעות חודשית לכלל העובדים באתר</li>
+            </ul>
+            <p className="font-semibold mt-3 mb-1">פעולות נוספות:</p>
+            <ul className="space-y-1 list-disc list-inside">
+              <li><strong>העלאה מרובה</strong> — כפתור ״העלאה מרובה״ מאפשר העלאת מספר כרטיסי עבודה בבת אחת</li>
+              <li><strong>הגדרות אתר</strong> — עדכון תעריף שעתי ועובד אחראי (דרך ״פעולות באתר״)</li>
+              <li><strong>הורדת כרטיסים</strong> — ייצוא כרטיסי עבודה מאושרים לקובץ</li>
+              <li><strong>הורדת סיכום CSV</strong> — הורדת דוח סיכום חודשי בפורמט CSV</li>
+              <li><strong>תבנית שכר ל-Wave</strong> — הורדת קובץ שכר מוכן לייבוא למערכת Wave</li>
+            </ul>
+          </>
+        }
+      />
 
       {/* Tab Navigation */}
       <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
