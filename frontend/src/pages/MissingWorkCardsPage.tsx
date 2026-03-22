@@ -4,6 +4,7 @@ import { getMissingWorkCardEmployees } from '../api/workCards';
 import { getSites } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 import MonthPicker from '../components/MonthPicker';
+import SearchableMultiSelect from '../components/SearchableMultiSelect';
 import { getDefaultMonth } from '../utils/monthUtils';
 
 export default function MissingWorkCardsPage() {
@@ -14,7 +15,7 @@ export default function MissingWorkCardsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
-  const [filterSiteId, setFilterSiteId] = useState('');
+  const [selectedSiteIds, setSelectedSiteIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -27,7 +28,6 @@ export default function MissingWorkCardsPage() {
       const monthParam = `${selectedMonth}-01`;
       const data = await getMissingWorkCardEmployees({
         month: monthParam,
-        site_id: filterSiteId || undefined,
       });
       setEmployees(data);
     } catch (err) {
@@ -48,18 +48,30 @@ export default function MissingWorkCardsPage() {
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchMissing();
-  }, [isAuthenticated, selectedMonth, filterSiteId]);
+  }, [isAuthenticated, selectedMonth]);
+
+  const siteOptions = useMemo(
+    () => sites.map((s) => ({ value: s.id, label: s.site_name })),
+    [sites],
+  );
 
   const filteredEmployees = useMemo(() => {
-    if (!searchQuery.trim()) return employees;
-    const q = searchQuery.toLowerCase();
-    return employees.filter(
-      (emp) =>
-        (emp.full_name ?? '').toLowerCase().includes(q) ||
-        (emp.passport_id ?? '').toLowerCase().includes(q) ||
-        (emp.phone_number ?? '').includes(q),
-    );
-  }, [employees, searchQuery]);
+    let result = employees;
+    if (selectedSiteIds.length > 0) {
+      const siteSet = new Set(selectedSiteIds);
+      result = result.filter((emp) => emp.site_id && siteSet.has(emp.site_id));
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (emp) =>
+          (emp.full_name ?? '').toLowerCase().includes(q) ||
+          (emp.passport_id ?? '').toLowerCase().includes(q) ||
+          (emp.phone_number ?? '').includes(q),
+      );
+    }
+    return result;
+  }, [employees, searchQuery, selectedSiteIds]);
 
   const totalPages = Math.max(1, Math.ceil(filteredEmployees.length / pageSize));
 
@@ -70,7 +82,7 @@ export default function MissingWorkCardsPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, filterSiteId, selectedMonth]);
+  }, [searchQuery, selectedSiteIds, selectedMonth]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -115,18 +127,14 @@ export default function MissingWorkCardsPage() {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
               אתר
             </label>
-            <select
-              value={filterSiteId}
-              onChange={(e) => setFilterSiteId(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm"
-            >
-              <option value="">כל האתרים</option>
-              {sites.map((site) => (
-                <option key={site.id} value={site.id}>
-                  {site.site_name}
-                </option>
-              ))}
-            </select>
+            <SearchableMultiSelect
+              options={siteOptions}
+              selected={selectedSiteIds}
+              onChange={setSelectedSiteIds}
+              searchPlaceholder="חפש אתר..."
+              icon="location_on"
+              allLabel="כל האתרים"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
