@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import MonthPicker from '../components/MonthPicker';
 import SearchableMultiSelect from '../components/SearchableMultiSelect';
 import { getDefaultMonth } from '../utils/monthUtils';
+import PageBanner from '../components/PageBanner';
 
 export default function MissingWorkCardsPage() {
   const { isAuthenticated, user } = useAuth();
@@ -113,6 +114,26 @@ export default function MissingWorkCardsPage() {
           </p>
         </div>
       </div>
+
+      <PageBanner
+        storageKey="missing-work-cards"
+        title="מדריך: כרטיסי עבודה חסרים"
+        icon="lightbulb"
+        summary={
+          <>
+            דף זה מציג עובדים פעילים שטרם הוגש עבורם כרטיס עבודה לחודש הנבחר.
+            מומלץ להיכנס לדף זה לאחר שהחלו להיקלט כרטיסי עבודה לחודש הרלוונטי — כך תוכלו לזהות בקלות אילו עובדים עדיין חסרים.
+          </>
+        }
+        details={
+          <ul className="list-disc list-inside space-y-1">
+            <li>בחרו חודש כדי לראות את רשימת העובדים שלא הגישו כרטיס עבודה.</li>
+            <li>סננו לפי אתר כדי להתמקד באתר ספציפי.</li>
+            <li>השתמשו בחיפוש חופשי כדי למצוא עובד לפי שם, דרכון או טלפון.</li>
+            <li>הדף יהיה שימושי במיוחד ככל שיותר כרטיסים נקלטים — כך הרשימה משקפת בצורה מדויקת יותר את הפערים בפועל.</li>
+          </ul>
+        }
+      />
 
       {/* Controls */}
       <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 p-4">
