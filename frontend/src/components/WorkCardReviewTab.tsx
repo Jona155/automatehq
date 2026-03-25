@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup } from '../types';
 import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
+import { getFirstName } from '../utils/nameUtils';
 import MonthPicker from './MonthPicker';
 import { useToast } from '../hooks/useToast';
 import { useAuth } from '../context/AuthContext';
@@ -64,12 +65,6 @@ const normalizeTimeToHourMinute = (timeValue: string | null | undefined): string
   const hours = match[1].padStart(2, '0');
   const minutes = match[2];
   return `${hours}:${minutes}`;
-};
-
-const getFirstName = (fullName: string | null | undefined): string => {
-  if (!fullName) return '';
-  const [firstName] = fullName.trim().split(/\s+/);
-  return firstName || fullName;
 };
 
 const formatDate = (iso: string) => {

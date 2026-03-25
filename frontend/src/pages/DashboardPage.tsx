@@ -17,6 +17,7 @@ import MonthPicker from '../components/MonthPicker';
 import type { DashboardSummary } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { getDefaultMonth } from '../utils/monthUtils';
+import MissingEmployeesModal from '../components/MissingEmployeesModal';
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   NEEDS_ASSIGNMENT: { label: 'צריך שיוך', color: '#f97316' },
@@ -54,6 +55,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const REVIEW_PAGE_SIZE = 5;
   const [reviewPage, setReviewPage] = useState(0);
+  const [missingModal, setMissingModal] = useState<{ siteId: string; siteName: string } | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -263,6 +265,7 @@ export default function DashboardPage() {
                       <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">שם אתר</th>
                       <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">עובדים פעילים</th>
                       <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">סה"כ כרטיסים</th>
+                      <th className="px-6 py-4 text-sm font-bold text-amber-600 dark:text-amber-400">כרטיסים חסרים</th>
                       <th className="px-6 py-4 text-sm font-bold text-green-600 dark:text-green-400">מאושר</th>
                       <th className="px-6 py-4 text-sm font-bold text-sky-600 dark:text-sky-400">צריך בדיקה</th>
                       <th className="px-6 py-4 text-sm font-bold text-orange-500 dark:text-orange-400">צריך שיוך</th>
@@ -279,6 +282,19 @@ export default function DashboardPage() {
                         <td className="px-6 py-5 text-[#111518] dark:text-white font-medium">{site.site_name}</td>
                         <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.active_employee_count)}</td>
                         <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.total_work_cards)}</td>
+                        <td className="px-6 py-5 text-amber-600 dark:text-amber-400 font-medium">
+                          {site.missing_work_cards > 0 ? (
+                            <button
+                              className="underline decoration-amber-400/50 hover:decoration-amber-400 cursor-pointer transition-colors"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMissingModal({ siteId: site.site_id, siteName: site.site_name });
+                              }}
+                            >
+                              {formatNumber(site.missing_work_cards)}
+                            </button>
+                          ) : '—'}
+                        </td>
                         <td className="px-6 py-5 text-green-600 dark:text-green-400 font-medium">{site.approved > 0 ? formatNumber(site.approved) : '—'}</td>
                         <td className="px-6 py-5 text-sky-600 dark:text-sky-400 font-medium">{site.needs_review > 0 ? formatNumber(site.needs_review) : '—'}</td>
                         <td className="px-6 py-5 text-orange-500 dark:text-orange-400 font-medium">{site.needs_assignment > 0 ? formatNumber(site.needs_assignment) : '—'}</td>
@@ -445,6 +461,16 @@ export default function DashboardPage() {
             </div>
           </section>
         </>
+      )}
+
+      {missingModal && (
+        <MissingEmployeesModal
+          isOpen
+          onClose={() => setMissingModal(null)}
+          siteId={missingModal.siteId}
+          siteName={missingModal.siteName}
+          month={summary?.month ?? `${selectedMonth}-01`}
+        />
       )}
     </div>
   );

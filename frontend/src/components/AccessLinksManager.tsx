@@ -3,6 +3,7 @@ import type { Employee, UploadAccessRequest } from '../types';
 import MonthPicker from './MonthPicker';
 import { createAccessLink, getAccessLinks, revokeAccessLink, sendAccessLinkToWhatsapp } from '../api/sites';
 import { useToast } from '../hooks/useToast';
+import { getFirstName } from '../utils/nameUtils';
 
 interface AccessLinksManagerProps {
   siteId: string;
@@ -155,7 +156,7 @@ export default function AccessLinksManager({
               <option value="">בחר עובד</option>
               {eligibleEmployees.map((employee) => (
                 <option key={employee.id} value={employee.id}>
-                  {employee.full_name.split(' ')[0]} - {employee.passport_id}
+                  {getFirstName(employee.full_name)} - {employee.passport_id}
                   {defaultEmployeeId === employee.id ? ' (ברירת מחדל)' : ''}
                 </option>
               ))}

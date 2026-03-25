@@ -329,6 +329,7 @@ export interface DashboardSummary {
     site_name: string;
     active_employee_count: number;
     total_work_cards: number;
+    missing_work_cards: number;
     approved: number;
     needs_review: number;
     needs_assignment: number;

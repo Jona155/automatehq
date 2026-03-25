@@ -255,6 +255,7 @@ def get_dashboard_summary():
             [{"site_id": v["site_id"], "site_name": v["site_name"],
               "active_employee_count": v["active_employee_count"],
               "total_work_cards": v["total_work_cards"],
+              "missing_work_cards": max(v["active_employee_count"] - v["total_work_cards"], 0),
               "approved": v["APPROVED"], "needs_review": v["NEEDS_REVIEW"],
               "needs_assignment": v["NEEDS_ASSIGNMENT"], "rejected": v["REJECTED"]}
              for v in sites_review_map.values()],

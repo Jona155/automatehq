@@ -3,6 +3,7 @@ import { getHoursMatrix } from '../api/workCards';
 import type { MatrixData } from '../types';
 import MonthPicker from './MonthPicker';
 import { DAY_STATUS_LABELS } from '../constants/dayStatus';
+import { getFirstName } from '../utils/nameUtils';
 
 interface MonthlySummaryTabProps {
   siteId: string;
@@ -200,7 +201,7 @@ export default function MonthlySummaryTab({ siteId, selectedMonth, onMonthChange
                     >
                       <div className="flex flex-col items-center gap-1">
                         <span className="text-slate-900 dark:text-white text-xs truncate max-w-[90px]">
-                          {employee.full_name.split(' ')[0]}
+                          {getFirstName(employee.full_name)}
                         </span>
                         <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[90px]">
                           {employee.passport_id}
