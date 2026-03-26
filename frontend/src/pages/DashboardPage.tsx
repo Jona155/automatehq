@@ -306,7 +306,6 @@ export default function DashboardPage() {
               </div>
               {reviewTotalPages > 1 && (
                 <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between text-sm text-slate-500">
-                  <span>עמוד {reviewPage + 1} מתוך {reviewTotalPages} ({summary.sites_review_table?.length ?? 0} אתרים)</span>
                   <div className="flex items-center gap-2">
                     <button
                       className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -323,6 +322,7 @@ export default function DashboardPage() {
                       הבא
                     </button>
                   </div>
+                  <span>עמוד {reviewPage + 1} מתוך {reviewTotalPages} ({summary.sites_review_table?.length ?? 0} אתרים)</span>
                 </div>
               )}
             </section>
