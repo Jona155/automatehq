@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from typing import Dict, Any, List, Tuple, Optional
 
 from flask import Blueprint, g, request
-from sqlalchemy import func, and_, cast, Text
+from sqlalchemy import func, and_
 
 from ..auth_utils import token_required
 from ..extensions import db
@@ -217,10 +217,9 @@ def get_dashboard_summary():
                 WorkCard.review_status.label("review_status"),
                 func.count(func.distinct(
                     func.coalesce(
-                        cast(WorkCard.employee_id, Text),
-                        cast(WorkCardExtraction.matched_employee_id, Text),
-                        WorkCardExtraction.extracted_passport_id,
-                        cast(WorkCard.id, Text),
+                        WorkCard.employee_id,
+                        WorkCardExtraction.matched_employee_id,
+                        WorkCard.id,
                     )
                 )).label("cnt"),
             )
