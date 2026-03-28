@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from typing import Dict, Any, List, Tuple, Optional
 
 from flask import Blueprint, g, request
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, case
 
 from ..auth_utils import token_required
 from ..extensions import db
@@ -215,7 +215,9 @@ def get_dashboard_summary():
             db.session.query(
                 WorkCard.site_id.label("site_id"),
                 WorkCard.review_status.label("review_status"),
-                func.count(WorkCard.id).label("cnt"),
+                func.count(func.distinct(
+                    func.coalesce(WorkCard.employee_id, WorkCard.id)
+                )).label("cnt"),
             )
             .filter(WorkCard.business_id == g.business_id, WorkCard.processing_month == month_start)
             .group_by(WorkCard.site_id, WorkCard.review_status)
