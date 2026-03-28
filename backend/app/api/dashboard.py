@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from typing import Dict, Any, List, Tuple, Optional
 
 from flask import Blueprint, g, request
-from sqlalchemy import func, and_, case
+from sqlalchemy import func, and_
 
 from ..auth_utils import token_required
 from ..extensions import db
