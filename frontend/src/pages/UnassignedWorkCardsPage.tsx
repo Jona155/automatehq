@@ -7,6 +7,7 @@ import { getSites } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
+import SearchableMultiSelect from '../components/SearchableMultiSelect';
 import { getDefaultMonth } from '../utils/monthUtils';
 import PageBanner from '../components/PageBanner';
 
@@ -288,8 +289,6 @@ export default function UnassignedWorkCardsPage() {
   // Site filter state
   const [sites, setSites] = useState<Site[]>([]);
   const [filterSiteIds, setFilterSiteIds] = useState<string[]>([]);
-  const [showSiteDropdown, setShowSiteDropdown] = useState(false);
-  const siteDropdownRef = useRef<HTMLDivElement>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -335,17 +334,6 @@ export default function UnassignedWorkCardsPage() {
       })
       .catch((err) => console.error('Failed to fetch sites:', err));
   }, [isAuthenticated]);
-
-  // Close site dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (siteDropdownRef.current && !siteDropdownRef.current.contains(event.target as Node)) {
-        setShowSiteDropdown(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   // ── Image zoom/pan handlers ────────────────────────────────────────────────
   const resetImageTransform = useCallback(() => {
@@ -444,6 +432,11 @@ export default function UnassignedWorkCardsPage() {
     );
   }, [cards, searchQuery]);
 
+  const siteOptions = useMemo(
+    () => sites.map((s) => ({ value: s.id, label: s.site_name })),
+    [sites],
+  );
+
   const filteredEmployees = useMemo(() => {
     let result = employees;
     if (filterSiteIds.length > 0) {
@@ -466,7 +459,6 @@ export default function UnassignedWorkCardsPage() {
     setSelectedEmployeeId('');
     setEmployeeSearch('');
     setFilterSiteIds([]);
-    setShowSiteDropdown(false);
     setAssignError(null);
     setShowAllSuggestions(false);
     setShowManualSearch(false);
@@ -932,66 +924,18 @@ export default function UnassignedWorkCardsPage() {
               </div>
 
               {/* ── Site filter (multi-select) ── */}
-              <div ref={siteDropdownRef} className="relative">
+              <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                   סינון לפי אתר
                 </label>
-                <button
-                  type="button"
-                  onClick={() => setShowSiteDropdown((v) => !v)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm text-right flex items-center justify-between gap-2"
-                >
-                  <span className="truncate">
-                    {filterSiteIds.length === 0
-                      ? 'כל האתרים'
-                      : filterSiteIds.length === 1
-                        ? siteMap[filterSiteIds[0]] ?? 'אתר נבחר'
-                        : `${filterSiteIds.length} אתרים נבחרו`}
-                  </span>
-                  <span className={`material-symbols-outlined text-base text-slate-400 transition-transform ${showSiteDropdown ? 'rotate-180' : ''}`}>
-                    expand_more
-                  </span>
-                </button>
-                {showSiteDropdown && (
-                  <div className="absolute z-30 bottom-full mb-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl max-h-48 overflow-y-auto">
-                    {filterSiteIds.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setFilterSiteIds([])}
-                        className="w-full text-right px-3 py-2 text-xs text-primary hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100 dark:border-slate-700/50 font-medium"
-                      >
-                        נקה בחירה
-                      </button>
-                    )}
-                    {sites.map((site) => {
-                      const isSelected = filterSiteIds.includes(site.id);
-                      return (
-                        <button
-                          key={site.id}
-                          type="button"
-                          onClick={() =>
-                            setFilterSiteIds((prev) =>
-                              isSelected ? prev.filter((id) => id !== site.id) : [...prev, site.id]
-                            )
-                          }
-                          className={`w-full text-right px-3 py-2 text-sm transition-colors flex items-center justify-between gap-2 ${
-                            isSelected
-                              ? 'bg-primary/5 dark:bg-primary/10 text-primary'
-                              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                          }`}
-                        >
-                          <span className="truncate">{site.site_name}</span>
-                          {isSelected && (
-                            <span className="material-symbols-outlined text-primary text-base shrink-0">check</span>
-                          )}
-                        </button>
-                      );
-                    })}
-                    {sites.length === 0 && (
-                      <div className="px-3 py-3 text-center text-sm text-slate-400">אין אתרים</div>
-                    )}
-                  </div>
-                )}
+                <SearchableMultiSelect
+                  options={siteOptions}
+                  selected={filterSiteIds}
+                  onChange={setFilterSiteIds}
+                  searchPlaceholder="חפש אתר..."
+                  icon="location_on"
+                  allLabel="כל האתרים"
+                />
               </div>
 
               <div className="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-100 dark:divide-slate-700">
