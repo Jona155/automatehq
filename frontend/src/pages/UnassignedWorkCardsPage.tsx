@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
-import type { Employee } from '../types';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { Employee, Site } from '../types';
 import { getUnassignedWorkCards, updateWorkCard, getWorkCardFile, type UnassignedWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
 import { getSites } from '../api/sites';
@@ -263,7 +264,7 @@ export default function UnassignedWorkCardsPage() {
   // Assign modal state
   const [assignCard, setAssignCard] = useState<UnassignedWorkCard | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [siteMap, setSiteMap] = useState<Record<string, string>>({});
+  const [siteMap, setSiteMap] = useState<Record<string, string>>({}); // id → site_name lookup
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [isAssigning, setIsAssigning] = useState(false);
@@ -275,6 +276,20 @@ export default function UnassignedWorkCardsPage() {
   const [cardImageUrl, setCardImageUrl] = useState<string | null>(null);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const [imageError, setImageError] = useState(false);
+
+  // Image zoom/pan state
+  const [imageScale, setImageScale] = useState(1);
+  const [imageRotation, setImageRotation] = useState(0);
+  const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
+  const [isPanningImage, setIsPanningImage] = useState(false);
+  const [panStart, setPanStart] = useState<{ x: number; y: number; originX: number; originY: number } | null>(null);
+  const imageViewportRef = useRef<HTMLDivElement>(null);
+
+  // Site filter state
+  const [sites, setSites] = useState<Site[]>([]);
+  const [filterSiteIds, setFilterSiteIds] = useState<string[]>([]);
+  const [showSiteDropdown, setShowSiteDropdown] = useState(false);
+  const siteDropdownRef = useRef<HTMLDivElement>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -312,13 +327,93 @@ export default function UnassignedWorkCardsPage() {
       .then(setEmployees)
       .catch((err) => console.error('Failed to fetch employees:', err));
     getSites()
-      .then((sites) => {
+      .then((fetchedSites) => {
+        setSites(fetchedSites);
         const map: Record<string, string> = {};
-        for (const s of sites) map[s.id] = s.site_name;
+        for (const s of fetchedSites) map[s.id] = s.site_name;
         setSiteMap(map);
       })
       .catch((err) => console.error('Failed to fetch sites:', err));
   }, [isAuthenticated]);
+
+  // Close site dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (siteDropdownRef.current && !siteDropdownRef.current.contains(event.target as Node)) {
+        setShowSiteDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // ── Image zoom/pan handlers ────────────────────────────────────────────────
+  const resetImageTransform = useCallback(() => {
+    setImageScale(1);
+    setImageRotation(0);
+    setImageOffset({ x: 0, y: 0 });
+  }, []);
+
+  const zoomImage = useCallback((direction: 'in' | 'out') => {
+    setImageScale((prev) => {
+      const next = direction === 'in' ? prev + 0.2 : prev - 0.2;
+      return Math.min(4, Math.max(0.5, Number(next.toFixed(2))));
+    });
+  }, []);
+
+  const rotateImage = useCallback(() => {
+    setImageRotation((prev) => (prev + 90) % 360);
+  }, []);
+
+  const fitImage = useCallback(() => {
+    setImageScale(1);
+    setImageOffset({ x: 0, y: 0 });
+  }, []);
+
+  const handleImageWheel = useCallback((event: WheelEvent) => {
+    if (!cardImageUrl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const zoomDelta = Math.max(-0.35, Math.min(0.35, -event.deltaY * 0.002));
+    setImageScale((prev) => {
+      const next = prev + zoomDelta;
+      return Math.min(4, Math.max(0.5, Number(next.toFixed(3))));
+    });
+  }, [cardImageUrl]);
+
+  useEffect(() => {
+    const viewport = imageViewportRef.current;
+    if (!viewport) return;
+    const wheelListener = (event: WheelEvent) => handleImageWheel(event);
+    viewport.addEventListener('wheel', wheelListener, { passive: false });
+    return () => viewport.removeEventListener('wheel', wheelListener);
+  }, [handleImageWheel]);
+
+  const handleImagePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!cardImageUrl || event.button !== 0 || imageScale <= 1) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsPanningImage(true);
+    setPanStart({ x: event.clientX, y: event.clientY, originX: imageOffset.x, originY: imageOffset.y });
+  }, [cardImageUrl, imageOffset.x, imageOffset.y, imageScale]);
+
+  const handleImagePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!panStart) return;
+    event.preventDefault();
+    const deltaX = event.clientX - panStart.x;
+    const deltaY = event.clientY - panStart.y;
+    setImageOffset({ x: panStart.originX + deltaX, y: panStart.originY + deltaY });
+  }, [panStart]);
+
+  const handleImagePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    event.stopPropagation();
+    setIsPanningImage(false);
+    setPanStart(null);
+  }, []);
 
   // Compute passport suggestions for all currently displayed cards
   const suggestionsByCardId = useMemo(() => {
@@ -350,23 +445,33 @@ export default function UnassignedWorkCardsPage() {
   }, [cards, searchQuery]);
 
   const filteredEmployees = useMemo(() => {
-    if (!employeeSearch.trim()) return employees;
-    const q = employeeSearch.toLowerCase();
-    return employees.filter(
-      (e) =>
-        (e.full_name ?? '').toLowerCase().includes(q) ||
-        (e.passport_id ?? '').toLowerCase().includes(q),
-    );
-  }, [employees, employeeSearch]);
+    let result = employees;
+    if (filterSiteIds.length > 0) {
+      const siteSet = new Set(filterSiteIds);
+      result = result.filter((e) => siteSet.has(e.site_id));
+    }
+    if (employeeSearch.trim()) {
+      const q = employeeSearch.toLowerCase();
+      result = result.filter(
+        (e) =>
+          (e.full_name ?? '').toLowerCase().includes(q) ||
+          (e.passport_id ?? '').toLowerCase().includes(q),
+      );
+    }
+    return result;
+  }, [employees, employeeSearch, filterSiteIds]);
 
   const handleOpenAssign = (card: UnassignedWorkCard) => {
     setAssignCard(card);
     setSelectedEmployeeId('');
     setEmployeeSearch('');
+    setFilterSiteIds([]);
+    setShowSiteDropdown(false);
     setAssignError(null);
     setShowAllSuggestions(false);
     setShowManualSearch(false);
-    // Fetch the work card image
+    // Reset image transform & fetch the work card image
+    resetImageTransform();
     if (cardImageUrl) URL.revokeObjectURL(cardImageUrl);
     setCardImageUrl(null);
     setImageError(false);
@@ -625,29 +730,96 @@ export default function UnassignedWorkCardsPage() {
         maxWidth="4xl"
       >
         <div className="flex gap-6" dir="ltr">
-          {/* ── Image panel ── */}
+          {/* ── Image panel with zoom/pan ── */}
           <div className="flex-1 min-w-0 flex flex-col gap-3">
             <div className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-right" dir="rtl">
               תמונת כרטיס העבודה
             </div>
-            <div className="bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-center min-h-[300px] overflow-auto">
-              {isLoadingImage ? (
-                <div className="flex flex-col items-center gap-2 text-slate-400 p-8">
-                  <span className="material-symbols-outlined text-3xl animate-spin">progress_activity</span>
-                  <span className="text-sm">טוען תמונה...</span>
+            <div className="relative bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 min-h-[300px]">
+              {/* Zoom toolbar */}
+              {cardImageUrl && !isLoadingImage && !imageError && (
+                <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-20">
+                  <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-slate-900/80 text-white shadow-lg px-2 py-1 backdrop-blur-sm">
+                    <button
+                      type="button"
+                      onClick={() => zoomImage('out')}
+                      className="w-8 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 focus:outline-none"
+                      title="הקטנה"
+                    >
+                      <span className="material-symbols-outlined text-base">zoom_out</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => zoomImage('in')}
+                      className="w-8 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 focus:outline-none"
+                      title="הגדלה"
+                    >
+                      <span className="material-symbols-outlined text-base">zoom_in</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={fitImage}
+                      className="px-2 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 text-xs focus:outline-none"
+                      title="התאם למסך"
+                    >
+                      התאם
+                    </button>
+                    <button
+                      type="button"
+                      onClick={rotateImage}
+                      className="w-8 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 focus:outline-none"
+                      title="סיבוב"
+                    >
+                      <span className="material-symbols-outlined text-base">rotate_90_degrees_ccw</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetImageTransform}
+                      className="px-2 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 text-xs focus:outline-none"
+                      title="איפוס"
+                    >
+                      אפס
+                    </button>
+                  </div>
                 </div>
-              ) : imageError ? (
-                <div className="flex flex-col items-center gap-2 text-slate-400 p-8">
-                  <span className="material-symbols-outlined text-3xl">broken_image</span>
-                  <span className="text-sm">לא ניתן לטעון את התמונה</span>
-                </div>
-              ) : cardImageUrl ? (
-                <img
-                  src={cardImageUrl}
-                  alt="כרטיס עבודה"
-                  className="max-w-full max-h-[65vh] object-contain rounded-lg"
-                />
-              ) : null}
+              )}
+
+              {/* Image viewport */}
+              <div
+                ref={imageViewportRef}
+                className={`h-[65vh] overflow-hidden rounded-xl flex items-center justify-center overscroll-contain ${
+                  imageScale > 1 ? (isPanningImage ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'
+                }`}
+                onPointerDown={handleImagePointerDown}
+                onPointerMove={handleImagePointerMove}
+                onPointerUp={handleImagePointerUp}
+                onPointerCancel={handleImagePointerUp}
+                style={{ touchAction: imageScale > 1 ? 'none' : 'pan-y' }}
+              >
+                {isLoadingImage ? (
+                  <div className="flex flex-col items-center gap-2 text-slate-400 p-8">
+                    <span className="material-symbols-outlined text-3xl animate-spin">progress_activity</span>
+                    <span className="text-sm">טוען תמונה...</span>
+                  </div>
+                ) : imageError ? (
+                  <div className="flex flex-col items-center gap-2 text-slate-400 p-8">
+                    <span className="material-symbols-outlined text-3xl">broken_image</span>
+                    <span className="text-sm">לא ניתן לטעון את התמונה</span>
+                  </div>
+                ) : cardImageUrl ? (
+                  <img
+                    src={cardImageUrl}
+                    alt="כרטיס עבודה"
+                    draggable={false}
+                    className="max-w-full h-auto rounded-lg select-none"
+                    style={{
+                      transform: `translate(${imageOffset.x}px, ${imageOffset.y}px) scale(${imageScale}) rotate(${imageRotation}deg)`,
+                      transformOrigin: 'center center',
+                      transition: isPanningImage ? 'none' : 'transform 120ms ease-out',
+                    }}
+                  />
+                ) : null}
+              </div>
             </div>
           </div>
 
@@ -757,6 +929,69 @@ export default function UnassignedWorkCardsPage() {
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm"
                   autoFocus={modalSuggestions.length === 0}
                 />
+              </div>
+
+              {/* ── Site filter (multi-select) ── */}
+              <div ref={siteDropdownRef} className="relative">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  סינון לפי אתר
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowSiteDropdown((v) => !v)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm text-right flex items-center justify-between gap-2"
+                >
+                  <span className="truncate">
+                    {filterSiteIds.length === 0
+                      ? 'כל האתרים'
+                      : filterSiteIds.length === 1
+                        ? siteMap[filterSiteIds[0]] ?? 'אתר נבחר'
+                        : `${filterSiteIds.length} אתרים נבחרו`}
+                  </span>
+                  <span className={`material-symbols-outlined text-base text-slate-400 transition-transform ${showSiteDropdown ? 'rotate-180' : ''}`}>
+                    expand_more
+                  </span>
+                </button>
+                {showSiteDropdown && (
+                  <div className="absolute z-30 bottom-full mb-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+                    {filterSiteIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setFilterSiteIds([])}
+                        className="w-full text-right px-3 py-2 text-xs text-primary hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100 dark:border-slate-700/50 font-medium"
+                      >
+                        נקה בחירה
+                      </button>
+                    )}
+                    {sites.map((site) => {
+                      const isSelected = filterSiteIds.includes(site.id);
+                      return (
+                        <button
+                          key={site.id}
+                          type="button"
+                          onClick={() =>
+                            setFilterSiteIds((prev) =>
+                              isSelected ? prev.filter((id) => id !== site.id) : [...prev, site.id]
+                            )
+                          }
+                          className={`w-full text-right px-3 py-2 text-sm transition-colors flex items-center justify-between gap-2 ${
+                            isSelected
+                              ? 'bg-primary/5 dark:bg-primary/10 text-primary'
+                              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          <span className="truncate">{site.site_name}</span>
+                          {isSelected && (
+                            <span className="material-symbols-outlined text-primary text-base shrink-0">check</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                    {sites.length === 0 && (
+                      <div className="px-3 py-3 text-center text-sm text-slate-400">אין אתרים</div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-100 dark:divide-slate-700">
