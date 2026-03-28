@@ -4,12 +4,12 @@ from datetime import date, datetime, timezone
 from typing import Dict, Any, List, Tuple, Optional
 
 from flask import Blueprint, g, request
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, case
 
 from ..auth_utils import token_required
 from ..extensions import db
 from ..models.sites import Site, Employee
-from ..models.work_cards import WorkCard, WorkCardExtraction
+from ..models.work_cards import WorkCard
 from .utils import api_response
 
 logger = logging.getLogger(__name__)
@@ -211,21 +211,27 @@ def get_dashboard_summary():
             .subquery()
         )
 
+        # Count unique employees per site (not raw cards) so that multiple
+        # uploads for the same employee don't inflate totals or hide missing ones.
         wc_sub = (
             db.session.query(
                 WorkCard.site_id.label("site_id"),
-                WorkCard.review_status.label("review_status"),
-                func.count(func.distinct(
-                    func.coalesce(
-                        WorkCard.employee_id,
-                        WorkCardExtraction.matched_employee_id,
-                        WorkCard.id,
-                    )
-                )).label("cnt"),
+                func.count(func.distinct(WorkCard.employee_id)).label("employees_with_cards"),
+                func.count(func.distinct(case(
+                    (WorkCard.review_status == 'APPROVED', WorkCard.employee_id),
+                ))).label("approved"),
+                func.count(func.distinct(case(
+                    (WorkCard.review_status == 'NEEDS_REVIEW', WorkCard.employee_id),
+                ))).label("needs_review"),
+                func.count(case(
+                    (WorkCard.employee_id.is_(None), WorkCard.id),
+                )).label("needs_assignment"),
+                func.count(func.distinct(case(
+                    (WorkCard.review_status == 'REJECTED', WorkCard.employee_id),
+                ))).label("rejected"),
             )
-            .outerjoin(WorkCardExtraction, WorkCardExtraction.work_card_id == WorkCard.id)
             .filter(WorkCard.business_id == g.business_id, WorkCard.processing_month == month_start)
-            .group_by(WorkCard.site_id, WorkCard.review_status)
+            .group_by(WorkCard.site_id)
             .subquery()
         )
 
@@ -234,8 +240,11 @@ def get_dashboard_summary():
                 Site.id.label("site_id"),
                 Site.site_name.label("site_name"),
                 func.coalesce(emp_sub.c.active_employee_count, 0).label("active_employee_count"),
-                wc_sub.c.review_status.label("review_status"),
-                wc_sub.c.cnt.label("cnt"),
+                func.coalesce(wc_sub.c.employees_with_cards, 0).label("employees_with_cards"),
+                func.coalesce(wc_sub.c.approved, 0).label("approved"),
+                func.coalesce(wc_sub.c.needs_review, 0).label("needs_review"),
+                func.coalesce(wc_sub.c.needs_assignment, 0).label("needs_assignment"),
+                func.coalesce(wc_sub.c.rejected, 0).label("rejected"),
             )
             .join(wc_sub, wc_sub.c.site_id == Site.id)
             .outerjoin(emp_sub, emp_sub.c.site_id == Site.id)
@@ -243,29 +252,14 @@ def get_dashboard_summary():
             .all()
         )
 
-        _REVIEW_STATUSES = ["APPROVED", "NEEDS_REVIEW", "NEEDS_ASSIGNMENT", "REJECTED"]
-        sites_review_map = {}
-        for row in review_rows:
-            sid = str(row.site_id)
-            if sid not in sites_review_map:
-                sites_review_map[sid] = {
-                    "site_id": sid, "site_name": row.site_name,
-                    "active_employee_count": int(row.active_employee_count or 0),
-                    "total_work_cards": 0,
-                    "APPROVED": 0, "NEEDS_REVIEW": 0, "NEEDS_ASSIGNMENT": 0, "REJECTED": 0,
-                }
-            sites_review_map[sid]["total_work_cards"] += int(row.cnt or 0)
-            if row.review_status in _REVIEW_STATUSES:
-                sites_review_map[sid][row.review_status] += int(row.cnt or 0)
-
         sites_review_table = sorted(
-            [{"site_id": v["site_id"], "site_name": v["site_name"],
-              "active_employee_count": v["active_employee_count"],
-              "total_work_cards": v["total_work_cards"],
-              "missing_work_cards": max(v["active_employee_count"] - v["total_work_cards"], 0),
-              "approved": v["APPROVED"], "needs_review": v["NEEDS_REVIEW"],
-              "needs_assignment": v["NEEDS_ASSIGNMENT"], "rejected": v["REJECTED"]}
-             for v in sites_review_map.values()],
+            [{"site_id": str(row.site_id), "site_name": row.site_name,
+              "active_employee_count": int(row.active_employee_count),
+              "employees_with_cards": int(row.employees_with_cards),
+              "missing_work_cards": max(int(row.active_employee_count) - int(row.employees_with_cards), 0),
+              "approved": int(row.approved), "needs_review": int(row.needs_review),
+              "needs_assignment": int(row.needs_assignment), "rejected": int(row.rejected)}
+             for row in review_rows],
             key=lambda x: x["needs_review"] + x["needs_assignment"],
             reverse=True,
         )

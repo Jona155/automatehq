@@ -328,7 +328,7 @@ export interface DashboardSummary {
     site_id: string;
     site_name: string;
     active_employee_count: number;
-    total_work_cards: number;
+    employees_with_cards: number;
     missing_work_cards: number;
     approved: number;
     needs_review: number;
