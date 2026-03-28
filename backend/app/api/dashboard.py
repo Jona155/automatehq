@@ -9,7 +9,7 @@ from sqlalchemy import func, and_
 from ..auth_utils import token_required
 from ..extensions import db
 from ..models.sites import Site, Employee
-from ..models.work_cards import WorkCard
+from ..models.work_cards import WorkCard, WorkCardExtraction
 from .utils import api_response
 
 logger = logging.getLogger(__name__)
@@ -216,9 +216,14 @@ def get_dashboard_summary():
                 WorkCard.site_id.label("site_id"),
                 WorkCard.review_status.label("review_status"),
                 func.count(func.distinct(
-                    func.coalesce(WorkCard.employee_id, WorkCard.id)
+                    func.coalesce(
+                        WorkCard.employee_id,
+                        WorkCardExtraction.matched_employee_id,
+                        WorkCard.id,
+                    )
                 )).label("cnt"),
             )
+            .outerjoin(WorkCardExtraction, WorkCardExtraction.work_card_id == WorkCard.id)
             .filter(WorkCard.business_id == g.business_id, WorkCard.processing_month == month_start)
             .group_by(WorkCard.site_id, WorkCard.review_status)
             .subquery()
