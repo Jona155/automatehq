@@ -264,7 +264,7 @@ export default function DashboardPage() {
                     <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
                       <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">שם אתר</th>
                       <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">עובדים פעילים</th>
-                      <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">סה"כ כרטיסים</th>
+                      <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">עובדים עם כרטיס</th>
                       <th className="px-6 py-4 text-sm font-bold text-amber-600 dark:text-amber-400">כרטיסים חסרים</th>
                       <th className="px-6 py-4 text-sm font-bold text-green-600 dark:text-green-400">מאושר</th>
                       <th className="px-6 py-4 text-sm font-bold text-sky-600 dark:text-sky-400">צריך בדיקה</th>
@@ -281,7 +281,7 @@ export default function DashboardPage() {
                       >
                         <td className="px-6 py-5 text-[#111518] dark:text-white font-medium">{site.site_name}</td>
                         <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.active_employee_count)}</td>
-                        <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.total_work_cards)}</td>
+                        <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.employees_with_cards)}</td>
                         <td className="px-6 py-5 text-amber-600 dark:text-amber-400 font-medium">
                           {site.missing_work_cards > 0 ? (
                             <button
