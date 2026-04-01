@@ -721,39 +721,11 @@ def update_day_entries(card_id):
         )
     
     try:
-        previous_card, previous_entries_by_day = _get_previous_card_context(card)
-        approved_previous_days = set(previous_entries_by_day.keys()) if previous_card and previous_card.review_status == 'APPROVED' else set()
-
         # Update or create entries
         updated_entries = []
         for entry in entries_data:
             day = entry['day_of_month']
-            incoming_signature = _entry_signature(
-                entry.get('from_time'),
-                entry.get('to_time'),
-                entry.get('total_hours'),
-                entry.get('day_status'),
-            )
 
-            # Approved values from previous card are locked from silent overwrites.
-            if day in approved_previous_days:
-                prev = previous_entries_by_day[day]
-                previous_signature = _entry_signature(
-                    prev.from_time,
-                    prev.to_time,
-                    prev.total_hours,
-                    prev.day_status,
-                )
-                if incoming_signature != previous_signature:
-                    return api_response(
-                        status_code=409,
-                        message=(
-                            f"Day {day} is locked because it was approved in a previous card. "
-                            "Resolve conflict at approval time to override."
-                        ),
-                        error="Conflict"
-                    )
-            
             # Get existing entry for this day
             existing = day_entry_repo.get_by_day(card_id, day)
 
