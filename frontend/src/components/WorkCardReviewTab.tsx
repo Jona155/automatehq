@@ -1119,9 +1119,23 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         day_status: e.day_status || null,
       }));
 
+      const savedDecisions = { ...approvedConflictDecisions };
       await updateDayEntries(selectedCard.id, { entries });
       const refreshedEntries = await getDayEntries(selectedCard.id);
       initializeDayEntries(refreshedEntries);
+
+      // Restore conflict decisions so resolved entries stay unlocked after refresh
+      if (Object.keys(savedDecisions).length > 0) {
+        setApprovedConflictDecisions(savedDecisions);
+        setDayEntries(prev => prev.map(entry => {
+          const decision = savedDecisions[entry.day_of_month];
+          if (decision) {
+            return { ...entry, isLocked: false, resolvedApprovedConflict: decision };
+          }
+          return entry;
+        }));
+      }
+
       if (showSuccessToast) {
         showToast('הנתונים נשמרו בהצלחה', 'success');
       }
@@ -1133,7 +1147,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     } finally {
       setIsSaving(false);
     }
-  }, [selectedCard, dayEntries, initializeDayEntries, showToast]);
+  }, [selectedCard, dayEntries, approvedConflictDecisions, initializeDayEntries, showToast]);
 
   const handleApprove = async () => {
     if (!selectedCard || !user) return;
@@ -1240,8 +1254,8 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
             total_hours: nextTotal,
             hasConflict: false,
             conflictType: entry.conflictType,
-            isLocked: entry.conflictType === 'WITH_APPROVED',
-            isDirty: entry.conflictType === 'WITH_PENDING' ? changed : false,
+            isLocked: false,
+            isDirty: changed,
             resolvedApprovedConflict: decision,
           };
         }
@@ -1253,7 +1267,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
           total_hours: entry.latest_total_hours,
           hasConflict: false,
           conflictType: entry.conflictType,
-          isLocked: entry.conflictType === 'WITH_APPROVED',
+          isLocked: false,
           isDirty: false,
           resolvedApprovedConflict: decision,
         };
