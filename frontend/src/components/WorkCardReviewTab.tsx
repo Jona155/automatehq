@@ -100,6 +100,7 @@ interface DayEntryRow {
   latest_to_time: string;
   latest_total_hours: string;
   previousEntry: DayEntry['previous_entry'];
+  previous_work_card_id: string | null;
   isDirty: boolean;
   isLocked: boolean;
   hasConflict: boolean;
@@ -194,6 +195,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [showConflictModal, setShowConflictModal] = useState(false);
   const [approvedConflictDecisions, setApprovedConflictDecisions] = useState<Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'>>({});
   const [draftConflictDecisions, setDraftConflictDecisions] = useState<Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'>>({});
+  const [conflictImageTab, setConflictImageTab] = useState<'current' | 'previous'>('current');
+  const [previousCardImageUrl, setPreviousCardImageUrl] = useState<string | null>(null);
+  const [isLoadingPreviousImage, setIsLoadingPreviousImage] = useState(false);
+  const [conflictImageScale, setConflictImageScale] = useState(1);
+  const [conflictImageOffset, setConflictImageOffset] = useState({ x: 0, y: 0 });
+  const [conflictPanStart, setConflictPanStart] = useState<{ x: number; y: number; originX: number; originY: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
   const [extractionsByCardId, setExtractionsByCardId] = useState<Record<string, WorkCardExtraction | null>>({});
@@ -671,6 +678,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         latest_to_time: normalizedTo,
         latest_total_hours: existing?.total_hours?.toString() || '',
         previousEntry: existing?.previous_entry || null,
+        previous_work_card_id: existing?.previous_work_card_id || null,
         isDirty: false,
         isLocked: !!existing?.is_locked,
         hasConflict: !!existing?.has_conflict,
@@ -705,6 +713,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     // Clear previous UI while loading the next card
     setImageUrl(null);
     setShowBulkPanel(false);
+    setPreviousCardImageUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
 
     const fetchCardDetails = async () => {
       setIsLoadingImage(true);
@@ -1224,8 +1236,62 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       }
     }
     setDraftConflictDecisions(initialDecisions);
+    setConflictImageTab('current');
+    setConflictImageScale(1);
+    setConflictImageOffset({ x: 0, y: 0 });
     setShowConflictModal(true);
+
+    // Fetch previous card image
+    const previousCardId = conflictingEntries.find(e => e.previousEntry)?.previous_work_card_id;
+    if (previousCardId && !previousCardImageUrl) {
+      setIsLoadingPreviousImage(true);
+      getWorkCardFile(previousCardId)
+        .then(blob => {
+          const url = URL.createObjectURL(blob);
+          setPreviousCardImageUrl(url);
+        })
+        .catch(err => console.error('Failed to load previous card image:', err))
+        .finally(() => setIsLoadingPreviousImage(false));
+    }
   };
+
+  const conflictZoom = useCallback((direction: 'in' | 'out') => {
+    setConflictImageScale(prev => {
+      const next = direction === 'in' ? prev + 0.2 : prev - 0.2;
+      return Math.min(4, Math.max(0.5, Number(next.toFixed(2))));
+    });
+  }, []);
+
+  const conflictFitImage = useCallback(() => {
+    setConflictImageScale(1);
+    setConflictImageOffset({ x: 0, y: 0 });
+  }, []);
+
+  const handleConflictImageWheel = useCallback((event: React.WheelEvent) => {
+    event.preventDefault();
+    const zoomDelta = Math.max(-0.35, Math.min(0.35, -event.deltaY * 0.002));
+    setConflictImageScale(prev => Math.min(4, Math.max(0.5, Number((prev + zoomDelta).toFixed(3)))));
+  }, []);
+
+  const handleConflictImagePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || conflictImageScale <= 1) return;
+    event.preventDefault();
+    (event.target as HTMLElement).setPointerCapture(event.pointerId);
+    setConflictPanStart({ x: event.clientX, y: event.clientY, originX: conflictImageOffset.x, originY: conflictImageOffset.y });
+  }, [conflictImageOffset.x, conflictImageOffset.y, conflictImageScale]);
+
+  const handleConflictImagePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!conflictPanStart) return;
+    event.preventDefault();
+    setConflictImageOffset({
+      x: conflictPanStart.originX + (event.clientX - conflictPanStart.x),
+      y: conflictPanStart.originY + (event.clientY - conflictPanStart.y),
+    });
+  }, [conflictPanStart]);
+
+  const handleConflictImagePointerUp = useCallback(() => {
+    setConflictPanStart(null);
+  }, []);
 
   const applyConflictDecisions = () => {
     const unresolvedDays = conflictDays.filter((day) => !draftConflictDecisions[day]);
@@ -2292,158 +2358,248 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         isOpen={showConflictModal}
         onClose={() => setShowConflictModal(false)}
         title="פתרון התנגשויות"
-        maxWidth="xl"
+        maxWidth="6xl"
       >
-        <div className="space-y-4">
-          <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20">
-            <span className="material-symbols-outlined text-amber-700 dark:text-amber-300">rule</span>
-            <div className="text-sm text-amber-800 dark:text-amber-200 space-y-1">
-              <p>עברו על כל יום עם התנגשות ובחרו איזה ערך יישמר.</p>
-              <p>ברירת מחדל: מול נתון מאושר נשמר הקודם, מול נתון לא מאושר נשמר החדש.</p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-full">
-              {approvedConflictCount} מול מאושר | {pendingConflictCount} מול לא מאושר
-            </div>
-            <div className="flex items-center gap-2">
+        <div className="flex flex-col lg:flex-row gap-4" style={{ maxHeight: 'calc(100vh - 12rem)' }}>
+          {/* Right side: Image viewer with tabs and zoom */}
+          <div className="lg:w-1/2 flex flex-col border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shrink-0">
+            {/* Tabs */}
+            <div className="flex border-b border-slate-200 dark:border-slate-700 shrink-0">
               <button
                 type="button"
-                onClick={() => {
-                  const allLatest: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...draftConflictDecisions };
-                  conflictDays.forEach((day) => {
-                    allLatest[day] = 'USE_LATEST';
-                  });
-                  setDraftConflictDecisions(allLatest);
-                }}
-                className={`px-2.5 py-1.5 text-xs rounded border transition-colors ${
-                  conflictDays.every((day) => draftConflictDecisions[day] === 'USE_LATEST')
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                onClick={() => { setConflictImageTab('current'); setConflictImageScale(1); setConflictImageOffset({ x: 0, y: 0 }); }}
+                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                  conflictImageTab === 'current'
+                    ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-600 dark:bg-blue-900/20 dark:text-blue-300'
+                    : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'
                 }`}
               >
-                בחר חדש לכולם
+                <span className="material-symbols-outlined text-sm align-middle ml-1">description</span>
+                כרטיס חדש (נוכחי)
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  const allPrevious: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...draftConflictDecisions };
-                  conflictDays.forEach((day) => {
-                    allPrevious[day] = 'KEEP_PREVIOUS';
-                  });
-                  setDraftConflictDecisions(allPrevious);
-                }}
-                className={`px-2.5 py-1.5 text-xs rounded border transition-colors ${
-                  conflictDays.every((day) => draftConflictDecisions[day] === 'KEEP_PREVIOUS')
-                    ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100'
-                    : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                onClick={() => { setConflictImageTab('previous'); setConflictImageScale(1); setConflictImageOffset({ x: 0, y: 0 }); }}
+                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                  conflictImageTab === 'previous'
+                    ? 'bg-slate-100 text-slate-800 border-b-2 border-slate-600 dark:bg-slate-700 dark:text-slate-200'
+                    : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'
                 }`}
               >
-                בחר קודם לכולם
+                <span className="material-symbols-outlined text-sm align-middle ml-1">history</span>
+                כרטיס קודם
               </button>
+            </div>
+            {/* Zoom controls */}
+            <div className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shrink-0">
+              <button type="button" onClick={() => conflictZoom('out')} className="w-7 h-7 inline-flex items-center justify-center rounded hover:bg-slate-200 dark:hover:bg-slate-700">
+                <span className="material-symbols-outlined text-sm">zoom_out</span>
+              </button>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 min-w-[3rem] text-center">{Math.round(conflictImageScale * 100)}%</span>
+              <button type="button" onClick={() => conflictZoom('in')} className="w-7 h-7 inline-flex items-center justify-center rounded hover:bg-slate-200 dark:hover:bg-slate-700">
+                <span className="material-symbols-outlined text-sm">zoom_in</span>
+              </button>
+              <button type="button" onClick={conflictFitImage} className="w-7 h-7 inline-flex items-center justify-center rounded hover:bg-slate-200 dark:hover:bg-slate-700" title="התאם לגודל">
+                <span className="material-symbols-outlined text-sm">fit_screen</span>
+              </button>
+            </div>
+            {/* Image viewport */}
+            <div
+              className={`flex-1 overflow-hidden bg-slate-50 dark:bg-slate-900/40 ${conflictImageScale > 1 ? (conflictPanStart ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
+              onWheel={handleConflictImageWheel}
+              onPointerDown={handleConflictImagePointerDown}
+              onPointerMove={handleConflictImagePointerMove}
+              onPointerUp={handleConflictImagePointerUp}
+              onPointerCancel={handleConflictImagePointerUp}
+              style={{ touchAction: conflictImageScale > 1 ? 'none' : 'pan-y', minHeight: '300px' }}
+            >
+              <div className="w-full h-full flex items-center justify-center p-2" style={{ minHeight: '300px' }}>
+                {conflictImageTab === 'current' ? (
+                  imageUrl ? (
+                    <img
+                      src={imageUrl}
+                      alt="כרטיס נוכחי"
+                      className="max-w-full max-h-full object-contain select-none"
+                      draggable={false}
+                      style={{
+                        transform: `translate(${conflictImageOffset.x}px, ${conflictImageOffset.y}px) scale(${conflictImageScale})`,
+                        transformOrigin: 'center center',
+                        transition: conflictPanStart ? 'none' : 'transform 120ms ease-out',
+                      }}
+                    />
+                  ) : (
+                    <div className="text-sm text-slate-400">אין תמונה זמינה</div>
+                  )
+                ) : (
+                  isLoadingPreviousImage ? (
+                    <div className="text-sm text-slate-400 flex items-center gap-2">
+                      <span className="material-symbols-outlined animate-spin text-base">progress_activity</span>
+                      טוען תמונה...
+                    </div>
+                  ) : previousCardImageUrl ? (
+                    <img
+                      src={previousCardImageUrl}
+                      alt="כרטיס קודם"
+                      className="max-w-full max-h-full object-contain select-none"
+                      draggable={false}
+                      style={{
+                        transform: `translate(${conflictImageOffset.x}px, ${conflictImageOffset.y}px) scale(${conflictImageScale})`,
+                        transformOrigin: 'center center',
+                        transition: conflictPanStart ? 'none' : 'transform 120ms ease-out',
+                      }}
+                    />
+                  ) : (
+                    <div className="text-sm text-slate-400">אין תמונה זמינה לכרטיס הקודם</div>
+                  )
+                )}
+              </div>
             </div>
           </div>
 
-          {conflictingEntries.length === 0 ? (
-            <div className="text-sm text-slate-500 dark:text-slate-400">לא נמצאו התנגשויות בכרטיס זה.</div>
-          ) : (
-            <div className="border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-200 dark:divide-slate-700 max-h-[50vh] overflow-y-auto">
-              {conflictingEntries.map((entry) => {
-                const draftDecision = draftConflictDecisions[entry.day_of_month];
-                return (
-                  <div key={entry.day_of_month} className="p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                        יום {entry.day_of_month}
-                      </div>
-                      <span
-                        className={`text-[11px] px-2 py-1 rounded-full ${
-                          entry.conflictType === 'WITH_APPROVED'
-                            ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                        }`}
-                      >
-                        {entry.conflictType === 'WITH_APPROVED' ? 'התנגשות מול נתון מאושר' : 'התנגשות מול נתון קודם'}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <div className="p-2 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
-                        <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">ערך קודם</div>
-                        <div className="text-sm text-slate-800 dark:text-slate-200">
-                          {formatConflictValue(
-                            entry.previousEntry?.from_time,
-                            entry.previousEntry?.to_time,
-                            entry.previousEntry?.total_hours
-                          )}
-                        </div>
-                      </div>
-                      <div className="p-2 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
-                        <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">ערך חדש</div>
-                        <div className="text-sm text-slate-800 dark:text-slate-200">
-                          {formatConflictValue(entry.latest_from_time, entry.latest_to_time, entry.latest_total_hours)}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDraftConflictDecisions((prev) => ({ ...prev, [entry.day_of_month]: 'KEEP_PREVIOUS' }))
-                        }
-                        className={`px-2.5 py-1.5 text-xs rounded border ${
-                          draftDecision === 'KEEP_PREVIOUS'
-                            ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100'
-                            : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
-                        }`}
-                      >
-                        שמור את הקודם
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDraftConflictDecisions((prev) => ({ ...prev, [entry.day_of_month]: 'USE_LATEST' }))
-                        }
-                        className={`px-2.5 py-1.5 text-xs rounded border ${
-                          draftDecision === 'USE_LATEST'
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
-                        }`}
-                      >
-                        שמור את החדש
-                      </button>
-                      {!draftDecision && (
-                        <span className="text-xs text-red-600 dark:text-red-300">נדרשת בחירה</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                      {entry.conflictType === 'WITH_APPROVED'
-                        ? 'השפעה: בחירה ב"חדש" תדרוס נתון שאושר בעבר.'
-                        : 'השפעה: בחירה ב"קודם" תעדכן את הטבלה לערך קודם. כדי שהבחירה תישמר בשרת יש לבצע שמירה לפני אישור.'}
-                    </div>
-                  </div>
-                );
-              })}
+          {/* Left side: Conflict resolution */}
+          <div className="lg:w-1/2 flex flex-col gap-3 overflow-hidden">
+            <div className="flex items-start gap-2 p-2.5 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 shrink-0">
+              <span className="material-symbols-outlined text-amber-700 dark:text-amber-300 text-base mt-0.5">rule</span>
+              <div className="text-xs text-amber-800 dark:text-amber-200 space-y-0.5">
+                <p>עברו על כל יום עם התנגשות ובחרו איזה ערך יישמר.</p>
+                <p>ברירת מחדל: מול מאושר נשמר הקודם, מול לא מאושר נשמר החדש.</p>
+              </div>
             </div>
-          )}
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setShowConflictModal(false)}
-              className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm"
-            >
-              ביטול
-            </button>
-            <button
-              type="button"
-              onClick={applyConflictDecisions}
-              className="px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 text-sm"
-            >
-              החל החלטות
-            </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">
+                {approvedConflictCount} מול מאושר | {pendingConflictCount} מול לא מאושר
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allLatest: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...draftConflictDecisions };
+                    conflictDays.forEach((day) => { allLatest[day] = 'USE_LATEST'; });
+                    setDraftConflictDecisions(allLatest);
+                  }}
+                  className={`px-2 py-1 text-xs rounded border transition-colors ${
+                    conflictDays.every((day) => draftConflictDecisions[day] === 'USE_LATEST')
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  בחר חדש לכולם
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allPrevious: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...draftConflictDecisions };
+                    conflictDays.forEach((day) => { allPrevious[day] = 'KEEP_PREVIOUS'; });
+                    setDraftConflictDecisions(allPrevious);
+                  }}
+                  className={`px-2 py-1 text-xs rounded border transition-colors ${
+                    conflictDays.every((day) => draftConflictDecisions[day] === 'KEEP_PREVIOUS')
+                      ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100'
+                      : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  בחר קודם לכולם
+                </button>
+              </div>
+            </div>
+
+            {/* Conflict entries list */}
+            {conflictingEntries.length === 0 ? (
+              <div className="text-sm text-slate-500 dark:text-slate-400">לא נמצאו התנגשויות בכרטיס זה.</div>
+            ) : (
+              <div className="border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-200 dark:divide-slate-700 overflow-y-auto flex-1">
+                {conflictingEntries.map((entry) => {
+                  const draftDecision = draftConflictDecisions[entry.day_of_month];
+                  return (
+                    <div key={entry.day_of_month} className="p-2.5 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                          יום {entry.day_of_month}
+                        </div>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            entry.conflictType === 'WITH_APPROVED'
+                              ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                              : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                          }`}
+                        >
+                          {entry.conflictType === 'WITH_APPROVED' ? 'מול מאושר' : 'מול קודם'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ערך קודם</div>
+                          <div className="text-xs text-slate-800 dark:text-slate-200">
+                            {formatConflictValue(
+                              entry.previousEntry?.from_time,
+                              entry.previousEntry?.to_time,
+                              entry.previousEntry?.total_hours
+                            )}
+                          </div>
+                        </div>
+                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ערך חדש</div>
+                          <div className="text-xs text-slate-800 dark:text-slate-200">
+                            {formatConflictValue(entry.latest_from_time, entry.latest_to_time, entry.latest_total_hours)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDraftConflictDecisions((prev) => ({ ...prev, [entry.day_of_month]: 'KEEP_PREVIOUS' }))
+                          }
+                          className={`px-2 py-1 text-xs rounded border ${
+                            draftDecision === 'KEEP_PREVIOUS'
+                              ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100'
+                              : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          שמור קודם
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDraftConflictDecisions((prev) => ({ ...prev, [entry.day_of_month]: 'USE_LATEST' }))
+                          }
+                          className={`px-2 py-1 text-xs rounded border ${
+                            draftDecision === 'USE_LATEST'
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          שמור חדש
+                        </button>
+                        {!draftDecision && (
+                          <span className="text-[10px] text-red-600 dark:text-red-300">נדרשת בחירה</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowConflictModal(false)}
+                className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm"
+              >
+                ביטול
+              </button>
+              <button
+                type="button"
+                onClick={applyConflictDecisions}
+                className="px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 text-sm"
+              >
+                החל החלטות
+              </button>
+            </div>
           </div>
         </div>
       </Modal>
