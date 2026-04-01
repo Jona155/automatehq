@@ -334,19 +334,8 @@ export interface DashboardSummary {
     needs_review: number;
     needs_assignment: number;
     rejected: number;
-    extractions_processing: number;
-    extractions_failed: number;
-    export_count: number;
-    last_exported_at: string | null;
   }>;
 }
-
-export type KanbanColumn =
-  | 'MISSING_UPLOADS'
-  | 'PROCESSING'
-  | 'NEEDS_ASSIGNMENT'
-  | 'NEEDS_REVIEW'
-  | 'READY';
 
 export interface TelegramConfig {
   is_configured: boolean;

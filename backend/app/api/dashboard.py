@@ -9,8 +9,7 @@ from sqlalchemy import func, and_, case
 from ..auth_utils import token_required
 from ..extensions import db
 from ..models.sites import Site, Employee
-from ..models.work_cards import WorkCard, WorkCardExtraction
-from ..models.audit import ExportRun
+from ..models.work_cards import WorkCard
 from .utils import api_response
 
 logger = logging.getLogger(__name__)
@@ -78,11 +77,9 @@ def get_dashboard_summary():
 
         business_id = str(g.business_id)
         cache_key = (business_id, month_start.isoformat())
-        bust_cache = request.args.get('bust_cache') == '1'
-        if not bust_cache:
-            cached = _get_cached(cache_key)
-            if cached:
-                return api_response(data=cached, meta={"cached": True, "cache_ttl_seconds": CACHE_TTL_SECONDS})
+        cached = _get_cached(cache_key)
+        if cached:
+            return api_response(data=cached, meta={"cached": True, "cache_ttl_seconds": CACHE_TTL_SECONDS})
 
         # Core counts
         sites_count = db.session.query(func.count(Site.id)).filter(
@@ -216,7 +213,6 @@ def get_dashboard_summary():
 
         # Count unique employees per site (not raw cards) so that multiple
         # uploads for the same employee don't inflate totals or hide missing ones.
-        # Also includes extraction status counts via LEFT JOIN to avoid a separate subquery.
         wc_sub = (
             db.session.query(
                 WorkCard.site_id.label("site_id"),
@@ -233,28 +229,9 @@ def get_dashboard_summary():
                 func.count(func.distinct(case(
                     (WorkCard.review_status == 'REJECTED', WorkCard.employee_id),
                 ))).label("rejected"),
-                func.count(case(
-                    (WorkCardExtraction.status.in_(['PENDING', 'RUNNING']), WorkCardExtraction.id),
-                )).label("extractions_processing"),
-                func.count(case(
-                    (WorkCardExtraction.status == 'FAILED', WorkCardExtraction.id),
-                )).label("extractions_failed"),
             )
-            .outerjoin(WorkCardExtraction, WorkCardExtraction.work_card_id == WorkCard.id)
             .filter(WorkCard.business_id == g.business_id, WorkCard.processing_month == month_start)
             .group_by(WorkCard.site_id)
-            .subquery()
-        )
-
-        # Export readiness per site
-        export_sub = (
-            db.session.query(
-                ExportRun.site_id.label("site_id"),
-                func.count(ExportRun.id).label("export_count"),
-                func.max(ExportRun.created_at).label("last_exported_at"),
-            )
-            .filter(ExportRun.business_id == g.business_id, ExportRun.processing_month == month_start)
-            .group_by(ExportRun.site_id)
             .subquery()
         )
 
@@ -268,14 +245,9 @@ def get_dashboard_summary():
                 func.coalesce(wc_sub.c.needs_review, 0).label("needs_review"),
                 func.coalesce(wc_sub.c.needs_assignment, 0).label("needs_assignment"),
                 func.coalesce(wc_sub.c.rejected, 0).label("rejected"),
-                func.coalesce(wc_sub.c.extractions_processing, 0).label("extractions_processing"),
-                func.coalesce(wc_sub.c.extractions_failed, 0).label("extractions_failed"),
-                func.coalesce(export_sub.c.export_count, 0).label("export_count"),
-                export_sub.c.last_exported_at.label("last_exported_at"),
             )
             .join(wc_sub, wc_sub.c.site_id == Site.id)
             .outerjoin(emp_sub, emp_sub.c.site_id == Site.id)
-            .outerjoin(export_sub, export_sub.c.site_id == Site.id)
             .filter(Site.business_id == g.business_id)
             .all()
         )
@@ -286,11 +258,7 @@ def get_dashboard_summary():
               "employees_with_cards": int(row.employees_with_cards),
               "missing_work_cards": max(int(row.active_employee_count) - int(row.employees_with_cards), 0),
               "approved": int(row.approved), "needs_review": int(row.needs_review),
-              "needs_assignment": int(row.needs_assignment), "rejected": int(row.rejected),
-              "extractions_processing": int(row.extractions_processing),
-              "extractions_failed": int(row.extractions_failed),
-              "export_count": int(row.export_count),
-              "last_exported_at": row.last_exported_at.isoformat() if row.last_exported_at else None}
+              "needs_assignment": int(row.needs_assignment), "rejected": int(row.rejected)}
              for row in review_rows],
             key=lambda x: x["needs_review"] + x["needs_assignment"],
             reverse=True,

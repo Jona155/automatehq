@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ResponsiveContainer,
@@ -18,11 +18,6 @@ import type { DashboardSummary } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { getDefaultMonth } from '../utils/monthUtils';
 import MissingEmployeesModal from '../components/MissingEmployeesModal';
-import DashboardSummaryBar from '../components/dashboard/DashboardSummaryBar';
-import KanbanBoard from '../components/dashboard/KanbanBoard';
-import { formatNumber } from '../utils/formatNumber';
-
-type ViewMode = 'kanban' | 'analytics';
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   NEEDS_ASSIGNMENT: { label: 'צריך שיוך', color: '#f97316' },
@@ -48,6 +43,8 @@ const formatShortMonth = (month: string) => {
   return new Intl.DateTimeFormat('he-IL', { month: 'short' }).format(date);
 };
 
+const formatNumber = (value: number) => new Intl.NumberFormat('he-IL').format(value);
+
 export default function DashboardPage() {
   const { businessCode } = useParams<{ businessCode: string }>();
   const navigate = useNavigate();
@@ -59,14 +56,6 @@ export default function DashboardPage() {
   const REVIEW_PAGE_SIZE = 5;
   const [reviewPage, setReviewPage] = useState(0);
   const [missingModal, setMissingModal] = useState<{ siteId: string; siteName: string } | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>(
-    () => (localStorage.getItem('dashboard_view_mode') as ViewMode) || 'kanban'
-  );
-
-  const toggleView = useCallback((mode: ViewMode) => {
-    setViewMode(mode);
-    localStorage.setItem('dashboard_view_mode', mode);
-  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -90,23 +79,12 @@ export default function DashboardPage() {
         }
       }
     };
-    if (selectedMonth) load();
-    return () => { isMounted = false; };
-  }, [selectedMonth]);
-
-  const handleRefresh = useCallback(async () => {
-    if (!selectedMonth) return;
-    setIsLoading(true);
-    try {
-      const data = await getDashboardSummary(selectedMonth, true);
-      setSummary(data);
-      setError(null);
-    } catch (err) {
-      console.error('Failed to load dashboard summary', err);
-      setError('לא הצלחנו לטעון את נתוני הדשבורד');
-    } finally {
-      setIsLoading(false);
+    if (selectedMonth) {
+      load();
     }
+    return () => {
+      isMounted = false;
+    };
   }, [selectedMonth]);
 
   const statusData = useMemo(() => {
@@ -162,10 +140,6 @@ export default function DashboardPage() {
       }).format(new Date(summary.generated_at))
     : '';
 
-  const handleMissingClick = useCallback((siteId: string, siteName: string) => {
-    setMissingModal({ siteId, siteName });
-  }, []);
-
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -176,62 +150,61 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-col gap-2 md:items-end">
-          <div className="flex items-center gap-3">
-            {/* View toggle */}
-            <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
-              <button
-                onClick={() => toggleView('kanban')}
-                className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-colors ${
-                  viewMode === 'kanban'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm font-medium'
-                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">view_kanban</span>
-                סקירה
-              </button>
-              <button
-                onClick={() => toggleView('analytics')}
-                className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-colors ${
-                  viewMode === 'analytics'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm font-medium'
-                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">bar_chart</span>
-                ניתוח
-              </button>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500">בחר חודש</label>
-              <MonthPicker value={selectedMonth} onChange={setSelectedMonth} storageKey="dashboard_month" />
-            </div>
-          </div>
+          <label className="text-xs text-slate-500">בחר חודש</label>
+          <MonthPicker value={selectedMonth} onChange={setSelectedMonth} storageKey="dashboard_month" />
           {lastUpdated && (
             <span className="text-[11px] text-slate-400">עודכן לאחרונה: {lastUpdated}</span>
           )}
         </div>
       </header>
 
-      {/* Loading skeleton */}
       {isLoading && (
         <div className="flex flex-col gap-6 animate-pulse">
-          <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-            <div className="h-4 w-64 bg-slate-200 dark:bg-slate-700 rounded" />
-            <div className="h-3 w-40 bg-slate-200 dark:bg-slate-700 rounded mt-3" />
-          </div>
-          <div className="flex gap-4">
-            {[1, 2, 3, 4, 5].map((key) => (
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[1, 2, 3].map((key) => (
               <div
                 key={key}
-                className="bg-white dark:bg-[#1a2a35] rounded-xl p-4 shadow-sm border border-slate-200 dark:border-slate-700 min-w-[280px] flex-1"
+                className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700"
               >
                 <div className="h-3 w-20 bg-slate-200 dark:bg-slate-700 rounded" />
-                <div className="h-24 w-full bg-slate-200 dark:bg-slate-700 rounded mt-4" />
-                <div className="h-20 w-full bg-slate-200 dark:bg-slate-700 rounded mt-3" />
+                <div className="h-8 w-24 bg-slate-200 dark:bg-slate-700 rounded mt-4" />
+                <div className="h-3 w-32 bg-slate-200 dark:bg-slate-700 rounded mt-3" />
               </div>
             ))}
-          </div>
+          </section>
+
+          <section className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700">
+              <div className="h-4 w-52 bg-slate-200 dark:bg-slate-700 rounded" />
+            </div>
+            <div className="px-6 py-6 space-y-4">
+              {[1, 2, 3, 4, 5].map((row) => (
+                <div key={row} className="h-4 w-full bg-slate-200 dark:bg-slate-700 rounded" />
+              ))}
+            </div>
+          </section>
+
+          <section className="grid grid-cols-1 xl:grid-cols-3 gap-6 xl:items-start">
+            <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+              <div className="h-4 w-40 bg-slate-200 dark:bg-slate-700 rounded" />
+              <div className="h-52 w-full bg-slate-200 dark:bg-slate-700 rounded-xl mt-6" />
+            </div>
+            <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 xl:col-span-2">
+              <div className="h-4 w-48 bg-slate-200 dark:bg-slate-700 rounded" />
+              <div className="h-60 w-full bg-slate-200 dark:bg-slate-700 rounded-xl mt-6" />
+            </div>
+          </section>
+
+          <section className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700">
+              <div className="h-4 w-44 bg-slate-200 dark:bg-slate-700 rounded" />
+            </div>
+            <div className="px-6 py-6 space-y-4">
+              {[1, 2, 3, 4].map((row) => (
+                <div key={row} className="h-4 w-full bg-slate-200 dark:bg-slate-700 rounded" />
+              ))}
+            </div>
+          </section>
         </div>
       )}
 
@@ -243,271 +216,250 @@ export default function DashboardPage() {
 
       {!isLoading && !error && summary && (
         <>
-          {viewMode === 'kanban' ? (
-            <>
-              <DashboardSummaryBar
-                sites={summary.sites_review_table}
-                onRefresh={handleRefresh}
-              />
-              <KanbanBoard
-                sites={summary.sites_review_table}
-                month={summary.month}
-                businessCode={businessCode ?? ''}
-                onMissingClick={handleMissingClick}
-              />
-            </>
-          ) : (
-            <>
-              {/* Metric cards */}
-              <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-slate-500">אתרים פעילים</p>
-                    <span className="material-symbols-outlined text-slate-400">business</span>
-                  </div>
-                  <p className="text-3xl font-bold text-slate-900 dark:text-white mt-3">
-                    {formatNumber(summary.metrics.sites)}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-3">נספר לפי סטטוס פעיל</p>
-                </div>
-                <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-slate-500">עובדים פעילים</p>
-                    <span className="material-symbols-outlined text-slate-400">group</span>
-                  </div>
-                  <p className="text-3xl font-bold text-slate-900 dark:text-white mt-3">
-                    {formatNumber(summary.metrics.employees)}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-3">כולל שיבוץ לאתר</p>
-                </div>
-                <div className="bg-gradient-to-br from-[#eef6ff] to-[#fef9f0] dark:from-[#15232d] dark:to-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200/60 dark:border-slate-700">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-slate-600 dark:text-slate-400">כרטיסי עבודה החודש</p>
-                    <span className="material-symbols-outlined text-slate-400">assignment</span>
-                  </div>
-                  <p className="text-3xl font-bold text-slate-900 dark:text-white mt-3">
-                    {formatNumber(summary.metrics.work_cards)}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-3">לפי חודש עבודה נוכחי</p>
-                </div>
-              </section>
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-500">אתרים פעילים</p>
+                <span className="material-symbols-outlined text-slate-400">business</span>
+              </div>
+              <p className="text-3xl font-bold text-slate-900 dark:text-white mt-3">
+                {formatNumber(summary.metrics.sites)}
+              </p>
+              <p className="text-xs text-slate-400 mt-3">נספר לפי סטטוס פעיל</p>
+            </div>
+            <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-500">עובדים פעילים</p>
+                <span className="material-symbols-outlined text-slate-400">group</span>
+              </div>
+              <p className="text-3xl font-bold text-slate-900 dark:text-white mt-3">
+                {formatNumber(summary.metrics.employees)}
+              </p>
+              <p className="text-xs text-slate-400 mt-3">כולל שיבוץ לאתר</p>
+            </div>
+            <div className="bg-gradient-to-br from-[#eef6ff] to-[#fef9f0] dark:from-[#15232d] dark:to-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200/60 dark:border-slate-700">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-600 dark:text-slate-400">כרטיסי עבודה החודש</p>
+                <span className="material-symbols-outlined text-slate-400">assignment</span>
+              </div>
+              <p className="text-3xl font-bold text-slate-900 dark:text-white mt-3">
+                {formatNumber(summary.metrics.work_cards)}
+              </p>
+              <p className="text-xs text-slate-400 mt-3">לפי חודש עבודה נוכחי</p>
+            </div>
+          </section>
 
-              {/* Sites needing attention table */}
-              {(summary.sites_review_table?.length ?? 0) > 0 && (
-                <section className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
-                    <div>
-                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">אתרים הדורשים טיפול</h2>
-                      <p className="text-xs text-slate-400 mt-1">אתרים עם כרטיסי עבודה שממתינים לבדיקה או שיוך לחודש הנבחר</p>
-                    </div>
-                    <span className="text-xs text-slate-400">{formatMonthTitle(summary.month)}</span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-right border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
-                          <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">שם אתר</th>
-                          <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">עובדים פעילים</th>
-                          <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">עובדים עם כרטיס</th>
-                          <th className="px-6 py-4 text-sm font-bold text-amber-600 dark:text-amber-400">כרטיסים חסרים</th>
-                          <th className="px-6 py-4 text-sm font-bold text-green-600 dark:text-green-400">מאושר</th>
-                          <th className="px-6 py-4 text-sm font-bold text-sky-600 dark:text-sky-400">צריך בדיקה</th>
-                          <th className="px-6 py-4 text-sm font-bold text-orange-500 dark:text-orange-400">צריך שיוך</th>
-                          <th className="px-6 py-4 text-sm font-bold text-red-500 dark:text-red-400">נדחה</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                        {reviewTablePage.map((site) => (
-                          <tr
-                            key={site.site_id}
-                            className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer"
-                            onClick={() => { if (businessCode) navigate(`/${businessCode}/sites/${site.site_id}`); }}
-                          >
-                            <td className="px-6 py-5 text-[#111518] dark:text-white font-medium">{site.site_name}</td>
-                            <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.active_employee_count)}</td>
-                            <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.employees_with_cards)}</td>
-                            <td className="px-6 py-5 text-amber-600 dark:text-amber-400 font-medium">
-                              {site.missing_work_cards > 0 ? (
-                                <button
-                                  className="underline decoration-amber-400/50 hover:decoration-amber-400 cursor-pointer transition-colors"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setMissingModal({ siteId: site.site_id, siteName: site.site_name });
-                                  }}
-                                >
-                                  {formatNumber(site.missing_work_cards)}
-                                </button>
-                              ) : '—'}
-                            </td>
-                            <td className="px-6 py-5 text-green-600 dark:text-green-400 font-medium">{site.approved > 0 ? formatNumber(site.approved) : '—'}</td>
-                            <td className="px-6 py-5 text-sky-600 dark:text-sky-400 font-medium">{site.needs_review > 0 ? formatNumber(site.needs_review) : '—'}</td>
-                            <td className="px-6 py-5 text-orange-500 dark:text-orange-400 font-medium">{site.needs_assignment > 0 ? formatNumber(site.needs_assignment) : '—'}</td>
-                            <td className="px-6 py-5 text-red-500 dark:text-red-400 font-medium">{site.rejected > 0 ? formatNumber(site.rejected) : '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {reviewTotalPages > 1 && (
-                    <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between text-sm text-slate-500">
-                      <div className="flex items-center gap-2">
-                        <button
-                          className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                          onClick={() => setReviewPage((p) => p - 1)}
-                          disabled={reviewPage === 0}
-                        >
-                          הקודם
-                        </button>
-                        <button
-                          className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                          onClick={() => setReviewPage((p) => p + 1)}
-                          disabled={reviewPage >= reviewTotalPages - 1}
-                        >
-                          הבא
-                        </button>
-                      </div>
-                      <span>עמוד {reviewPage + 1} מתוך {reviewTotalPages} ({summary.sites_review_table?.length ?? 0} אתרים)</span>
-                    </div>
-                  )}
-                </section>
-              )}
-
-              {/* Charts row */}
-              <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 xl:self-start">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">התפלגות סטטוסים בכרטיסי עבודה</h2>
-                      <p className="text-xs text-slate-400 mt-1">חלוקה לפי מצב טיפול בכרטיסים לחודש הנבחר</p>
-                    </div>
-                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full shrink-0">
-                      {formatMonthTitle(summary.month)}
-                    </span>
-                  </div>
-
-                  <div className="mt-5 rounded-xl bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/80 dark:border-slate-700/60 p-4">
-                    <div className="relative h-[190px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={statusDonutData}
-                            dataKey="count"
-                            nameKey="label"
-                            innerRadius={52}
-                            outerRadius={76}
-                            paddingAngle={1}
-                            cornerRadius={6}
-                            stroke="none"
-                          >
-                            {statusDonutData.map((entry) => (
-                              <Cell key={entry.status} fill={entry.color} />
-                            ))}
-                          </Pie>
-                          {statusTotal > 0 && (
-                            <Tooltip
-                              formatter={(value, _name, item) => {
-                                const count = Number(value);
-                                const percent = statusTotal > 0 ? Math.round((count / statusTotal) * 100) : 0;
-                                return [`${formatNumber(count)} (${percent}%)`, item?.payload?.label ?? 'סטטוס'];
+          {(summary.sites_review_table?.length ?? 0) > 0 && (
+            <section className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">אתרים הדורשים טיפול</h2>
+                  <p className="text-xs text-slate-400 mt-1">אתרים עם כרטיסי עבודה שממתינים לבדיקה או שיוך לחודש הנבחר</p>
+                </div>
+                <span className="text-xs text-slate-400">{formatMonthTitle(summary.month)}</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-right border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
+                      <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">שם אתר</th>
+                      <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">עובדים פעילים</th>
+                      <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">עובדים עם כרטיס</th>
+                      <th className="px-6 py-4 text-sm font-bold text-amber-600 dark:text-amber-400">כרטיסים חסרים</th>
+                      <th className="px-6 py-4 text-sm font-bold text-green-600 dark:text-green-400">מאושר</th>
+                      <th className="px-6 py-4 text-sm font-bold text-sky-600 dark:text-sky-400">צריך בדיקה</th>
+                      <th className="px-6 py-4 text-sm font-bold text-orange-500 dark:text-orange-400">צריך שיוך</th>
+                      <th className="px-6 py-4 text-sm font-bold text-red-500 dark:text-red-400">נדחה</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                    {reviewTablePage.map((site) => (
+                      <tr
+                        key={site.site_id}
+                        className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer"
+                        onClick={() => { if (businessCode) navigate(`/${businessCode}/sites/${site.site_id}`); }}
+                      >
+                        <td className="px-6 py-5 text-[#111518] dark:text-white font-medium">{site.site_name}</td>
+                        <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.active_employee_count)}</td>
+                        <td className="px-6 py-5 text-[#111518] dark:text-white">{formatNumber(site.employees_with_cards)}</td>
+                        <td className="px-6 py-5 text-amber-600 dark:text-amber-400 font-medium">
+                          {site.missing_work_cards > 0 ? (
+                            <button
+                              className="underline decoration-amber-400/50 hover:decoration-amber-400 cursor-pointer transition-colors"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMissingModal({ siteId: site.site_id, siteName: site.site_name });
                               }}
-                              contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 12px 24px rgba(15,23,42,0.12)' }}
-                            />
-                          )}
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400">סה"כ כרטיסים</span>
-                        <span className="text-3xl font-bold text-slate-900 dark:text-white leading-none mt-1">{formatNumber(statusTotal)}</span>
-                      </div>
-                    </div>
-                    <p className="mt-3 text-center text-[11px] text-slate-500 dark:text-slate-400">
-                      העבר עכבר על כל פלח להצגת סטטוס, כמות ואחוז
-                    </p>
+                            >
+                              {formatNumber(site.missing_work_cards)}
+                            </button>
+                          ) : '—'}
+                        </td>
+                        <td className="px-6 py-5 text-green-600 dark:text-green-400 font-medium">{site.approved > 0 ? formatNumber(site.approved) : '—'}</td>
+                        <td className="px-6 py-5 text-sky-600 dark:text-sky-400 font-medium">{site.needs_review > 0 ? formatNumber(site.needs_review) : '—'}</td>
+                        <td className="px-6 py-5 text-orange-500 dark:text-orange-400 font-medium">{site.needs_assignment > 0 ? formatNumber(site.needs_assignment) : '—'}</td>
+                        <td className="px-6 py-5 text-red-500 dark:text-red-400 font-medium">{site.rejected > 0 ? formatNumber(site.rejected) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {reviewTotalPages > 1 && (
+                <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between text-sm text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      onClick={() => setReviewPage((p) => p - 1)}
+                      disabled={reviewPage === 0}
+                    >
+                      הקודם
+                    </button>
+                    <button
+                      className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      onClick={() => setReviewPage((p) => p + 1)}
+                      disabled={reviewPage >= reviewTotalPages - 1}
+                    >
+                      הבא
+                    </button>
                   </div>
+                  <span>עמוד {reviewPage + 1} מתוך {reviewTotalPages} ({summary.sites_review_table?.length ?? 0} אתרים)</span>
                 </div>
+              )}
+            </section>
+          )}
 
-                <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 xl:col-span-2">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">טרנדים 12 חודשים אחרונים</h2>
-                      <p className="text-xs text-slate-400 mt-1">כמות פעולות חודשית</p>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-500">
-                      {SERIES_META.map((series) => (
-                        <span key={series.key} className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: series.color }} />
-                          {series.label}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="h-[280px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={trendData} margin={{ top: 10, right: 24, left: 8, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="4 6" stroke="#e2e8f0" />
-                        <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                        <YAxis tick={{ fontSize: 11 }} width={36} />
+          <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 xl:self-start">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">התפלגות סטטוסים בכרטיסי עבודה</h2>
+                  <p className="text-xs text-slate-400 mt-1">חלוקה לפי מצב טיפול בכרטיסים לחודש הנבחר</p>
+                </div>
+                <span className="text-[11px] font-medium text-slate-500 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full shrink-0">
+                  {formatMonthTitle(summary.month)}
+                </span>
+              </div>
+
+              <div className="mt-5 rounded-xl bg-slate-50/80 dark:bg-slate-800/30 border border-slate-200/80 dark:border-slate-700/60 p-4">
+                <div className="relative h-[190px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={statusDonutData}
+                        dataKey="count"
+                        nameKey="label"
+                        innerRadius={52}
+                        outerRadius={76}
+                        paddingAngle={1}
+                        cornerRadius={6}
+                        stroke="none"
+                      >
+                        {statusDonutData.map((entry) => (
+                          <Cell key={entry.status} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      {statusTotal > 0 && (
                         <Tooltip
-                          formatter={(value) => formatNumber(Number(value))}
-                          labelFormatter={(label) => `חודש: ${label}`}
+                          formatter={(value, _name, item) => {
+                            const count = Number(value);
+                            const percent = statusTotal > 0 ? Math.round((count / statusTotal) * 100) : 0;
+                            return [`${formatNumber(count)} (${percent}%)`, item?.payload?.label ?? 'סטטוס'];
+                          }}
                           contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 12px 24px rgba(15,23,42,0.12)' }}
                         />
-                        {SERIES_META.map((series) => (
-                          <Line
-                            key={series.key}
-                            type="monotone"
-                            dataKey={series.key}
-                            stroke={series.color}
-                            strokeWidth={3}
-                            dot={{ r: 3, strokeWidth: 2 }}
-                            activeDot={{ r: 6 }}
-                          />
-                        ))}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </section>
-
-              {/* Top 5 sites table */}
-              <section className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">5 האתרים המובילים לפי עובדים פעילים</h2>
-                    <p className="text-xs text-slate-400 mt-1">מוצגים רק חמשת האתרים עם מספר העובדים הפעילים הגבוה ביותר</p>
-                  </div>
-                  <span className="text-xs text-slate-400">{formatMonthTitle(summary.month)}</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-right border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
-                        <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">שם אתר</th>
-                        <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">מספר עובדים</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                      {summary.sites_table.map((site) => (
-                        <tr key={site.site_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                          <td className="px-6 py-5 text-[#111518] dark:text-white font-medium">{site.site_name}</td>
-                          <td className="px-6 py-5 text-[#111518] dark:text-white font-medium">
-                            {formatNumber(site.employee_count)}
-                          </td>
-                        </tr>
-                      ))}
-                      {summary.sites_table.length === 0 && (
-                        <tr>
-                          <td colSpan={2} className="p-8 text-center text-slate-500">
-                            אין אתרים פעילים להצגה
-                          </td>
-                        </tr>
                       )}
-                    </tbody>
-                  </table>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">סה"כ כרטיסים</span>
+                    <span className="text-3xl font-bold text-slate-900 dark:text-white leading-none mt-1">{formatNumber(statusTotal)}</span>
+                  </div>
                 </div>
-              </section>
-            </>
-          )}
+                <p className="mt-3 text-center text-[11px] text-slate-500 dark:text-slate-400">
+                  העבר עכבר על כל פלח להצגת סטטוס, כמות ואחוז
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700 xl:col-span-2">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">טרנדים 12 חודשים אחרונים</h2>
+                  <p className="text-xs text-slate-400 mt-1">כמות פעולות חודשית</p>
+                </div>
+                <div className="flex items-center gap-3 text-xs text-slate-500">
+                  {SERIES_META.map((series) => (
+                    <span key={series.key} className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: series.color }} />
+                      {series.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData} margin={{ top: 10, right: 24, left: 8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="4 6" stroke="#e2e8f0" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} width={36} />
+                    <Tooltip
+                      formatter={(value) => formatNumber(Number(value))}
+                      labelFormatter={(label) => `חודש: ${label}`}
+                      contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 12px 24px rgba(15,23,42,0.12)' }}
+                    />
+                    {SERIES_META.map((series) => (
+                      <Line
+                        key={series.key}
+                        type="monotone"
+                        dataKey={series.key}
+                        stroke={series.color}
+                        strokeWidth={3}
+                        dot={{ r: 3, strokeWidth: 2 }}
+                        activeDot={{ r: 6 }}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">5 האתרים המובילים לפי עובדים פעילים</h2>
+                <p className="text-xs text-slate-400 mt-1">מוצגים רק חמשת האתרים עם מספר העובדים הפעילים הגבוה ביותר</p>
+              </div>
+              <span className="text-xs text-slate-400">{formatMonthTitle(summary.month)}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
+                    <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">שם אתר</th>
+                    <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">מספר עובדים</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                  {summary.sites_table.map((site) => (
+                    <tr key={site.site_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                      <td className="px-6 py-5 text-[#111518] dark:text-white font-medium">{site.site_name}</td>
+                      <td className="px-6 py-5 text-[#111518] dark:text-white font-medium">
+                        {formatNumber(site.employee_count)}
+                      </td>
+                    </tr>
+                  ))}
+                  {summary.sites_table.length === 0 && (
+                    <tr>
+                      <td colSpan={2} className="p-8 text-center text-slate-500">
+                        אין אתרים פעילים להצגה
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </>
       )}
 
