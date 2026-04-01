@@ -402,6 +402,56 @@ def _populate_template_core_sheet(
         col_letter = get_column_letter(col)
         ws.cell(row=34, column=col, value=f'=SUM({col_letter}3:{col_letter}33)')._style = copy(style_total)
 
+def _add_tariff_summary(ws, employee_count, hourly_tariff, style_body,
+                        style_site_total, style_tariff, style_tariff_label):
+    """Add tariff/fee summary rows to a populated site sheet.
+
+    Clears the template's fixed colored cells and, when the site has an
+    hourly tariff, writes grand-total, price-per-hour, cost-without-VAT
+    and cost-with-VAT at dynamic columns based on employee count.
+    """
+    TMPL_VALUE_COL = 8
+    TMPL_LABEL_COL = 9
+
+    last_data_col = max(2, employee_count + 1)
+    value_col = last_data_col + 1
+    label_col = value_col + 1
+
+    # Clear the template's fixed colored cells so stale content doesn't
+    # appear on copied sheets.
+    for r in (33, 34, 36, 37, 38):
+        for c in (TMPL_VALUE_COL, TMPL_LABEL_COL):
+            cell = ws.cell(row=r, column=c)
+            cell.value = None
+            cell._style = copy(style_body)
+
+    if hourly_tariff is not None:
+        tariff = float(hourly_tariff)
+        tariff_int = int(tariff) if tariff == int(tariff) else tariff
+
+        total_letters = [get_column_letter(c) for c in range(2, last_data_col + 1)]
+        grand_total_formula = '=SUM(' + ','.join(f'{cl}34' for cl in total_letters) + ')'
+        value_col_letter = get_column_letter(value_col)
+
+        # Row 33: site total label
+        ws.cell(row=33, column=value_col, value='סה"כ שעות לאתר:')._style = copy(style_site_total)
+
+        # Row 34: grand total value
+        ws.cell(row=34, column=value_col, value=grand_total_formula)._style = copy(style_site_total)
+
+        # Row 36: tariff per hour
+        ws.cell(row=36, column=value_col, value=f'{tariff_int} ₪')._style = copy(style_tariff)
+        ws.cell(row=36, column=label_col, value='מחיר לשעה')._style = copy(style_tariff_label)
+
+        # Row 37: cost without VAT
+        ws.cell(row=37, column=value_col, value=f'={value_col_letter}34*{tariff_int}')._style = copy(style_tariff)
+        ws.cell(row=37, column=label_col, value='מחיר ללא מע"מ')._style = copy(style_tariff_label)
+
+        # Row 38: cost with VAT (×1.18)
+        ws.cell(row=38, column=value_col, value=f'={value_col_letter}37*1.18')._style = copy(style_tariff)
+        ws.cell(row=38, column=label_col, value='מחיר כולל מע"מ')._style = copy(style_tariff_label)
+
+
 def _load_hours_matrix(site_id, processing_month, approved_only, include_inactive):
     started_at = time.perf_counter()
     month = datetime.strptime(processing_month, '%Y-%m-%d').date()
@@ -800,6 +850,9 @@ def export_monthly_summary(site_id):
     style_header = copy(ws['B1']._style)
     style_body = copy(ws['B3']._style)
     style_total = copy(ws['A34']._style)
+    style_site_total = copy(ws.cell(row=33, column=8)._style)
+    style_tariff = copy(ws.cell(row=36, column=8)._style)
+    style_tariff_label = copy(ws.cell(row=36, column=9)._style)
 
     ws.title = _safe_sheet_name(site.site_name, set())
 
@@ -818,59 +871,15 @@ def export_monthly_summary(site_id):
     for extra_ws in workbook.worksheets[1:]:
         workbook.remove(extra_ws)
 
-    # Add tariff/fee summary rows matching the template's colored area.
-    # The template has pre-styled (colored) cells at fixed columns 8-9 for
-    # rows 33-34 (site total) and 36-38 (tariff).  We capture those styles,
-    # clear the fixed positions, and re-apply at the correct dynamic columns
-    # which depend on the actual employee count.
-    TMPL_VALUE_COL = 8   # template's fixed value column
-    TMPL_LABEL_COL = 9   # template's fixed label column
-
-    employee_count = len(employees)
-    last_data_col = max(2, employee_count + 1)
-    value_col = last_data_col + 1
-    label_col = value_col + 1
-
-    # Capture styles from the template's colored cells
-    style_site_total = copy(ws.cell(row=33, column=TMPL_VALUE_COL)._style)
-    style_tariff = copy(ws.cell(row=36, column=TMPL_VALUE_COL)._style)
-    style_tariff_label = copy(ws.cell(row=36, column=TMPL_LABEL_COL)._style)
-
-    # Clear the template's fixed colored cells (values already cleared by
-    # _populate_template_core_sheet, but styles/fills remain)
-    tmpl_rows = [33, 34, 36, 37, 38]
-    for r in tmpl_rows:
-        for c in (TMPL_VALUE_COL, TMPL_LABEL_COL):
-            cell = ws.cell(row=r, column=c)
-            cell.value = None
-            cell._style = copy(style_body)
-
-    if site.hourly_tariff is not None:
-        tariff = float(site.hourly_tariff)
-        tariff_int = int(tariff) if tariff == int(tariff) else tariff
-
-        # Grand total: sum of all employee totals (row 34, cols 2..last_data_col)
-        total_letters = [get_column_letter(c) for c in range(2, last_data_col + 1)]
-        grand_total_formula = '=SUM(' + ','.join(f'{cl}34' for cl in total_letters) + ')'
-        value_col_letter = get_column_letter(value_col)
-
-        # Row 33 (last day row): site total label
-        ws.cell(row=33, column=value_col, value='סה"כ שעות לאתר:')._style = copy(style_site_total)
-
-        # Row 34 (total row): grand total value
-        ws.cell(row=34, column=value_col, value=grand_total_formula)._style = copy(style_site_total)
-
-        # Row 36: tariff per hour
-        ws.cell(row=36, column=value_col, value=f'{tariff_int} ₪')._style = copy(style_tariff)
-        ws.cell(row=36, column=label_col, value='מחיר לשעה')._style = copy(style_tariff_label)
-
-        # Row 37: cost without VAT  (= grand_total * tariff literal)
-        ws.cell(row=37, column=value_col, value=f'={value_col_letter}34*{tariff_int}')._style = copy(style_tariff)
-        ws.cell(row=37, column=label_col, value='מחיר ללא מע"מ')._style = copy(style_tariff_label)
-
-        # Row 38: cost with VAT (×1.18)
-        ws.cell(row=38, column=value_col, value=f'={value_col_letter}37*1.18')._style = copy(style_tariff)
-        ws.cell(row=38, column=label_col, value='מחיר כולל מע"מ')._style = copy(style_tariff_label)
+    _add_tariff_summary(
+        ws,
+        employee_count=len(employees),
+        hourly_tariff=site.hourly_tariff,
+        style_body=style_body,
+        style_site_total=style_site_total,
+        style_tariff=style_tariff,
+        style_tariff_label=style_tariff_label,
+    )
 
     output = BytesIO()
     workbook.save(output)
@@ -930,6 +939,9 @@ def export_monthly_summary_batch():
         style_header = copy(template_ws['B1']._style)
         style_body = copy(template_ws['B3']._style)
         style_total = copy(template_ws['A34']._style)
+        style_site_total = copy(template_ws.cell(row=33, column=8)._style)
+        style_tariff = copy(template_ws.cell(row=36, column=8)._style)
+        style_tariff_label = copy(template_ws.cell(row=36, column=9)._style)
 
         for ws in workbook.worksheets[1:]:
             workbook.remove(ws)
@@ -958,6 +970,15 @@ def export_monthly_summary_batch():
                 style_body=style_body,
                 style_total=style_total,
                 status_matrix=site_data['status_matrix'],
+            )
+            _add_tariff_summary(
+                ws,
+                employee_count=len(site_data['employees']),
+                hourly_tariff=site.hourly_tariff,
+                style_body=style_body,
+                style_site_total=style_site_total,
+                style_tariff=style_tariff,
+                style_tariff_label=style_tariff_label,
             )
 
         if workbook.worksheets and len(workbook.worksheets) > 1:
