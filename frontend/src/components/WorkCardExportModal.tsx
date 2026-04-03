@@ -12,13 +12,6 @@ interface WorkCardExportModalProps {
   employees: Employee[];
 }
 
-const STATUS_OPTIONS = [
-  { value: 'NEEDS_REVIEW', label: 'ממתין לבדיקה' },
-  { value: 'APPROVED', label: 'מאושר' },
-  { value: 'REJECTED', label: 'נדחה' },
-  { value: 'NEEDS_ASSIGNMENT', label: 'ממתין לשיוך' },
-];
-
 const getPreviousMonth = (): string => {
   const now = new Date();
   const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -35,13 +28,8 @@ export default function WorkCardExportModal({
   employees,
 }: WorkCardExportModalProps) {
   const [selectedMonth, setSelectedMonth] = useState<string>(getPreviousMonth());
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(() =>
-    STATUS_OPTIONS.map((option) => option.value)
-  );
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
-  const [includeUnassigned, setIncludeUnassigned] = useState(true);
-  const [includeMetadata, setIncludeMetadata] = useState(true);
-  const [includeDayEntries, setIncludeDayEntries] = useState(false);
+  const [approvedOnly, setApprovedOnly] = useState(true);
   const [search, setSearch] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,10 +37,7 @@ export default function WorkCardExportModal({
   useEffect(() => {
     if (!isOpen) return;
     setSelectedEmployeeIds(employees.map((employee) => employee.id));
-    setSelectedStatuses(STATUS_OPTIONS.map((option) => option.value));
-    setIncludeUnassigned(true);
-    setIncludeMetadata(true);
-    setIncludeDayEntries(false);
+    setApprovedOnly(true);
     setError(null);
   }, [isOpen, employees]);
 
@@ -67,19 +52,13 @@ export default function WorkCardExportModal({
     });
   }, [employees, search]);
 
-  const toggleStatus = (value: string) => {
-    setSelectedStatuses((prev) =>
-      prev.includes(value) ? prev.filter((status) => status !== value) : [...prev, value]
-    );
-  };
-
   const toggleEmployee = (employeeId: string) => {
     setSelectedEmployeeIds((prev) =>
       prev.includes(employeeId) ? prev.filter((id) => id !== employeeId) : [...prev, employeeId]
     );
   };
 
-  const canDownload = selectedStatuses.length > 0 && (includeUnassigned || selectedEmployeeIds.length > 0);
+  const canDownload = selectedEmployeeIds.length > 0;
 
   const handleDownload = async () => {
     if (!canDownload || isDownloading) return;
@@ -89,11 +68,8 @@ export default function WorkCardExportModal({
       const blob = await downloadWorkCardsExport({
         site_id: siteId,
         processing_month: selectedMonth,
-        statuses: selectedStatuses,
         employee_ids: selectedEmployeeIds,
-        include_unassigned: includeUnassigned,
-        include_metadata: includeMetadata,
-        include_day_entries: includeDayEntries,
+        approved_only: approvedOnly,
       });
 
       const url = URL.createObjectURL(blob);
@@ -126,7 +102,7 @@ export default function WorkCardExportModal({
             <div>
               <div className="font-bold text-slate-900 dark:text-white">{siteName}</div>
               <div className="text-sm text-slate-600 dark:text-slate-400">
-                הורדת כרטיסי עבודה לפי חודש וסינון
+                הורדת כרטיסי עבודה לפי חודש
               </div>
             </div>
           </div>
@@ -141,43 +117,6 @@ export default function WorkCardExportModal({
             onChange={setSelectedMonth}
             storageKey={`work_card_export_month_${siteId}`}
           />
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-              סטטוס כרטיסים
-            </label>
-            <div className="flex items-center gap-2 text-xs">
-              <button
-                type="button"
-                className="text-primary hover:underline"
-                onClick={() => setSelectedStatuses(STATUS_OPTIONS.map((option) => option.value))}
-              >
-                בחר הכל
-              </button>
-              <button
-                type="button"
-                className="text-slate-500 hover:underline"
-                onClick={() => setSelectedStatuses([])}
-              >
-                נקה
-              </button>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {STATUS_OPTIONS.map((option) => (
-              <label key={option.value} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={selectedStatuses.includes(option.value)}
-                  onChange={() => toggleStatus(option.value)}
-                  className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary"
-                />
-                <span>{option.label}</span>
-              </label>
-            ))}
-          </div>
         </div>
 
         <div>
@@ -233,38 +172,17 @@ export default function WorkCardExportModal({
               <div className="p-4 text-center text-slate-500 text-sm">לא נמצאו עובדים</div>
             )}
           </div>
-
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 mt-3">
-            <input
-              type="checkbox"
-              checked={includeUnassigned}
-              onChange={(event) => setIncludeUnassigned(event.target.checked)}
-              className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary"
-            />
-            <span>כלול כרטיסים ללא שיוך</span>
-          </label>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-            <input
-              type="checkbox"
-              checked={includeMetadata}
-              onChange={(event) => setIncludeMetadata(event.target.checked)}
-              className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary"
-            />
-            <span>כלול קובץ מטא-דאטה (CSV)</span>
-          </label>
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-            <input
-              type="checkbox"
-              checked={includeDayEntries}
-              onChange={(event) => setIncludeDayEntries(event.target.checked)}
-              className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary"
-            />
-            <span>כלול שעות יומיות (CSV)</span>
-          </label>
-        </div>
+        <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+          <input
+            type="checkbox"
+            checked={approvedOnly}
+            onChange={(e) => setApprovedOnly(e.target.checked)}
+            className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary"
+          />
+          <span>הורד רק כרטיסים מאושרים</span>
+        </label>
 
         {error && (
           <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 text-sm">
