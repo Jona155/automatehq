@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Optional, List
 from uuid import UUID
 from datetime import date
@@ -384,7 +385,58 @@ class WorkCardRepository(BaseRepository[WorkCard]):
                 query = query.filter(WorkCard.employee_id.isnot(None))
 
         return query.order_by(WorkCard.created_at.desc()).all()
-    
+
+    def get_latest_per_employee_for_export(
+        self,
+        site_id: UUID,
+        month: date,
+        business_id: UUID,
+        employee_ids: List[UUID],
+        approved_only: bool = True,
+    ) -> List[WorkCard]:
+        """
+        Get one work card per employee for image export.
+
+        When approved_only=True: prefer the latest approved card; if none
+        approved, fall back to the latest uploaded card.
+        When approved_only=False: always pick the latest uploaded card.
+        """
+        cards = (
+            self.session.query(WorkCard)
+            .options(joinedload(WorkCard.files), joinedload(WorkCard.employee))
+            .filter(
+                WorkCard.site_id == site_id,
+                WorkCard.processing_month == month,
+                WorkCard.business_id == business_id,
+                WorkCard.employee_id.in_(employee_ids),
+            )
+            .order_by(WorkCard.created_at.desc())
+            .all()
+        )
+
+        grouped = defaultdict(list)
+        for card in cards:
+            grouped[card.employee_id].append(card)
+
+        selected = []
+        for emp_id in employee_ids:
+            emp_cards = grouped.get(emp_id, [])
+            if not emp_cards:
+                continue
+            if not approved_only:
+                selected.append(emp_cards[0])
+            else:
+                latest = emp_cards[0]
+                if latest.review_status == 'APPROVED':
+                    selected.append(latest)
+                else:
+                    approved_card = next(
+                        (c for c in emp_cards if c.review_status == 'APPROVED'),
+                        None,
+                    )
+                    selected.append(approved_card if approved_card else latest)
+        return selected
+
     def update_review_status(self, card_id: UUID, status: str, business_id: UUID) -> Optional[WorkCard]:
         """
         Update the review status of a work card.
