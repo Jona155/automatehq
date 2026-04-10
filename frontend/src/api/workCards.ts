@@ -87,6 +87,7 @@ export const updateWorkCard = async (cardId: string, data: { employee_id?: strin
 export interface ApproveWorkCardOptions {
   override_conflict_days?: number[];
   confirm_override_approved?: boolean;
+  auto_keep_approved?: boolean;
 }
 
 export const approveWorkCard = async (cardId: string, userId: string, options?: ApproveWorkCardOptions) => {

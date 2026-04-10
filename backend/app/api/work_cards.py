@@ -260,6 +260,7 @@ def approve_work_card(card_id):
     user_id = data.get('user_id')
     override_conflict_days = data.get('override_conflict_days') or []
     confirm_override_approved = bool(data.get('confirm_override_approved', False))
+    auto_keep_approved = bool(data.get('auto_keep_approved', False))
     
     if not user_id:
         return api_response(status_code=400, message="User ID is required for approval", error="Bad Request")
@@ -291,7 +292,7 @@ def approve_work_card(card_id):
                         approved_conflict_days.add(day)
 
         requested_approved_overrides = override_days.intersection(approved_conflict_days)
-        if requested_approved_overrides and not confirm_override_approved:
+        if approved_conflict_days and not confirm_override_approved and not auto_keep_approved:
             return api_response(
                 status_code=409,
                 message=(
@@ -517,6 +518,7 @@ def get_day_entries(card_id):
             row['previous_work_card_status'] = None
             row['previous_entry'] = None
             row['locked_from_previous'] = False
+            row['suggested_entry'] = None
 
             previous_entry = previous_entries_by_day.get(entry.day_of_month)
             if previous_card and previous_entry and not _entries_equal(entry, previous_entry):
@@ -526,6 +528,18 @@ def get_day_entries(card_id):
                 row['previous_work_card_id'] = str(previous_card.id)
                 row['previous_work_card_status'] = previous_card.review_status
                 row['previous_entry'] = model_to_dict(previous_entry)
+
+                if previous_card.review_status == 'APPROVED':
+                    row['suggested_entry'] = {
+                        'from_time': _normalize_time_value(entry.from_time),
+                        'to_time': _normalize_time_value(entry.to_time),
+                        'total_hours': float(entry.total_hours) if entry.total_hours is not None else None,
+                        'day_status': entry.day_status,
+                    }
+                    row['from_time'] = _normalize_time_value(previous_entry.from_time)
+                    row['to_time'] = _normalize_time_value(previous_entry.to_time)
+                    row['total_hours'] = float(previous_entry.total_hours) if previous_entry.total_hours is not None else None
+                    row['day_status'] = previous_entry.day_status
 
             data.append(row)
 
@@ -548,6 +562,7 @@ def get_day_entries(card_id):
                 row['previous_work_card_id'] = str(previous_card.id)
                 row['previous_work_card_status'] = previous_card.review_status
                 row['previous_entry'] = model_to_dict(previous_entry)
+                row['suggested_entry'] = None
                 data.append(row)
 
         data.sort(key=lambda item: item.get('day_of_month') or 0)

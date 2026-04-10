@@ -668,15 +668,22 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       const existing = entriesMap.get(day);
       const normalizedFrom = normalizeTimeToHourMinute(existing?.from_time);
       const normalizedTo = normalizeTimeToHourMinute(existing?.to_time);
+      const suggested = existing?.suggested_entry;
       rows.push({
         day_of_month: day,
         from_time: normalizedFrom,
         to_time: normalizedTo,
         total_hours: existing?.total_hours?.toString() || '',
         day_status: existing?.day_status || null,
-        latest_from_time: normalizedFrom,
-        latest_to_time: normalizedTo,
-        latest_total_hours: existing?.total_hours?.toString() || '',
+        latest_from_time: suggested
+          ? normalizeTimeToHourMinute(suggested.from_time)
+          : normalizedFrom,
+        latest_to_time: suggested
+          ? normalizeTimeToHourMinute(suggested.to_time)
+          : normalizedTo,
+        latest_total_hours: suggested
+          ? (suggested.total_hours?.toString() || '')
+          : (existing?.total_hours?.toString() || ''),
         previousEntry: existing?.previous_entry || null,
         previous_work_card_id: existing?.previous_work_card_id || null,
         isDirty: false,
@@ -1164,25 +1171,22 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const handleApprove = async () => {
     if (!selectedCard || !user) return;
 
-    if (conflictCount > 0 && unresolvedConflictCount > 0) {
+    // Only block for unresolved WITH_PENDING conflicts; WITH_APPROVED auto-keeps approved values
+    const unresolvedPendingConflicts = dayEntries.filter(
+      (e) => e.conflictType === 'WITH_PENDING' && !approvedConflictDecisions[e.day_of_month]
+    );
+    if (unresolvedPendingConflicts.length > 0) {
       openConflictModal();
       showToast('יש לעבור על ההתנגשויות ולהחיל החלטות לפני אישור', 'info');
       return;
     }
     try {
-      if (approvedConflictDays.length > 0) {
-        const overrideDays = approvedConflictDays.filter((day) => approvedConflictDecisions[day] === 'USE_LATEST');
-        if (overrideDays.length > 0) {
-          await approveWorkCard(selectedCard.id, user.id, {
-            override_conflict_days: overrideDays,
-            confirm_override_approved: true,
-          });
-        } else {
-          await approveWorkCard(selectedCard.id, user.id);
-        }
-      } else {
-        await approveWorkCard(selectedCard.id, user.id);
-      }
+      const overrideDays = approvedConflictDays.filter((day) => approvedConflictDecisions[day] === 'USE_LATEST');
+      await approveWorkCard(selectedCard.id, user.id, {
+        override_conflict_days: overrideDays.length > 0 ? overrideDays : undefined,
+        confirm_override_approved: overrideDays.length > 0 ? true : undefined,
+        auto_keep_approved: approvedConflictDays.length > 0 ? true : undefined,
+      });
       showToast('הכרטיס אושר בהצלחה', 'success');
 
       // Update local state
@@ -2375,7 +2379,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                 }`}
               >
                 <span className="material-symbols-outlined text-sm align-middle ml-1">description</span>
-                כרטיס חדש (נוכחי)
+                כרטיס חדש (חילוץ)
               </button>
               <button
                 type="button"
@@ -2387,7 +2391,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                 }`}
               >
                 <span className="material-symbols-outlined text-sm align-middle ml-1">history</span>
-                כרטיס קודם
+                כרטיס מאושר
               </button>
             </div>
             {/* Zoom controls */}
@@ -2462,7 +2466,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
               <span className="material-symbols-outlined text-amber-700 dark:text-amber-300 text-base mt-0.5">rule</span>
               <div className="text-xs text-amber-800 dark:text-amber-200 space-y-0.5">
                 <p>עברו על כל יום עם התנגשות ובחרו איזה ערך יישמר.</p>
-                <p>ברירת מחדל: מול מאושר נשמר הקודם, מול לא מאושר נשמר החדש.</p>
+                <p>הטבלה מציגה את הערכים המאושרים. כאן תוכלו לקבל ערכים מהחילוץ החדש.</p>
               </div>
             </div>
 
@@ -2484,7 +2488,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
                   }`}
                 >
-                  בחר חדש לכולם
+                  {approvedConflictCount > 0 ? 'קבל חילוץ לכולם' : 'בחר חדש לכולם'}
                 </button>
                 <button
                   type="button"
@@ -2499,7 +2503,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
                   }`}
                 >
-                  בחר קודם לכולם
+                  {approvedConflictCount > 0 ? 'שמור מאושר לכולם' : 'בחר קודם לכולם'}
                 </button>
               </div>
             </div>
@@ -2530,7 +2534,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
                       <div className="grid grid-cols-2 gap-1.5">
                         <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ערך קודם</div>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">
+                            {entry.conflictType === 'WITH_APPROVED' ? 'ערך מאושר' : 'ערך קודם'}
+                          </div>
                           <div className="text-xs text-slate-800 dark:text-slate-200">
                             {formatConflictValue(
                               entry.previousEntry?.from_time,
@@ -2540,7 +2546,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           </div>
                         </div>
                         <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ערך חדש</div>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">
+                            {entry.conflictType === 'WITH_APPROVED' ? 'חילוץ חדש' : 'ערך חדש'}
+                          </div>
                           <div className="text-xs text-slate-800 dark:text-slate-200">
                             {formatConflictValue(entry.latest_from_time, entry.latest_to_time, entry.latest_total_hours)}
                           </div>
@@ -2559,7 +2567,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                               : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
                           }`}
                         >
-                          שמור קודם
+                          {entry.conflictType === 'WITH_APPROVED' ? 'שמור מאושר' : 'שמור קודם'}
                         </button>
                         <button
                           type="button"
@@ -2572,7 +2580,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                               : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
                           }`}
                         >
-                          שמור חדש
+                          {entry.conflictType === 'WITH_APPROVED' ? 'קבל חילוץ' : 'שמור חדש'}
                         </button>
                         {!draftDecision && (
                           <span className="text-[10px] text-red-600 dark:text-red-300">נדרשת בחירה</span>

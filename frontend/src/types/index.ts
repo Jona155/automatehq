@@ -165,6 +165,12 @@ export interface DayEntry {
     to_time: string | null;
     total_hours: number | null;
   } | null;
+  suggested_entry?: {
+    from_time: string | null;
+    to_time: string | null;
+    total_hours: number | null;
+    day_status: DayStatus | null;
+  } | null;
   updated_by_user_id: string | null;
   created_at: string;
   updated_at: string;
