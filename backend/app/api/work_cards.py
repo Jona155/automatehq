@@ -694,7 +694,10 @@ def update_day_entries(card_id):
                 'day_status': day_status,
                 'updated_by_user_id': g.current_user.id
             }
-            
+
+            if entry.get('is_override'):
+                entry_data['source'] = 'MANUAL_OVERRIDE'
+
             if existing:
                 # Update existing entry
                 updated = day_entry_repo.update_entry(existing.id, g.current_user.id, **entry_data)
@@ -703,7 +706,8 @@ def update_day_entries(card_id):
                 # Create new entry
                 entry_data['work_card_id'] = card_id
                 entry_data['day_of_month'] = day
-                entry_data['source'] = 'MANUAL'
+                if 'source' not in entry_data:
+                    entry_data['source'] = 'MANUAL'
                 new_entry = day_entry_repo.create(**entry_data)
                 updated_entries.append(new_entry)
         
