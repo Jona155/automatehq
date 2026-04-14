@@ -34,7 +34,7 @@ export const createSite = async (data: { site_name: string; site_code?: string }
 
 export const updateSite = async (
   id: string,
-  data: { site_name?: string; site_code?: string; is_active?: boolean; responsible_employee_id?: string | null }
+  data: { site_name?: string; site_code?: string; is_active?: boolean; responsible_employee_id?: string | null; contractor_emails?: string[] | null }
 ) => {
   const response = await client.put<{ data: Site }>(`/sites/${id}`, data);
   return response.data.data;

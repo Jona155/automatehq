@@ -1,6 +1,6 @@
 import uuid
 from sqlalchemy import Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from ..extensions import db
 from ..utils import utc_now
 
@@ -18,6 +18,7 @@ class Site(db.Model):
         nullable=True
     )
     hourly_tariff = db.Column(db.Numeric(10, 2), nullable=True)
+    contractor_emails = db.Column(JSONB, nullable=True, default=list)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
