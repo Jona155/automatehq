@@ -55,6 +55,27 @@ STATUS_DAY_LABELS = {
     'INTERNATIONAL_VISA': 'ויזה בינלאומית',
 }
 
+EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+
+def _validate_contractor_emails(data):
+    """Validate and normalize contractor_emails field. Returns (cleaned_list, error_msg)."""
+    raw = data.get('contractor_emails')
+    if raw is None:
+        return None, None
+    if not isinstance(raw, list):
+        return None, 'contractor_emails must be a list'
+    cleaned = []
+    for item in raw:
+        if not isinstance(item, str):
+            return None, 'Each contractor email must be a string'
+        email = item.strip().lower()
+        if not email:
+            continue
+        if not EMAIL_REGEX.match(email):
+            return None, f'Invalid email address: {item}'
+        cleaned.append(email)
+    return cleaned, None
+
 def _generate_access_token():
     token = None
     for _ in range(5):
@@ -618,6 +639,12 @@ def create_site():
         if existing:
              return api_response(status_code=409, message="Site with this name already exists", error="Conflict")
 
+        if 'contractor_emails' in data:
+            emails, err = _validate_contractor_emails(data)
+            if err:
+                return api_response(status_code=400, message=err, error="Bad Request")
+            data['contractor_emails'] = emails
+
         site = repo.create(**data)
         return api_response(data=model_to_dict(site), message="Site created successfully", status_code=201)
     except Exception as e:
@@ -657,6 +684,12 @@ def update_site(site_id):
         
         # Don't allow changing business_id
         data.pop('business_id', None)
+
+        if 'contractor_emails' in data:
+            emails, err = _validate_contractor_emails(data)
+            if err:
+                return api_response(status_code=400, message=err, error="Bad Request")
+            data['contractor_emails'] = emails
 
         if 'hourly_tariff' in data:
             val = data.get('hourly_tariff')

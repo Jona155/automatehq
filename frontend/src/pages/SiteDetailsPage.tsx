@@ -48,6 +48,9 @@ export default function SiteDetailsPage() {
   const [responsibleEmployeeId, setResponsibleEmployeeId] = useState<string>('');
   const [hourlyTariff, setHourlyTariff] = useState<string>('');
   const [hourlyTariffError, setHourlyTariffError] = useState<string | null>(null);
+  const [contractorEmails, setContractorEmails] = useState<string[]>([]);
+  const [contractorEmailInput, setContractorEmailInput] = useState<string>('');
+  const [contractorEmailError, setContractorEmailError] = useState<string | null>(null);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
@@ -157,6 +160,9 @@ export default function SiteDetailsPage() {
     setResponsibleEmployeeId(site?.responsible_employee_id || '');
     setHourlyTariff(site?.hourly_tariff != null ? String(site.hourly_tariff) : '');
     setHourlyTariffError(null);
+    setContractorEmails(site?.contractor_emails || []);
+    setContractorEmailInput('');
+    setContractorEmailError(null);
     setSettingsModalOpen(true);
   };
 
@@ -172,6 +178,7 @@ export default function SiteDetailsPage() {
       const payload = {
         responsible_employee_id: responsibleEmployeeId || null,
         hourly_tariff: hourlyTariff !== '' ? parseFloat(hourlyTariff) : null,
+        contractor_emails: contractorEmails.length > 0 ? contractorEmails : null,
       };
       const updated = await updateSite(siteId, payload);
       setSite(updated);
@@ -658,6 +665,82 @@ export default function SiteDetailsPage() {
             {hourlyTariffError && (
               <p className="mt-1 text-xs text-red-500">{hourlyTariffError}</p>
             )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">מיילים של קבלן האתר</label>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={contractorEmailInput}
+                onChange={(e) => { setContractorEmailInput(e.target.value); setContractorEmailError(null); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const email = contractorEmailInput.trim().toLowerCase();
+                    if (!email) return;
+                    if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email)) {
+                      setContractorEmailError('כתובת מייל לא תקינה');
+                      return;
+                    }
+                    if (contractorEmails.includes(email)) {
+                      setContractorEmailError('מייל זה כבר קיים');
+                      return;
+                    }
+                    setContractorEmails([...contractorEmails, email]);
+                    setContractorEmailInput('');
+                    setContractorEmailError(null);
+                  }
+                }}
+                className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                placeholder="example@email.com"
+                dir="ltr"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const email = contractorEmailInput.trim().toLowerCase();
+                  if (!email) return;
+                  if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email)) {
+                    setContractorEmailError('כתובת מייל לא תקינה');
+                    return;
+                  }
+                  if (contractorEmails.includes(email)) {
+                    setContractorEmailError('מייל זה כבר קיים');
+                    return;
+                  }
+                  setContractorEmails([...contractorEmails, email]);
+                  setContractorEmailInput('');
+                  setContractorEmailError(null);
+                }}
+                className="px-3 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-medium text-sm"
+              >
+                הוסף
+              </button>
+            </div>
+            {contractorEmailError && (
+              <p className="mt-1 text-xs text-red-500">{contractorEmailError}</p>
+            )}
+            {contractorEmails.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {contractorEmails.map((email) => (
+                  <span
+                    key={email}
+                    className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-full text-sm"
+                  >
+                    <span dir="ltr">{email}</span>
+                    <button
+                      type="button"
+                      onClick={() => setContractorEmails(contractorEmails.filter((e) => e !== email))}
+                      className="text-slate-400 hover:text-red-500 transition-colors"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">כתובות מייל של קבלן האתר לשליחת דוחות חודשיים. ניתן להוסיף מספר כתובות.</p>
           </div>
 
           <div className="flex justify-end gap-3">
