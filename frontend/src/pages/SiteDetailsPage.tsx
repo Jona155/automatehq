@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import type { Site, Employee } from '../types';
-import { downloadMonthlySummary, downloadSalaryTemplate, getSite, getSites, updateSite } from '../api/sites';
+import { downloadMonthlySummary, downloadSalaryTemplate, getSite, getSites, updateSite, sendSummaryEmail } from '../api/sites';
 import { getEmployees } from '../api/employees';
 import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
@@ -54,6 +54,8 @@ export default function SiteDetailsPage() {
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
+  const [emailConfirmOpen, setEmailConfirmOpen] = useState(false);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [isDownloadingSalaryTemplate, setIsDownloadingSalaryTemplate] = useState(false);
   const [salaryModalOpen, setSalaryModalOpen] = useState(false);
   const [salaryExportMonth, setSalaryExportMonth] = useState<string>(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
@@ -210,6 +212,36 @@ export default function SiteDetailsPage() {
     }
   };
 
+  const addContractorEmail = () => {
+    const email = contractorEmailInput.trim().toLowerCase();
+    if (!email) return;
+    if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email)) {
+      setContractorEmailError('כתובת מייל לא תקינה');
+      return;
+    }
+    if (contractorEmails.includes(email)) {
+      setContractorEmailError('מייל זה כבר קיים');
+      return;
+    }
+    setContractorEmails([...contractorEmails, email]);
+    setContractorEmailInput('');
+    setContractorEmailError(null);
+  };
+
+  const handleSendSummaryEmail = async () => {
+    if (!siteId || !site) return;
+    setIsSendingEmail(true);
+    try {
+      await sendSummaryEmail(siteId, selectedMonth);
+      showToast(`הסיכום נשלח בהצלחה ל-${(site.contractor_emails || []).join(', ')}`, 'success');
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || 'שגיאה בשליחת המייל', 'error');
+    } finally {
+      setIsSendingEmail(false);
+      setEmailConfirmOpen(false);
+    }
+  };
+
   useEffect(() => {
     if (!salaryModalOpen || !isAuthenticated) return;
     let active = true;
@@ -359,6 +391,22 @@ export default function SiteDetailsPage() {
               >
                 <span className="material-symbols-outlined text-lg">table_view</span>
                 <span>{isDownloadingSummary ? 'מוריד סיכום (XLSX)...' : 'הורדת סיכום (XLSX)'}</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  const emails = site?.contractor_emails || [];
+                  if (emails.length === 0) {
+                    showToast('לא הוגדרו כתובות מייל לאתר זה. ניתן להוסיף בהגדרות האתר.', 'error');
+                  } else {
+                    setEmailConfirmOpen(true);
+                  }
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+                disabled={isSendingEmail}
+              >
+                <span className="material-symbols-outlined text-lg">mail</span>
+                <span>{isSendingEmail ? 'שולח סיכום במייל...' : 'שליחת סיכום במייל'}</span>
               </button>
               <button
                 onClick={() => {
@@ -551,6 +599,45 @@ export default function SiteDetailsPage() {
 
 
       <Modal
+        isOpen={emailConfirmOpen}
+        onClose={() => setEmailConfirmOpen(false)}
+        title="שליחת סיכום במייל"
+        maxWidth="sm"
+      >
+        <div className="flex flex-col gap-4" dir="rtl">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            שלח סיכום חודשי ל-{selectedMonth} לכתובות:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {(site?.contractor_emails || []).map((email) => (
+              <span
+                key={email}
+                className="inline-flex items-center px-3 py-1 text-sm bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full"
+              >
+                {email}
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2 justify-end mt-2">
+            <button
+              onClick={() => setEmailConfirmOpen(false)}
+              className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+              disabled={isSendingEmail}
+            >
+              ביטול
+            </button>
+            <button
+              onClick={handleSendSummaryEmail}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+              disabled={isSendingEmail}
+            >
+              {isSendingEmail ? 'שולח...' : 'שלח'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={salaryModalOpen}
         onClose={() => setSalaryModalOpen(false)}
         title={"\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave"}
@@ -674,45 +761,14 @@ export default function SiteDetailsPage() {
                 type="email"
                 value={contractorEmailInput}
                 onChange={(e) => { setContractorEmailInput(e.target.value); setContractorEmailError(null); }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const email = contractorEmailInput.trim().toLowerCase();
-                    if (!email) return;
-                    if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email)) {
-                      setContractorEmailError('כתובת מייל לא תקינה');
-                      return;
-                    }
-                    if (contractorEmails.includes(email)) {
-                      setContractorEmailError('מייל זה כבר קיים');
-                      return;
-                    }
-                    setContractorEmails([...contractorEmails, email]);
-                    setContractorEmailInput('');
-                    setContractorEmailError(null);
-                  }
-                }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addContractorEmail(); } }}
                 className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                 placeholder="example@email.com"
                 dir="ltr"
               />
               <button
                 type="button"
-                onClick={() => {
-                  const email = contractorEmailInput.trim().toLowerCase();
-                  if (!email) return;
-                  if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email)) {
-                    setContractorEmailError('כתובת מייל לא תקינה');
-                    return;
-                  }
-                  if (contractorEmails.includes(email)) {
-                    setContractorEmailError('מייל זה כבר קיים');
-                    return;
-                  }
-                  setContractorEmails([...contractorEmails, email]);
-                  setContractorEmailInput('');
-                  setContractorEmailError(null);
-                }}
+                onClick={addContractorEmail}
                 className="px-3 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-medium text-sm"
               >
                 הוסף
