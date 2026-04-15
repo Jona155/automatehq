@@ -86,6 +86,16 @@ export const downloadMonthlySummary = async (
   return response.data as Blob;
 };
 
+export const sendSummaryEmail = async (
+  siteId: string,
+  processingMonth: string,
+) => {
+  const response = await client.post(`/sites/${siteId}/summary/email`, {
+    processing_month: normalizeMonthFormat(processingMonth),
+  });
+  return response.data;
+};
+
 export const downloadMonthlySummaryBatch = async (
   processingMonth: string,
   options?: { approved_only?: boolean; include_inactive?: boolean; include_inactive_sites?: boolean }

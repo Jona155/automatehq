@@ -33,6 +33,7 @@ from ..models.sites import Employee
 from ..extensions import db
 from ..services.hours_matrix_service import load_hours_matrix_rows, build_matrix_and_status_map
 from ..observability import QueryCounter, sites_metrics
+from ..services.email_service import send_email_with_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -842,6 +843,54 @@ def get_hours_matrix(site_id):
                 }
             )
 
+def _generate_summary_xlsx(site, employees, matrix, month, status_matrix):
+    """Generate a monthly summary XLSX workbook and return (BytesIO, filename)."""
+    template_path = _resolve_summary_template_path()
+    workbook = load_workbook(template_path)
+
+    ws = workbook.worksheets[0]
+    style_header = copy(ws['B1']._style)
+    style_body = copy(ws['B3']._style)
+    style_total = copy(ws['A34']._style)
+    style_site_total = copy(ws.cell(row=33, column=8)._style)
+    style_tariff = copy(ws.cell(row=36, column=8)._style)
+    style_tariff_label = copy(ws.cell(row=36, column=9)._style)
+
+    ws.title = _safe_sheet_name(site.site_name, set())
+
+    _populate_template_core_sheet(
+        ws,
+        employees,
+        matrix,
+        month,
+        style_header=style_header,
+        style_body=style_body,
+        style_total=style_total,
+        status_matrix=status_matrix,
+    )
+
+    for extra_ws in workbook.worksheets[1:]:
+        workbook.remove(extra_ws)
+
+    _add_tariff_summary(
+        ws,
+        employee_count=len(employees),
+        hourly_tariff=site.hourly_tariff,
+        style_body=style_body,
+        style_site_total=style_site_total,
+        style_tariff=style_tariff,
+        style_tariff_label=style_tariff_label,
+    )
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    site_label = _safe_label(site.site_name) or str(site.id)
+    filename = f"monthly_summary_{site.id}_{site_label}_{month.strftime('%Y-%m')}.xlsx"
+    return output, filename
+
+
 @sites_bp.route('/<uuid:site_id>/summary/export', methods=['GET'])
 @token_required
 @role_required('ADMIN')
@@ -873,53 +922,10 @@ def export_monthly_summary(site_id):
         return api_response(status_code=500, message="Failed to export summary", error=str(e))
 
     try:
-        template_path = _resolve_summary_template_path()
-        workbook = load_workbook(template_path)
+        output, download_name = _generate_summary_xlsx(site, employees, matrix, month, status_matrix)
     except Exception as e:
-        logger.exception("Failed to load summary export template")
-        return api_response(status_code=500, message="Failed to load export template", error=str(e))
-
-    ws = workbook.worksheets[0]
-    style_header = copy(ws['B1']._style)
-    style_body = copy(ws['B3']._style)
-    style_total = copy(ws['A34']._style)
-    style_site_total = copy(ws.cell(row=33, column=8)._style)
-    style_tariff = copy(ws.cell(row=36, column=8)._style)
-    style_tariff_label = copy(ws.cell(row=36, column=9)._style)
-
-    ws.title = _safe_sheet_name(site.site_name, set())
-
-    _populate_template_core_sheet(
-        ws,
-        employees,
-        matrix,
-        month,
-        style_header=style_header,
-        style_body=style_body,
-        style_total=style_total,
-        status_matrix=status_matrix,
-    )
-
-    # Remove extra sheets from template
-    for extra_ws in workbook.worksheets[1:]:
-        workbook.remove(extra_ws)
-
-    _add_tariff_summary(
-        ws,
-        employee_count=len(employees),
-        hourly_tariff=site.hourly_tariff,
-        style_body=style_body,
-        style_site_total=style_site_total,
-        style_tariff=style_tariff,
-        style_tariff_label=style_tariff_label,
-    )
-
-    output = BytesIO()
-    workbook.save(output)
-    output.seek(0)
-
-    site_label = _safe_label(site.site_name) or str(site_id)
-    download_name = f"monthly_summary_{site_label}_{month.strftime('%Y-%m')}.xlsx"
+        logger.exception(f"Failed to generate summary XLSX for site {site_id}")
+        return api_response(status_code=500, message="Failed to generate summary", error=str(e))
 
     return send_file(
         output,
@@ -927,6 +933,80 @@ def export_monthly_summary(site_id):
         as_attachment=True,
         download_name=download_name
     )
+
+@sites_bp.route('/<uuid:site_id>/summary/email', methods=['POST'])
+@token_required
+@role_required('ADMIN')
+def send_summary_email(site_id):
+    """Send the monthly summary XLSX as an email attachment to the site's contractor emails."""
+    site = repo.get_by_id(site_id)
+    if not site or site.business_id != g.business_id:
+        return api_response(status_code=404, message="Site not found", error="Not Found")
+
+    recipients = site.contractor_emails or []
+    if not recipients:
+        return api_response(
+            status_code=400,
+            message="לא הוגדרו כתובות מייל לאתר זה",
+            error="No email recipients configured",
+        )
+
+    data = request.get_json() or {}
+    processing_month = data.get('processing_month')
+    if not processing_month:
+        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
+
+    try:
+        employees, matrix, _, month, status_matrix = _load_hours_matrix(
+            site_id, processing_month, approved_only=False, include_inactive=False
+        )
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to load hours matrix for email send, site {site_id}")
+        return api_response(status_code=500, message="Failed to generate summary", error=str(e))
+
+    try:
+        output, filename = _generate_summary_xlsx(site, employees, matrix, month, status_matrix)
+    except Exception as e:
+        logger.exception(f"Failed to generate summary XLSX for email, site {site_id}")
+        return api_response(status_code=500, message="Failed to generate summary", error=str(e))
+
+    month_label = month.strftime('%Y-%m')
+    subject = f"סיכום חודשי - {site.site_name} - {month_label}"
+    html_body = f"""
+    <div dir="rtl" style="font-family: Arial, sans-serif;">
+        <p>שלום,</p>
+        <p>מצורף סיכום שעות חודשי עבור אתר <strong>{site.site_name}</strong> לחודש <strong>{month_label}</strong>.</p>
+        <br>
+        <p>בברכה,<br>AutoHQ</p>
+    </div>
+    """
+
+    try:
+        result = send_email_with_attachment(
+            to=recipients,
+            subject=subject,
+            html_body=html_body,
+            attachment_bytes=output.read(),
+            attachment_filename=filename,
+        )
+    except ValueError as e:
+        logger.error(f"Email config error: {e}")
+        return api_response(status_code=500, message="Email service not configured", error=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to send summary email for site {site_id}")
+        return api_response(status_code=500, message="שגיאה בשליחת המייל", error=str(e))
+
+    return api_response(
+        data={
+            "status": "sent",
+            "recipients": recipients,
+            "site_name": site.site_name,
+        },
+        message=f"הסיכום נשלח בהצלחה ל-{len(recipients)} נמענים",
+    )
+
 
 @sites_bp.route('/summary/export-batch', methods=['GET'])
 @token_required
