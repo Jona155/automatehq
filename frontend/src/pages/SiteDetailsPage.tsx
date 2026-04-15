@@ -55,6 +55,7 @@ export default function SiteDetailsPage() {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
   const [emailConfirmOpen, setEmailConfirmOpen] = useState(false);
+  const [emailMonth, setEmailMonth] = useState<string>(selectedMonth);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [isDownloadingSalaryTemplate, setIsDownloadingSalaryTemplate] = useState(false);
   const [salaryModalOpen, setSalaryModalOpen] = useState(false);
@@ -232,7 +233,7 @@ export default function SiteDetailsPage() {
     if (!siteId || !site) return;
     setIsSendingEmail(true);
     try {
-      await sendSummaryEmail(siteId, selectedMonth);
+      await sendSummaryEmail(siteId, emailMonth);
       showToast(`הסיכום נשלח בהצלחה ל-${(site.contractor_emails || []).join(', ')}`, 'success');
     } catch (err: any) {
       showToast(err?.response?.data?.message || 'שגיאה בשליחת המייל', 'error');
@@ -399,6 +400,7 @@ export default function SiteDetailsPage() {
                   if (emails.length === 0) {
                     showToast('לא הוגדרו כתובות מייל לאתר זה. ניתן להוסיף בהגדרות האתר.', 'error');
                   } else {
+                    setEmailMonth(selectedMonth);
                     setEmailConfirmOpen(true);
                   }
                 }}
@@ -605,18 +607,24 @@ export default function SiteDetailsPage() {
         maxWidth="sm"
       >
         <div className="flex flex-col gap-4" dir="rtl">
-          <p className="text-sm text-slate-600 dark:text-slate-300">
-            שלח סיכום חודשי ל-{selectedMonth} לכתובות:
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {(site?.contractor_emails || []).map((email) => (
-              <span
-                key={email}
-                className="inline-flex items-center px-3 py-1 text-sm bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full"
-              >
-                {email}
-              </span>
-            ))}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">חודש סיכום</label>
+            <MonthPicker value={emailMonth} onChange={setEmailMonth} />
+          </div>
+          <div>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mb-2">
+              שלח סיכום חודשי עבור <strong>{site?.site_name}</strong> לכתובות:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {(site?.contractor_emails || []).map((email) => (
+                <span
+                  key={email}
+                  className="inline-flex items-center px-3 py-1 text-sm bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full"
+                >
+                  {email}
+                </span>
+              ))}
+            </div>
           </div>
           <div className="flex gap-2 justify-end mt-2">
             <button
@@ -804,7 +812,7 @@ export default function SiteDetailsPage() {
               onClick={() => setSettingsModalOpen(false)}
               className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
               disabled={isSavingSettings}
-            >אחראי</button>
+            >ביטול</button>
             <button
               onClick={handleSaveSettings}
               className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
