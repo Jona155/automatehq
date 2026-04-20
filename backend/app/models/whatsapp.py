@@ -1,0 +1,47 @@
+import uuid
+from sqlalchemy import Index
+from sqlalchemy.dialects.postgresql import UUID
+from ..extensions import db
+from ..utils import utc_now
+
+
+class WhatsAppGroupConfig(db.Model):
+    """One row per business — the single WhatsApp group whose images we ingest."""
+    __tablename__ = 'whatsapp_group_configs'
+
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    business_id = db.Column(UUID(as_uuid=True), db.ForeignKey('businesses.id'), unique=True, nullable=False)
+    chat_id = db.Column(db.Text, unique=True, nullable=False)
+    chat_name = db.Column(db.Text, nullable=True)
+    current_processing_month = db.Column(db.Date, nullable=False)
+    auto_advance_day = db.Column(db.SmallInteger, nullable=True)
+    last_seen_timestamp = db.Column(db.DateTime(timezone=True), nullable=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (
+        Index('ix_whatsapp_group_configs_chat_id', 'chat_id'),
+    )
+
+
+class WhatsAppIngestedMessage(db.Model):
+    """Dedup + audit log for every WhatsApp message the poller has seen."""
+    __tablename__ = 'whatsapp_ingested_messages'
+
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    message_id = db.Column(db.Text, unique=True, nullable=False)
+    chat_id = db.Column(db.Text, nullable=False)
+    chat_name = db.Column(db.Text, nullable=True)
+    sender = db.Column(db.Text, nullable=True)
+    push_name = db.Column(db.Text, nullable=True)
+    message_timestamp = db.Column(db.DateTime(timezone=True), nullable=True)
+    work_card_id = db.Column(UUID(as_uuid=True), db.ForeignKey('work_cards.id'), nullable=True)
+    status = db.Column(db.Text, nullable=False)  # INGESTED, SKIPPED, ERROR
+    error_message = db.Column(db.Text, nullable=True)
+    caption = db.Column(db.Text, nullable=True)
+    processed_at = db.Column(db.DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (
+        Index('ix_whatsapp_ingested_messages_chat_id', 'chat_id'),
+    )

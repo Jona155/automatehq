@@ -5,6 +5,7 @@ from .work_cards import WorkCard, WorkCardFile, WorkCardExtraction, WorkCardDayE
 from .audit import ExportRun, AuditEvent
 from .upload_access import UploadAccessRequest
 from .telegram import TelegramBotConfig, TelegramIngestedFile, TelegramPollingState
+from .whatsapp import WhatsAppGroupConfig, WhatsAppIngestedMessage
 
 __all__ = [
     'Business',
@@ -21,4 +22,6 @@ __all__ = [
     'TelegramBotConfig',
     'TelegramIngestedFile',
     'TelegramPollingState',
+    'WhatsAppGroupConfig',
+    'WhatsAppIngestedMessage',
 ]

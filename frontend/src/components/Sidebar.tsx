@@ -84,6 +84,11 @@ export default function Sidebar() {
           {!collapsed && <span>הגדרות Telegram</span>}
         </NavLink>
 
+        <NavLink to={`${base}/settings/whatsapp`} className={linkClass} title={collapsed ? 'הגדרות WhatsApp' : undefined}>
+          <span className="material-symbols-outlined text-[20px] shrink-0">chat</span>
+          {!collapsed && <span>הגדרות WhatsApp</span>}
+        </NavLink>
+
         {(isAdmin || isApplicationManager) && !collapsed && (
           <div className="pt-4 pb-2">
             <button

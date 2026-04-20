@@ -13,6 +13,7 @@ import AdminPortalPage from './pages/AdminPortalPage';
 import MissingWorkCardsPage from './pages/MissingWorkCardsPage';
 import UnassignedWorkCardsPage from './pages/UnassignedWorkCardsPage';
 import TelegramSettings from './pages/TelegramSettings';
+import WhatsAppSettings from './pages/WhatsAppSettings';
 import ProtectedRoute from './components/ProtectedRoute';
 import TenantGuard from './components/TenantGuard';
 import Layout from './components/Layout';
@@ -50,6 +51,7 @@ function App() {
                 <Route path="/:businessCode/missing-work-cards" element={<MissingWorkCardsPage />} />
                 <Route path="/:businessCode/unassigned-work-cards" element={<UnassignedWorkCardsPage />} />
                 <Route path="/:businessCode/settings/telegram" element={<TelegramSettings />} />
+                <Route path="/:businessCode/settings/whatsapp" element={<WhatsAppSettings />} />
                 <Route element={<AdminRoute />}>
                   <Route path="/:businessCode/users" element={<UsersPage />} />
                   <Route path="/:businessCode/employee-imports" element={<EmployeeImportPage />} />

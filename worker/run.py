@@ -665,6 +665,22 @@ def main():
     else:
         logger.info("TELEGRAM_BOT_TOKEN not set — Telegram polling disabled")
 
+    if os.environ.get('WA_LISTENER_URL'):
+        try:
+            from whatsapp_poller import run_whatsapp_polling_loop
+            t = threading.Thread(
+                target=run_whatsapp_polling_loop,
+                args=(app,),
+                daemon=True,
+                name='whatsapp-poller',
+            )
+            t.start()
+            logger.info("WhatsApp polling thread started")
+        except Exception as e:
+            logger.warning(f"Failed to start WhatsApp polling thread: {e}")
+    else:
+        logger.info("WA_LISTENER_URL not set — WhatsApp polling disabled")
+
     main_loop(app)
 
 

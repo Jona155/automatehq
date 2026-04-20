@@ -31,6 +31,7 @@ from .export_run_repository import ExportRunRepository
 from .audit_event_repository import AuditEventRepository
 from .upload_access_request_repository import UploadAccessRequestRepository
 from .telegram_repository import TelegramConfigRepository, TelegramIngestedFileRepository, TelegramPollingStateRepository
+from .whatsapp_repository import WhatsAppGroupConfigRepository, WhatsAppIngestedMessageRepository
 
 __all__ = [
     'BaseRepository',
@@ -48,4 +49,6 @@ __all__ = [
     'TelegramConfigRepository',
     'TelegramIngestedFileRepository',
     'TelegramPollingStateRepository',
+    'WhatsAppGroupConfigRepository',
+    'WhatsAppIngestedMessageRepository',
 ]
