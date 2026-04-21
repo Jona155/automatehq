@@ -3,6 +3,11 @@ import client from './client';
 export interface WhatsAppStatus {
   connected: boolean;
   hasAuth: boolean;
+  waitingForQR: boolean;
+}
+
+export interface WhatsAppQR {
+  qrDataUrl: string | null;
 }
 
 export interface WhatsAppGroup {
@@ -22,6 +27,11 @@ export interface WhatsAppConfig {
 
 export const getWhatsAppStatus = async (): Promise<WhatsAppStatus> => {
   const response = await client.get<{ data: WhatsAppStatus }>('/whatsapp/status');
+  return response.data.data;
+};
+
+export const getWhatsAppQR = async (): Promise<WhatsAppQR> => {
+  const response = await client.get<{ data: WhatsAppQR }>('/whatsapp/qr');
   return response.data.data;
 };
 
