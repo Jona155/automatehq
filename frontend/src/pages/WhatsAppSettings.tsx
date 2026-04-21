@@ -247,6 +247,11 @@ function PickerModal({
   submitting: boolean;
   error: string | null;
 }) {
+  const [search, setSearch] = useState('');
+  const filtered = groups.filter((g) =>
+    g.chat_name.toLowerCase().includes(search.toLowerCase())
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
       <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl max-w-md w-full max-h-[80vh] flex flex-col">
@@ -268,22 +273,44 @@ function PickerModal({
               לא נמצאו קבוצות WhatsApp זמינות.
             </p>
           ) : (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                 קבוצה ({groups.length} זמינות)
               </label>
-              <select
-                value={selected}
-                onChange={(e) => onSelect(e.target.value)}
-                className="w-full border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary/50"
-              >
-                <option value="">— בחר קבוצה —</option>
-                {groups.map((g) => (
-                  <option key={g.chat_id} value={g.chat_id}>
-                    {g.chat_name}
-                  </option>
-                ))}
-              </select>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="חפש קבוצה..."
+                autoFocus
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+              />
+              <div className="max-h-52 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-100 dark:divide-slate-700">
+                {filtered.length === 0 ? (
+                  <div className="p-4 text-center text-slate-500 text-sm">לא נמצאו קבוצות</div>
+                ) : (
+                  filtered.map((g) => (
+                    <button
+                      key={g.chat_id}
+                      type="button"
+                      onClick={() => onSelect(g.chat_id)}
+                      className={`w-full text-right px-4 py-2.5 transition-colors flex items-center justify-between gap-2 ${
+                        selected === g.chat_id
+                          ? 'bg-primary/10 dark:bg-primary/20'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-slate-900 dark:text-white truncate">{g.chat_name}</div>
+                        <div className="text-xs font-mono text-slate-400 dark:text-slate-500 truncate">{g.chat_id}</div>
+                      </div>
+                      {selected === g.chat_id && (
+                        <span className="material-symbols-outlined text-primary text-[18px] shrink-0">check</span>
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
           )}
 
