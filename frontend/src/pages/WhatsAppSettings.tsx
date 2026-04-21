@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   getWhatsAppConfig,
   getWhatsAppGroups,
+  getWhatsAppQR,
   getWhatsAppStatus,
   linkWhatsAppGroup,
   unlinkWhatsAppGroup,
@@ -10,9 +11,12 @@ import {
   type WhatsAppStatus,
 } from '../api/whatsapp';
 
+const POLL_INTERVAL_MS = 2000;
+
 export default function WhatsAppSettings() {
   const [status, setStatus] = useState<WhatsAppStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [config, setConfig] = useState<WhatsAppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +27,8 @@ export default function WhatsAppSettings() {
   const [selectedChatId, setSelectedChatId] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+
+  const wasConnectedRef = useRef(false);
 
   const load = async () => {
     setLoading(true);
@@ -36,6 +42,7 @@ export default function WhatsAppSettings() {
       if (statusRes.status === 'fulfilled') {
         setStatus(statusRes.value);
         setStatusError(null);
+        wasConnectedRef.current = statusRes.value.connected;
       } else {
         setStatus(null);
         setStatusError(errorMessage(statusRes.reason) || 'לא ניתן להתחבר ל-WhatsApp Listener');
@@ -51,6 +58,57 @@ export default function WhatsAppSettings() {
   useEffect(() => {
     load();
   }, []);
+
+  // Poll status (and QR when waiting) while not connected.
+  useEffect(() => {
+    if (loading) return;
+    if (status?.connected) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const next = await getWhatsAppStatus();
+        if (cancelled) return;
+        setStatus(next);
+        setStatusError(null);
+
+        if (next.waitingForQR) {
+          try {
+            const qr = await getWhatsAppQR();
+            if (!cancelled) setQrDataUrl(qr.qrDataUrl);
+          } catch {
+            // keep showing last QR on transient fetch errors
+          }
+        } else if (!next.waitingForQR) {
+          setQrDataUrl(null);
+        }
+
+        // Transition: disconnected -> connected. Refresh config once.
+        if (next.connected && !wasConnectedRef.current) {
+          wasConnectedRef.current = true;
+          try {
+            const cfg = await getWhatsAppConfig();
+            if (!cancelled) setConfig(cfg);
+          } catch (err) {
+            if (!cancelled) setError(errorMessage(err) || 'Failed to load WhatsApp config');
+          }
+        } else {
+          wasConnectedRef.current = next.connected;
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setStatusError(errorMessage(err) || 'לא ניתן להתחבר ל-WhatsApp Listener');
+      }
+    };
+
+    tick();
+    const id = setInterval(tick, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [loading, status?.connected]);
 
   const openPicker = async () => {
     setPicking(true);
@@ -108,6 +166,8 @@ export default function WhatsAppSettings() {
     );
   }
 
+  const isConnected = !!status?.connected;
+
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 space-y-6">
       <div>
@@ -129,50 +189,58 @@ export default function WhatsAppSettings() {
         <StatusRow status={status} error={statusError} />
       </section>
 
-      {/* Linked group */}
-      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4">
-        <h2 className="font-semibold text-slate-800 dark:text-slate-200">קבוצת קליטה</h2>
+      {/* QR auth section — shown only when not connected */}
+      {!isConnected && !statusError && (
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4">
+          <h2 className="font-semibold text-slate-800 dark:text-slate-200">חיבור ל-WhatsApp</h2>
+          <QRPanel status={status} qrDataUrl={qrDataUrl} />
+        </section>
+      )}
 
-        {config ? (
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
-                {config.chat_name || config.chat_id}
-              </div>
-              <div className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                {config.chat_id}
-              </div>
-              {config.last_seen_timestamp && (
-                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  הודעה אחרונה שנראתה: {new Date(config.last_seen_timestamp).toLocaleString('he-IL')}
+      {/* Linked group — shown only when connected */}
+      {isConnected && (
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4">
+          <h2 className="font-semibold text-slate-800 dark:text-slate-200">קבוצת קליטה</h2>
+
+          {config ? (
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
+                  {config.chat_name || config.chat_id}
                 </div>
-              )}
+                <div className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                  {config.chat_id}
+                </div>
+                {config.last_seen_timestamp && (
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    הודעה אחרונה שנראתה: {new Date(config.last_seen_timestamp).toLocaleString('he-IL')}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleUnlink}
+                className="shrink-0 text-sm px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+              >
+                בטל קישור
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={handleUnlink}
-              className="shrink-0 text-sm px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-            >
-              בטל קישור
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between gap-4">
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              לא קושרה קבוצה. קשר קבוצה כדי להתחיל לקלוט תמונות.
-            </p>
-            <button
-              type="button"
-              onClick={openPicker}
-              disabled={!status?.connected}
-              className="shrink-0 text-sm px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              title={!status?.connected ? 'ה-Listener לא מחובר' : undefined}
-            >
-              בחר קבוצה
-            </button>
-          </div>
-        )}
-      </section>
+          ) : (
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                לא קושרה קבוצה. קשר קבוצה כדי להתחיל לקלוט תמונות.
+              </p>
+              <button
+                type="button"
+                onClick={openPicker}
+                className="shrink-0 text-sm px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors"
+              >
+                בחר קבוצה
+              </button>
+            </div>
+          )}
+        </section>
+      )}
 
       {picking && (
         <PickerModal
@@ -208,22 +276,55 @@ function StatusRow({ status, error }: { status: WhatsAppStatus | null; error: st
       </div>
     );
   }
+  if (status.waitingForQR) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="size-2.5 rounded-full bg-amber-500 inline-block" />
+        <span className="text-sm text-slate-700 dark:text-slate-300">ממתין לסריקת QR</span>
+      </div>
+    );
+  }
   if (status.hasAuth) {
     return (
       <div className="flex items-center gap-2">
         <span className="size-2.5 rounded-full bg-amber-500 inline-block" />
-        <span className="text-sm text-slate-700 dark:text-slate-300">
-          Listener פעיל אך לא מחובר — נסה שוב בעוד רגע
-        </span>
+        <span className="text-sm text-slate-700 dark:text-slate-300">מתחבר מחדש…</span>
       </div>
     );
   }
   return (
     <div className="flex items-center gap-2">
       <span className="size-2.5 rounded-full bg-slate-400 inline-block" />
-      <span className="text-sm text-slate-500 dark:text-slate-400">
-        Listener לא מקושר לטלפון — פתח את לוח הבקרה של ה-Listener וסרוק QR
-      </span>
+      <span className="text-sm text-slate-500 dark:text-slate-400">מאתחל חיבור…</span>
+    </div>
+  );
+}
+
+function QRPanel({ status, qrDataUrl }: { status: WhatsAppStatus | null; qrDataUrl: string | null }) {
+  if (!status) return null;
+
+  if (status.waitingForQR && qrDataUrl) {
+    return (
+      <div className="flex flex-col items-center gap-4">
+        <div className="bg-white p-3 rounded-xl border border-slate-200">
+          <img src={qrDataUrl} alt="QR לסריקה" className="size-64 object-contain" />
+        </div>
+        <ol className="text-sm text-slate-600 dark:text-slate-400 space-y-1 list-decimal list-inside text-right">
+          <li>פתח את WhatsApp בטלפון</li>
+          <li>גש להגדרות ← מכשירים מקושרים</li>
+          <li>לחץ על "קשר מכשיר" וסרוק את הקוד</li>
+        </ol>
+      </div>
+    );
+  }
+
+  // waitingForQR true but QR not yet fetched, OR service still booting / reconnecting.
+  return (
+    <div className="flex flex-col items-center gap-3 py-6">
+      <span className="material-symbols-outlined animate-spin text-primary text-4xl">progress_activity</span>
+      <p className="text-sm text-slate-500 dark:text-slate-400">
+        {status.waitingForQR ? 'מייצר QR…' : status.hasAuth ? 'מתחבר מחדש…' : 'מאתחל חיבור…'}
+      </p>
     </div>
   );
 }

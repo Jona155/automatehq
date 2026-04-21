@@ -59,6 +59,20 @@ def get_status():
         return api_response(status_code=503, message="WhatsApp listener unreachable", error=str(e))
 
 
+@whatsapp_settings_bp.route('/qr', methods=['GET'])
+@token_required
+def get_qr():
+    """Proxy to listener /api/qr. Returns {qrDataUrl: string | null}."""
+    client, err = _get_client()
+    if err:
+        return err
+    try:
+        return api_response(data=client.qr())
+    except WhatsAppListenerError as e:
+        logger.warning(f"WhatsApp listener unreachable: {e}")
+        return api_response(status_code=503, message="WhatsApp listener unreachable", error=str(e))
+
+
 @whatsapp_settings_bp.route('/config', methods=['GET'])
 @token_required
 def get_config():

@@ -67,6 +67,9 @@ class WhatsAppListenerClient:
     def status(self) -> dict:
         return self._get('/api/status')
 
+    def qr(self) -> dict:
+        return self._get('/api/qr')
+
     def list_chats(self) -> dict[str, str]:
         return self._get('/api/chats')
 
