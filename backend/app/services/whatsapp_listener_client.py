@@ -10,6 +10,7 @@ this too.
 """
 from __future__ import annotations
 
+import base64
 import os
 from typing import Any, Optional
 
@@ -39,6 +40,10 @@ class WhatsAppNumberNotRegisteredError(WhatsAppListenerError):
 
 class WhatsAppNotConnectedError(WhatsAppListenerError):
     """503 from /api/send — listener has no live WhatsApp socket."""
+
+
+class WhatsAppPayloadTooLargeError(WhatsAppListenerError):
+    """413 from /api/send-document — file exceeds the listener's 25 MB JSON body cap."""
 
 
 class WhatsAppServerError(WhatsAppListenerError):
@@ -109,6 +114,25 @@ class WhatsAppListenerClient:
     def send(self, chat_id: str, text: str) -> None:
         self._post('/api/send', {'chatId': chat_id, 'text': text})
 
+    def send_document(
+        self,
+        chat_id: str,
+        file_bytes: bytes,
+        filename: str,
+        caption: Optional[str] = None,
+        mimetype: Optional[str] = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            'chatId': chat_id,
+            'fileBase64': base64.b64encode(file_bytes).decode('ascii'),
+            'filename': filename,
+        }
+        if caption is not None:
+            payload['caption'] = caption
+        if mimetype is not None:
+            payload['mimetype'] = mimetype
+        self._post('/api/send-document', payload)
+
     # ----- internals -----
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
@@ -145,6 +169,8 @@ class WhatsAppListenerClient:
             raise WhatsAppBadRequestError(message, resp.status_code, body)
         if resp.status_code == 404:
             raise WhatsAppNumberNotRegisteredError(message, resp.status_code, body)
+        if resp.status_code == 413:
+            raise WhatsAppPayloadTooLargeError(message, resp.status_code, body)
         if resp.status_code == 503:
             raise WhatsAppNotConnectedError(message, resp.status_code, body)
         raise WhatsAppServerError(message, resp.status_code, body)

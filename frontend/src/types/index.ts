@@ -31,6 +31,7 @@ export interface Site {
   responsible_employee_id?: string | null;
   hourly_tariff?: number | null;
   contractor_emails?: string[] | null;
+  contractor_phone_number?: string | null;
 }
 
 export type EmployeeStatus = 'ACTIVE' | 'REPORTED_IN_SPARK' | 'REPORTED_RETURNED_FROM_ESCAPE';
