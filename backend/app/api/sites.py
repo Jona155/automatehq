@@ -21,6 +21,7 @@ from twilio.rest import Client
 from ..repositories.site_repository import SiteRepository
 from ..repositories.employee_repository import EmployeeRepository
 from ..repositories.upload_access_request_repository import UploadAccessRequestRepository
+from ..repositories.business_repository import BusinessRepository
 from ..services.sites.hours_matrix_service import (
     build_employee_upload_status_map,
     get_latest_work_card_with_extraction_by_employee,
@@ -34,6 +35,15 @@ from ..extensions import db
 from ..services.hours_matrix_service import load_hours_matrix_rows, build_matrix_and_status_map
 from ..observability import QueryCounter, sites_metrics
 from ..services.email_service import send_email_with_attachment
+from ..services.whatsapp_listener_client import (
+    WhatsAppAuthError,
+    WhatsAppBadRequestError,
+    WhatsAppListenerClient,
+    WhatsAppListenerError,
+    WhatsAppNotConnectedError,
+    WhatsAppNumberNotRegisteredError,
+    WhatsAppPayloadTooLargeError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +51,7 @@ sites_bp = Blueprint('sites', __name__, url_prefix='/api/sites')
 repo = SiteRepository()
 employee_repo = EmployeeRepository()
 access_repo = UploadAccessRequestRepository()
+business_repo = BusinessRepository()
 
 STATUS_LABELS = {
     'APPROVED': 'מאושר',
@@ -57,6 +68,44 @@ STATUS_DAY_LABELS = {
 }
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+
+IL_COUNTRY_CODE = '972'
+
+
+def _normalize_contractor_phone(raw):
+    """Normalize a contractor phone input to E.164 digits (no leading +).
+
+    Accepts user input like '050-123-4567', '+972 50 123 4567', '0501234567'.
+    Assumes Israel (+972) when input is a local number starting with '0'.
+    Returns (digits_only, error_msg). If raw is None/empty, returns (None, None).
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, str):
+        return None, 'contractor_phone_number must be a string'
+
+    trimmed = raw.strip()
+    if not trimmed:
+        return None, None
+
+    has_plus = trimmed.startswith('+')
+    has_double_zero = trimmed.startswith('00')
+    digits = re.sub(r'\D', '', trimmed)
+    if not digits:
+        return None, f'Invalid phone number: {raw}'
+
+    if has_plus:
+        pass
+    elif has_double_zero:
+        digits = digits[2:]
+    elif digits.startswith('0'):
+        digits = IL_COUNTRY_CODE + digits[1:]
+
+    if not (8 <= len(digits) <= 15):
+        return None, f'Invalid phone number: {raw}'
+
+    return digits, None
+
 
 def _validate_contractor_emails(data):
     """Validate and normalize contractor_emails field. Returns (cleaned_list, error_msg)."""
@@ -646,6 +695,12 @@ def create_site():
                 return api_response(status_code=400, message=err, error="Bad Request")
             data['contractor_emails'] = emails
 
+        if 'contractor_phone_number' in data:
+            phone, err = _normalize_contractor_phone(data.get('contractor_phone_number'))
+            if err:
+                return api_response(status_code=400, message=err, error="Bad Request")
+            data['contractor_phone_number'] = phone
+
         site = repo.create(**data)
         return api_response(data=model_to_dict(site), message="Site created successfully", status_code=201)
     except Exception as e:
@@ -691,6 +746,12 @@ def update_site(site_id):
             if err:
                 return api_response(status_code=400, message=err, error="Bad Request")
             data['contractor_emails'] = emails
+
+        if 'contractor_phone_number' in data:
+            phone, err = _normalize_contractor_phone(data.get('contractor_phone_number'))
+            if err:
+                return api_response(status_code=400, message=err, error="Bad Request")
+            data['contractor_phone_number'] = phone
 
         if 'hourly_tariff' in data:
             val = data.get('hourly_tariff')
@@ -1005,6 +1066,107 @@ def send_summary_email(site_id):
             "site_name": site.site_name,
         },
         message=f"הסיכום נשלח בהצלחה ל-{len(recipients)} נמענים",
+    )
+
+
+@sites_bp.route('/<uuid:site_id>/summary/whatsapp', methods=['POST'])
+@token_required
+@role_required('ADMIN')
+def send_summary_whatsapp(site_id):
+    """Send the monthly summary XLSX as a WhatsApp document to the site's contractor phone number."""
+    site = repo.get_by_id(site_id)
+    if not site or site.business_id != g.business_id:
+        return api_response(status_code=404, message="Site not found", error="Not Found")
+
+    phone = site.contractor_phone_number
+    if not phone:
+        return api_response(
+            status_code=400,
+            message="לא הוגדר מספר טלפון לאתר זה",
+            error="No contractor phone number configured",
+        )
+
+    data = request.get_json() or {}
+    processing_month = data.get('processing_month')
+    if not processing_month:
+        return api_response(status_code=400, message="processing_month is required", error="Bad Request")
+
+    client = WhatsAppListenerClient.from_env()
+    if client is None:
+        return api_response(
+            status_code=503,
+            message="שירות הוואטסאפ לא מוגדר",
+            error="WA_LISTENER_URL is not set",
+        )
+
+    try:
+        employees, matrix, _, month, status_matrix = _load_hours_matrix(
+            site_id, processing_month, approved_only=False, include_inactive=False
+        )
+    except ValueError as e:
+        return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to load hours matrix for WhatsApp send, site {site_id}")
+        return api_response(status_code=500, message="Failed to generate summary", error=str(e))
+
+    try:
+        output, _ = _generate_summary_xlsx(site, employees, matrix, month, status_matrix)
+    except Exception as e:
+        logger.exception(f"Failed to generate summary XLSX for WhatsApp, site {site_id}")
+        return api_response(status_code=500, message="Failed to generate summary", error=str(e))
+
+    month_label = month.strftime('%Y-%m')
+    business = business_repo.get_by_id(site.business_id)
+    business_name = business.name if business else ''
+    filename = f"סיכום חודשי - {site.site_name} - {month_label}.xlsx"
+    caption = (
+        f"שלום,\n"
+        f"מצורף דוח סיכום שעות חודשי לאתר {site.site_name} עבור חודש {month_label}.\n"
+        f"בברכה,\n"
+        f"{business_name}"
+    )
+    chat_id = f"{phone}@s.whatsapp.net"
+
+    try:
+        client.send_document(
+            chat_id=chat_id,
+            file_bytes=output.read(),
+            filename=filename,
+            caption=caption,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+    except WhatsAppNumberNotRegisteredError:
+        return api_response(
+            status_code=404,
+            message="המספר אינו רשום בוואטסאפ",
+            error="Phone number is not registered on WhatsApp",
+        )
+    except WhatsAppNotConnectedError:
+        return api_response(
+            status_code=503,
+            message="שירות הוואטסאפ אינו מחובר כרגע",
+            error="WhatsApp listener not connected",
+        )
+    except WhatsAppPayloadTooLargeError:
+        return api_response(
+            status_code=413,
+            message="הקובץ גדול מדי לשליחה בוואטסאפ",
+            error="XLSX file exceeds WhatsApp size limit",
+        )
+    except WhatsAppAuthError as e:
+        logger.error(f"WhatsApp listener auth error: {e}")
+        return api_response(status_code=500, message="שגיאת הזדהות מול שירות הוואטסאפ", error=str(e))
+    except WhatsAppListenerError as e:
+        logger.exception(f"WhatsApp listener error sending summary for site {site_id}")
+        return api_response(status_code=502, message="שגיאה בשליחת הוואטסאפ", error=str(e))
+
+    return api_response(
+        data={
+            "status": "sent",
+            "phone": phone,
+            "site_name": site.site_name,
+        },
+        message="הסיכום נשלח בוואטסאפ בהצלחה",
     )
 
 

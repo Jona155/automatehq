@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import type { Site, Employee } from '../types';
-import { downloadMonthlySummary, downloadSalaryTemplate, getSite, getSites, updateSite, sendSummaryEmail } from '../api/sites';
+import { downloadMonthlySummary, downloadSalaryTemplate, getSite, getSites, updateSite, sendSummaryEmail, sendSummaryWhatsapp } from '../api/sites';
 import { getEmployees } from '../api/employees';
 import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
@@ -51,7 +51,11 @@ export default function SiteDetailsPage() {
   const [contractorEmails, setContractorEmails] = useState<string[]>([]);
   const [contractorEmailInput, setContractorEmailInput] = useState<string>('');
   const [contractorEmailError, setContractorEmailError] = useState<string | null>(null);
+  const [contractorPhoneNumber, setContractorPhoneNumber] = useState<string>('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [whatsappConfirmOpen, setWhatsappConfirmOpen] = useState(false);
+  const [whatsappMonth, setWhatsappMonth] = useState<string>(selectedMonth);
+  const [isSendingWhatsapp, setIsSendingWhatsapp] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [isDownloadingSummary, setIsDownloadingSummary] = useState(false);
   const [emailConfirmOpen, setEmailConfirmOpen] = useState(false);
@@ -166,6 +170,7 @@ export default function SiteDetailsPage() {
     setContractorEmails(site?.contractor_emails || []);
     setContractorEmailInput('');
     setContractorEmailError(null);
+    setContractorPhoneNumber(site?.contractor_phone_number ? `+${site.contractor_phone_number}` : '');
     setSettingsModalOpen(true);
   };
 
@@ -182,6 +187,7 @@ export default function SiteDetailsPage() {
         responsible_employee_id: responsibleEmployeeId || null,
         hourly_tariff: hourlyTariff !== '' ? parseFloat(hourlyTariff) : null,
         contractor_emails: contractorEmails.length > 0 ? contractorEmails : null,
+        contractor_phone_number: contractorPhoneNumber.trim() ? contractorPhoneNumber.trim() : null,
       };
       const updated = await updateSite(siteId, payload);
       setSite(updated);
@@ -240,6 +246,20 @@ export default function SiteDetailsPage() {
     } finally {
       setIsSendingEmail(false);
       setEmailConfirmOpen(false);
+    }
+  };
+
+  const handleSendSummaryWhatsapp = async () => {
+    if (!siteId || !site) return;
+    setIsSendingWhatsapp(true);
+    try {
+      await sendSummaryWhatsapp(siteId, whatsappMonth);
+      showToast(`הסיכום נשלח בוואטסאפ למספר +${site.contractor_phone_number}`, 'success');
+      setWhatsappConfirmOpen(false);
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || 'שגיאה בשליחת הוואטסאפ', 'error');
+    } finally {
+      setIsSendingWhatsapp(false);
     }
   };
 
@@ -409,6 +429,22 @@ export default function SiteDetailsPage() {
               >
                 <span className="material-symbols-outlined text-lg">mail</span>
                 <span>{isSendingEmail ? 'שולח סיכום במייל...' : 'שליחת סיכום במייל'}</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  if (!site?.contractor_phone_number) {
+                    showToast('לא הוגדר מספר טלפון לאתר זה. ניתן להוסיף בהגדרות האתר.', 'error');
+                  } else {
+                    setWhatsappMonth(selectedMonth);
+                    setWhatsappConfirmOpen(true);
+                  }
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+                disabled={isSendingWhatsapp}
+              >
+                <span className="material-symbols-outlined text-lg">chat</span>
+                <span>{isSendingWhatsapp ? 'שולח סיכום בוואטסאפ...' : 'שליחת סיכום בוואטסאפ'}</span>
               </button>
               <button
                 onClick={() => {
@@ -646,6 +682,49 @@ export default function SiteDetailsPage() {
       </Modal>
 
       <Modal
+        isOpen={whatsappConfirmOpen}
+        onClose={() => setWhatsappConfirmOpen(false)}
+        title="שליחת סיכום בוואטסאפ"
+        maxWidth="sm"
+      >
+        <div className="flex flex-col gap-4" dir="rtl">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">חודש סיכום</label>
+            <MonthPicker value={whatsappMonth} onChange={setWhatsappMonth} />
+          </div>
+          <div>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mb-2">
+              שלח סיכום חודשי עבור <strong>{site?.site_name}</strong> למספר:
+            </p>
+            {site?.contractor_phone_number && (
+              <span
+                className="inline-flex items-center px-3 py-1 text-sm bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full"
+                dir="ltr"
+              >
+                +{site.contractor_phone_number}
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2 justify-end mt-2">
+            <button
+              onClick={() => setWhatsappConfirmOpen(false)}
+              className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+              disabled={isSendingWhatsapp}
+            >
+              ביטול
+            </button>
+            <button
+              onClick={handleSendSummaryWhatsapp}
+              className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+              disabled={isSendingWhatsapp}
+            >
+              {isSendingWhatsapp ? 'שולח...' : 'שלח'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={salaryModalOpen}
         onClose={() => setSalaryModalOpen(false)}
         title={"\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave"}
@@ -805,6 +884,19 @@ export default function SiteDetailsPage() {
               </div>
             )}
             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">כתובות מייל של קבלן האתר לשליחת דוחות חודשיים. ניתן להוסיף מספר כתובות.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">מספר טלפון של קבלן האתר</label>
+            <input
+              type="tel"
+              value={contractorPhoneNumber}
+              onChange={(e) => setContractorPhoneNumber(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              placeholder="050-123-4567"
+              dir="ltr"
+            />
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">מספר הטלפון בוואטסאפ לשליחת דוח הסיכום החודשי. מספר ישראלי או בפורמט בינלאומי (+).</p>
           </div>
 
           <div className="flex justify-end gap-3">

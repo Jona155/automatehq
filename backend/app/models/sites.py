@@ -19,6 +19,7 @@ class Site(db.Model):
     )
     hourly_tariff = db.Column(db.Numeric(10, 2), nullable=True)
     contractor_emails = db.Column(JSONB, nullable=True, default=list)
+    contractor_phone_number = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)

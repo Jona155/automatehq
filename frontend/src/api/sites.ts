@@ -34,7 +34,7 @@ export const createSite = async (data: { site_name: string; site_code?: string }
 
 export const updateSite = async (
   id: string,
-  data: { site_name?: string; site_code?: string; is_active?: boolean; responsible_employee_id?: string | null; contractor_emails?: string[] | null }
+  data: { site_name?: string; site_code?: string; is_active?: boolean; responsible_employee_id?: string | null; contractor_emails?: string[] | null; contractor_phone_number?: string | null }
 ) => {
   const response = await client.put<{ data: Site }>(`/sites/${id}`, data);
   return response.data.data;
@@ -91,6 +91,16 @@ export const sendSummaryEmail = async (
   processingMonth: string,
 ) => {
   const response = await client.post(`/sites/${siteId}/summary/email`, {
+    processing_month: normalizeMonthFormat(processingMonth),
+  });
+  return response.data;
+};
+
+export const sendSummaryWhatsapp = async (
+  siteId: string,
+  processingMonth: string,
+) => {
+  const response = await client.post(`/sites/${siteId}/summary/whatsapp`, {
     processing_month: normalizeMonthFormat(processingMonth),
   });
   return response.data;
