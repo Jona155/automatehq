@@ -43,6 +43,8 @@ FETCH_LIMIT = int(os.environ.get('WA_LISTENER_FETCH_LIMIT', '50'))
 
 _DATA_URL_RE = re.compile(r'^data:(image/[a-zA-Z0-9+.-]+);base64,(.+)$')
 
+INGEST_ACK_MESSAGE = '✅ קיבלנו! מעבד את התמונה...'
+
 
 def _decode_media(data_url: str) -> Optional[tuple[bytes, str]]:
     """Return (image_bytes, mime_type) or None if the data URL is malformed."""
@@ -223,6 +225,16 @@ def _process_config(client: WhatsAppListenerClient, config) -> None:
                 f"[WhatsApp] ingested message_id={message_id} → work_card {work_card_id} "
                 f"(caption={(m.get('text') or '')[:40]!r})"
             )
+            try:
+                client.send(chat_id=config.chat_id, text=INGEST_ACK_MESSAGE)
+                logger.info(
+                    f"[WhatsApp] ack sent to {config.chat_id} for work_card {work_card_id}"
+                )
+            except Exception as send_err:
+                logger.warning(
+                    f"[WhatsApp] ack send failed for {config.chat_id} "
+                    f"(work_card {work_card_id}): {type(send_err).__name__}: {send_err}"
+                )
         except Exception as e:
             logger.error(f"[WhatsApp] ingest failed for {message_id}: {e}")
             errors += 1
