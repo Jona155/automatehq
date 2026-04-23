@@ -114,6 +114,16 @@ class WhatsAppListenerClient:
     def send(self, chat_id: str, text: str) -> None:
         self._post('/api/send', {'chatId': chat_id, 'text': text})
 
+    # ----- session -----
+
+    def disconnect(self) -> None:
+        """
+        Logs out the active WhatsApp socket and wipes stored credentials.
+        Listener restarts into QR-wait state. Raises WhatsAppBadRequestError
+        (400) if there's no active connection to disconnect.
+        """
+        self._post('/api/disconnect', {})
+
     def send_document(
         self,
         chat_id: str,

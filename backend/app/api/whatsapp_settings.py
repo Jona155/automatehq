@@ -73,6 +73,26 @@ def get_qr():
         return api_response(status_code=503, message="WhatsApp listener unreachable", error=str(e))
 
 
+@whatsapp_settings_bp.route('/disconnect', methods=['POST'])
+@token_required
+def disconnect():
+    """Proxy to listener POST /api/disconnect. Unlinks the paired WhatsApp device and forces the listener into QR-wait state."""
+    client, err = _get_client()
+    if err:
+        return err
+    try:
+        client.disconnect()
+        return api_response(message="WhatsApp device disconnected")
+    except WhatsAppBadRequestError as e:
+        return api_response(status_code=400, message="No active WhatsApp connection to disconnect", error=str(e))
+    except WhatsAppAuthError as e:
+        logger.error(f"Listener auth failure: {e}")
+        return api_response(status_code=500, message="WhatsApp listener auth misconfigured", error="Server Error")
+    except WhatsAppListenerError as e:
+        logger.warning(f"listener.disconnect failed: {e}")
+        return api_response(status_code=502, message="Failed to disconnect WhatsApp", error=str(e))
+
+
 @whatsapp_settings_bp.route('/config', methods=['GET'])
 @token_required
 def get_config():

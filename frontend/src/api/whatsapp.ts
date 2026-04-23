@@ -53,3 +53,7 @@ export const linkWhatsAppGroup = async (chat_id: string): Promise<WhatsAppConfig
 export const unlinkWhatsAppGroup = async (): Promise<void> => {
   await client.delete('/whatsapp/link');
 };
+
+export const disconnectWhatsApp = async (): Promise<void> => {
+  await client.post('/whatsapp/disconnect');
+};
