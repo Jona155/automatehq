@@ -362,21 +362,34 @@ def approve_work_card(card_id):
 @role_required('ADMIN')
 def delete_work_card(card_id):
     """Delete a work card (must belong to current business)."""
+    from ..models.audit import AuditEvent
+    from ..models.telegram import TelegramIngestedFile
+    from ..models.whatsapp import WhatsAppIngestedMessage
+
     # Verify ownership
     card = repo.get_by_id(card_id)
     if not card or card.business_id != g.business_id:
         return api_response(status_code=404, message="Work card not found", error="Not Found")
-    
+
     try:
-        # Delete the card (cascade will handle related files/extractions/entries if configured,
-        # but the models define cascade="all, delete-orphan", so SQLAlchemy should handle it
-        # as long as we use session.delete(instance))
-        success = repo.delete(card_id)
-        if not success:
-             return api_response(status_code=404, message="Work card not found", error="Not Found")
-             
+        # NULL out FKs from tables whose rows we want to keep (audit/ingestion logs).
+        # These FKs have no ON DELETE rule, so leaving them would block the delete.
+        db.session.query(AuditEvent).filter(AuditEvent.work_card_id == card_id).update(
+            {AuditEvent.work_card_id: None}, synchronize_session=False
+        )
+        db.session.query(TelegramIngestedFile).filter(TelegramIngestedFile.work_card_id == card_id).update(
+            {TelegramIngestedFile.work_card_id: None}, synchronize_session=False
+        )
+        db.session.query(WhatsAppIngestedMessage).filter(WhatsAppIngestedMessage.work_card_id == card_id).update(
+            {WhatsAppIngestedMessage.work_card_id: None}, synchronize_session=False
+        )
+
+        db.session.delete(card)
+        db.session.commit()
         return api_response(message="Work card deleted successfully", status_code=200)
     except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to delete work card %s", card_id)
         return api_response(status_code=500, message="Failed to delete work card", error=str(e))
 
 @work_cards_bp.route('/<uuid:card_id>/file', methods=['GET'])
@@ -1292,6 +1305,7 @@ def reset_work_cards():
     try:
         from ..models.audit import AuditEvent
         from ..models.telegram import TelegramIngestedFile
+        from ..models.whatsapp import WhatsAppIngestedMessage
 
         if site_id:
             cards = repo.get_by_site_month(site_id=site_id, month=month, business_id=business_id)
@@ -1306,6 +1320,9 @@ def reset_work_cards():
             )
             db.session.query(TelegramIngestedFile).filter(TelegramIngestedFile.work_card_id.in_(card_ids)).update(
                 {TelegramIngestedFile.work_card_id: None}, synchronize_session=False
+            )
+            db.session.query(WhatsAppIngestedMessage).filter(WhatsAppIngestedMessage.work_card_id.in_(card_ids)).update(
+                {WhatsAppIngestedMessage.work_card_id: None}, synchronize_session=False
             )
 
         deleted_count = 0
