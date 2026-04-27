@@ -27,6 +27,7 @@ from ..services.sites.hours_matrix_service import (
     get_latest_work_card_with_extraction_by_employee,
 )
 from .utils import api_response, model_to_dict, models_to_list
+from .dashboard import invalidate_business_cache
 from ..auth_utils import token_required, role_required
 from ..utils import normalize_phone
 from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
@@ -706,6 +707,7 @@ def create_site():
             data['contractor_phone_number'] = phone
 
         site = repo.create(**data)
+        invalidate_business_cache(g.business_id)
         return api_response(data=model_to_dict(site), message="Site created successfully", status_code=201)
     except Exception as e:
         logger.exception("Failed to create site")
@@ -783,7 +785,8 @@ def update_site(site_id):
         updated_site = repo.update(site_id, **data)
         if not updated_site:
             return api_response(status_code=404, message="Site not found", error="Not Found")
-            
+
+        invalidate_business_cache(g.business_id)
         return api_response(data=model_to_dict(updated_site), message="Site updated successfully")
     except Exception as e:
         logger.exception(f"Failed to update site {site_id}")
@@ -807,7 +810,8 @@ def delete_site(site_id):
         success = repo.delete(site_id)
         if not success:
             return api_response(status_code=404, message="Site not found", error="Not Found")
-            
+
+        invalidate_business_cache(g.business_id)
         return api_response(message="Site deleted successfully")
     except Exception as e:
         logger.exception(f"Failed to delete site {site_id}")

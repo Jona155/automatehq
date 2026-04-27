@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from typing import Dict, Any, List, Tuple, Optional
 
 from flask import Blueprint, g, request
-from sqlalchemy import func, and_, case
+from sqlalchemy import func, and_, or_, case
 
 from ..auth_utils import token_required
 from ..extensions import db
@@ -59,6 +59,13 @@ def _set_cached(key: Tuple[str, str], data: Dict[str, Any]) -> None:
     _CACHE[key] = {"ts": datetime.now(timezone.utc), "data": data}
 
 
+def invalidate_business_cache(business_id) -> None:
+    """Drop all cached dashboard payloads for a business — call on writes that affect aggregates."""
+    bid = str(business_id)
+    for key in [k for k in _CACHE.keys() if k[0] == bid]:
+        _CACHE.pop(key, None)
+
+
 @dashboard_bp.route('/summary', methods=['GET'])
 @token_required
 def get_dashboard_summary():
@@ -95,9 +102,12 @@ def get_dashboard_summary():
             Employee.is_active.is_(True)
         ).scalar() or 0
 
-        work_cards_count = db.session.query(func.count(WorkCard.id)).filter(
+        work_cards_count = db.session.query(func.count(WorkCard.id)).outerjoin(
+            Site, Site.id == WorkCard.site_id
+        ).filter(
             WorkCard.business_id == g.business_id,
-            WorkCard.processing_month == month_start
+            WorkCard.processing_month == month_start,
+            or_(WorkCard.site_id.is_(None), Site.is_active.is_(True))
         ).scalar() or 0
 
         # Top 5 active sites by active employee counts
@@ -135,9 +145,12 @@ def get_dashboard_summary():
         status_rows = db.session.query(
             WorkCard.review_status,
             func.count(WorkCard.id).label("count")
+        ).outerjoin(
+            Site, Site.id == WorkCard.site_id
         ).filter(
             WorkCard.business_id == g.business_id,
-            WorkCard.processing_month == month_start
+            WorkCard.processing_month == month_start,
+            or_(WorkCard.site_id.is_(None), Site.is_active.is_(True))
         ).group_by(WorkCard.review_status).all()
 
         work_card_status = [
@@ -276,7 +289,7 @@ def get_dashboard_summary():
             .join(wc_sub, wc_sub.c.site_id == Site.id)
             .outerjoin(emp_sub, emp_sub.c.site_id == Site.id)
             .outerjoin(export_sub, export_sub.c.site_id == Site.id)
-            .filter(Site.business_id == g.business_id)
+            .filter(Site.business_id == g.business_id, Site.is_active.is_(True))
             .all()
         )
 

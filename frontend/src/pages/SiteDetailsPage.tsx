@@ -52,6 +52,7 @@ export default function SiteDetailsPage() {
   const [contractorEmailInput, setContractorEmailInput] = useState<string>('');
   const [contractorEmailError, setContractorEmailError] = useState<string | null>(null);
   const [contractorPhoneNumber, setContractorPhoneNumber] = useState<string>('');
+  const [isActive, setIsActive] = useState<boolean>(true);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [whatsappConfirmOpen, setWhatsappConfirmOpen] = useState(false);
   const [whatsappMonth, setWhatsappMonth] = useState<string>(selectedMonth);
@@ -171,6 +172,7 @@ export default function SiteDetailsPage() {
     setContractorEmailInput('');
     setContractorEmailError(null);
     setContractorPhoneNumber(site?.contractor_phone_number ? `+${site.contractor_phone_number}` : '');
+    setIsActive(site?.is_active ?? true);
     setSettingsModalOpen(true);
   };
 
@@ -188,6 +190,7 @@ export default function SiteDetailsPage() {
         hourly_tariff: hourlyTariff !== '' ? parseFloat(hourlyTariff) : null,
         contractor_emails: contractorEmails.length > 0 ? contractorEmails : null,
         contractor_phone_number: contractorPhoneNumber.trim() ? contractorPhoneNumber.trim() : null,
+        is_active: isActive,
       };
       const updated = await updateSite(siteId, payload);
       setSite(updated);
@@ -801,6 +804,26 @@ export default function SiteDetailsPage() {
         maxWidth="sm"
       >
         <div className="flex flex-col gap-4">
+          <div className="flex items-start justify-between gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+            <div className="flex-1">
+              <div className="text-sm font-medium text-slate-700 dark:text-slate-300">סטטוס אתר</div>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                אתר שאינו פעיל לא ייספר בדוחות לוח הבקרה. הנתונים הקיימים יישמרו וניתן להפעיל את האתר מחדש בכל עת.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isActive}
+              onClick={() => setIsActive(!isActive)}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${isActive ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+            >
+              <span
+                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform mt-0.5 ${isActive ? 'translate-x-0.5' : 'translate-x-[1.375rem]'}`}
+              />
+            </button>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">עובד אחראי</label>
             <select
