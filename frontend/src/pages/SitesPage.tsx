@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Site } from '../types';
 import {
@@ -13,7 +13,6 @@ import { usePermissions } from '../hooks/usePermissions';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
 import LoadingIndicator from '../components/LoadingIndicator';
-import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import { downloadBlobFile } from '../utils/fileDownload';
 import BatchUploadModal from '../components/BatchUploadModal';
 import SiteTariffImportModal from '../components/SiteTariffImportModal';
@@ -21,6 +20,88 @@ import { getDefaultMonth } from '../utils/monthUtils';
 
 type SortField = 'site_name' | 'site_code' | 'employee_count' | 'is_active';
 type SortOrder = 'asc' | 'desc';
+type StatusFilter = 'all' | 'active' | 'inactive';
+
+type MetricTone = 'accent' | 'ok' | 'neutral';
+
+const TONE_CLASSES: Record<MetricTone, { bg: string; fg: string }> = {
+  accent: {
+    bg: 'bg-blue-50 dark:bg-blue-500/10',
+    fg: 'text-blue-700 dark:text-blue-300',
+  },
+  ok: {
+    bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+    fg: 'text-emerald-700 dark:text-emerald-300',
+  },
+  neutral: {
+    bg: 'bg-slate-100 dark:bg-slate-700/50',
+    fg: 'text-slate-700 dark:text-slate-300',
+  },
+};
+
+function MetricCard({
+  label,
+  value,
+  sublabel,
+  icon,
+  tone,
+}: {
+  label: string;
+  value: number | string;
+  sublabel?: string;
+  icon: string;
+  tone: MetricTone;
+}) {
+  const t = TONE_CLASSES[tone];
+  return (
+    <div className="flex items-center gap-3 p-4 bg-white dark:bg-[#1a2a35] border border-slate-200/70 dark:border-slate-700/60 rounded-xl">
+      <div className={`w-10 h-10 rounded-lg grid place-items-center flex-shrink-0 ${t.bg} ${t.fg}`}>
+        <span className="material-symbols-outlined text-lg">{icon}</span>
+      </div>
+      <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+        <div className="flex items-baseline gap-1.5 flex-wrap leading-none">
+          <span className="text-2xl font-semibold text-slate-900 dark:text-white tabular-nums tracking-tight leading-none">
+            {value}
+          </span>
+          {sublabel && (
+            <span className="text-[11.5px] text-slate-500 dark:text-slate-400 font-medium tabular-nums leading-none">
+              {sublabel}
+            </span>
+          )}
+        </div>
+        <div className="text-xs text-slate-500 dark:text-slate-400 leading-tight">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({ active }: { active: boolean }) {
+  if (active) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+        פעיל
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700/60 dark:text-slate-300">
+      <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+      לא פעיל
+    </span>
+  );
+}
+
+function CodeCell({ code }: { code?: string | null }) {
+  if (code) {
+    return (
+      <span className="inline-block px-2 py-0.5 bg-slate-100 dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 rounded text-[12.5px] font-mono">
+        {code}
+      </span>
+    );
+  }
+  return <span className="text-slate-400 dark:text-slate-500 italic text-[12.5px]">לא הוגדר</span>;
+}
 
 export default function SitesPage() {
   const { isAuthenticated, user } = useAuth();
@@ -34,13 +115,11 @@ export default function SitesPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [filterName, setFilterName] = useState('');
   const [filterCode, setFilterCode] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
+  const [filterStatus, setFilterStatus] = useState<StatusFilter>('all');
   const [sortField, setSortField] = useState<SortField>('site_name');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(10);
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const actionsRef = useRef<HTMLDivElement | null>(null);
+  const [pageSize, setPageSize] = useState(25);
   const [summaryExportOpen, setSummaryExportOpen] = useState(false);
   const [summaryExportMonth, setSummaryExportMonth] = useState(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [isSummaryExporting, setIsSummaryExporting] = useState(false);
@@ -70,18 +149,24 @@ export default function SitesPage() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-
     fetchSites();
   }, [isAuthenticated]);
 
-  useOnClickOutside(actionsRef, () => setActionsOpen(false), actionsOpen);
+  const totalSitesAll = sites.length;
+  const activeCount = useMemo(() => sites.filter((s) => s.is_active).length, [sites]);
+  const inactiveCount = totalSitesAll - activeCount;
+  const activeEmployees = useMemo(
+    () => sites.filter((s) => s.is_active).reduce((sum, s) => sum + (s.employee_count ?? 0), 0),
+    [sites]
+  );
+  const activePct = totalSitesAll > 0 ? Math.round((activeCount / totalSitesAll) * 100) : 0;
 
   const filteredSites = useMemo(() => {
     return sites.filter((site) => {
       const matchesName = !filterName || site.site_name.toLowerCase().includes(filterName.toLowerCase());
       const matchesCode = !filterCode || (site.site_code || '').toLowerCase().includes(filterCode.toLowerCase());
       const matchesStatus =
-        !filterStatus || (filterStatus === 'active' ? site.is_active : !site.is_active);
+        filterStatus === 'all' || (filterStatus === 'active' ? site.is_active : !site.is_active);
       return matchesName && matchesCode && matchesStatus;
     });
   }, [sites, filterName, filterCode, filterStatus]);
@@ -135,10 +220,11 @@ export default function SitesPage() {
     }
   };
 
+  const hasActiveFilter = filterStatus !== 'all' || !!filterName || !!filterCode;
   const clearFilters = () => {
     setFilterName('');
     setFilterCode('');
-    setFilterStatus('');
+    setFilterStatus('all');
   };
 
   const handleOpenCreate = () => {
@@ -184,7 +270,7 @@ export default function SitesPage() {
 
   const handleDownloadSalaryBatch = async () => {
     if (!salaryExportMonth) {
-      setSalaryExportError('\u05d9\u05e9 \u05dc\u05d1\u05d7\u05d5\u05e8 \u05d7\u05d5\u05d3\u05e9 \u05dc\u05d9\u05d9\u05e6\u05d5\u05d0.');
+      setSalaryExportError('יש לבחור חודש לייצוא.');
       return;
     }
     setIsSalaryExporting(true);
@@ -198,9 +284,7 @@ export default function SitesPage() {
       setSalaryExportOpen(false);
     } catch (err: any) {
       console.error('Failed to export salary batch:', err);
-      setSalaryExportError(
-        err?.response?.data?.message || '\u05e9\u05d2\u05d9\u05d0\u05d4 \u05d1\u05d4\u05d5\u05e8\u05d3\u05ea \u05e7\u05d5\u05d1\u05e5 \u05e9\u05db\u05e8'
-      );
+      setSalaryExportError(err?.response?.data?.message || 'שגיאה בהורדת תבנית שכר');
     } finally {
       setIsSalaryExporting(false);
     }
@@ -235,88 +319,365 @@ export default function SitesPage() {
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) {
-      return <span className="material-symbols-outlined text-sm opacity-30">unfold_more</span>;
+      return (
+        <span className="inline-flex flex-col leading-[0.6] text-slate-300 dark:text-slate-600">
+          <span className="material-symbols-outlined text-[10px] -mb-0.5">expand_less</span>
+          <span className="material-symbols-outlined text-[10px] -mt-0.5">expand_more</span>
+        </span>
+      );
     }
     return (
-      <span className="material-symbols-outlined text-sm">
-        {sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+      <span className="inline-flex flex-col leading-[0.6]">
+        <span
+          className={`material-symbols-outlined text-[10px] -mb-0.5 ${
+            sortOrder === 'asc' ? 'text-slate-700 dark:text-slate-200' : 'text-slate-300 dark:text-slate-600'
+          }`}
+        >
+          expand_less
+        </span>
+        <span
+          className={`material-symbols-outlined text-[10px] -mt-0.5 ${
+            sortOrder === 'desc' ? 'text-slate-700 dark:text-slate-200' : 'text-slate-300 dark:text-slate-600'
+          }`}
+        >
+          expand_more
+        </span>
       </span>
     );
   };
 
-  return (
-    <div className="flex flex-col gap-6">
-      <ToastContainer />
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
-        <div>
-          <h2 className="text-[#111518] dark:text-white text-3xl font-bold">ניהול אתרים</h2>
-          <p className="text-[#617989] dark:text-slate-400 mt-1">נהל את אתרי העבודה שלך בארגון</p>
-        </div>
-        {isAdmin && <div className="relative" ref={actionsRef} dir="rtl">
-          <button
-            onClick={() => setActionsOpen((prev) => !prev)}
-            className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors font-medium text-sm bg-white dark:bg-transparent"
-          >
-            <span className="material-symbols-outlined text-lg">more_horiz</span>
-            <span>פעולות באתרים</span>
-          </button>
+  const segOptions: { id: StatusFilter; label: string; count: number }[] = [
+    { id: 'all', label: 'הכל', count: totalSitesAll },
+    { id: 'active', label: 'פעילים', count: activeCount },
+    { id: 'inactive', label: 'לא פעילים', count: inactiveCount },
+  ];
 
-          {actionsOpen && (
-            <div className="absolute left-0 mt-2 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden z-50" dir="rtl">
-              <button
-                onClick={() => {
-                  setActionsOpen(false);
-                  handleOpenCreate();
-                }}
-                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
-              >
-                <span className="material-symbols-outlined text-lg">add</span>
-                <span>יצירת אתר</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActionsOpen(false);
-                  handleOpenSummaryExport();
-                }}
-                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
-              >
-                <span className="material-symbols-outlined text-lg">table_view</span>
-                <span>הורדת סיכום אתרים (Excel)</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActionsOpen(false);
-                  handleOpenSalaryExport();
-                }}
-                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
-              >
-                <span className="material-symbols-outlined text-lg">request_quote</span>
-                <span>{"\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave"}</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActionsOpen(false);
-                  setGlobalUploadOpen(true);
-                }}
-                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
-              >
-                <span className="material-symbols-outlined text-lg">cloud_upload</span>
-                <span>העלאה גלובלית (ללא אתר)</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActionsOpen(false);
-                  setTariffImportOpen(true);
-                }}
-                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
-              >
-                <span className="material-symbols-outlined text-lg">upload_file</span>
-                <span>ייבוא תעריפים מקובץ</span>
-              </button>
-            </div>
-          )}
-        </div>}
+  return (
+    <div className="flex flex-col gap-0">
+      <ToastContainer />
+
+      {/* ─── Header ─── */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-5">
+        <div>
+          <div className="flex items-center gap-2.5 mb-1">
+            <h1 className="text-2xl font-semibold text-slate-900 dark:text-white tracking-tight">ניהול אתרים</h1>
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 tabular-nums">
+              {totalSitesAll}
+            </span>
+          </div>
+          <p className="text-sm text-slate-500 dark:text-slate-400">נהל את אתרי העבודה שלך בארגון</p>
+        </div>
+
+        {isAdmin && (
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <button
+              onClick={handleOpenSummaryExport}
+              className="h-9 px-3.5 inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+            >
+              <span className="material-symbols-outlined text-base">download</span>
+              סיכום אתרים (xlsx)
+            </button>
+            <button
+              onClick={handleOpenSalaryExport}
+              className="h-9 px-3.5 inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+            >
+              <span className="material-symbols-outlined text-base">request_quote</span>
+              תבנית שכר ל-wave
+            </button>
+            <button
+              onClick={() => setTariffImportOpen(true)}
+              className="h-9 px-3.5 inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+            >
+              <span className="material-symbols-outlined text-base">upload_file</span>
+              ייבוא פרטי אתר
+            </button>
+            <button
+              onClick={() => setGlobalUploadOpen(true)}
+              className="h-9 px-3.5 inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+            >
+              <span className="material-symbols-outlined text-base">cloud_upload</span>
+              העלאת כרטיסי עבודה
+            </button>
+            <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
+            <button
+              onClick={handleOpenCreate}
+              className="h-9 px-4 inline-flex items-center gap-2 text-sm font-semibold text-white bg-primary hover:bg-primary/90 rounded-lg shadow-sm shadow-primary/20 transition-colors"
+            >
+              <span className="material-symbols-outlined text-base">add</span>
+              יצירת אתר
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* ─── Metric strip ─── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <MetricCard label="סה״כ אתרים" value={totalSitesAll} icon="apartment" tone="accent" />
+        <MetricCard
+          label="אתרים פעילים"
+          value={activeCount}
+          sublabel={totalSitesAll > 0 ? `${activePct}%` : undefined}
+          icon="check_circle"
+          tone="ok"
+        />
+        <MetricCard label="אתרים לא פעילים" value={inactiveCount} icon="block" tone="neutral" />
+        <MetricCard
+          label="עובדים פעילים"
+          value={activeEmployees}
+          sublabel={`ב-${activeCount} אתרים`}
+          icon="groups"
+          tone="ok"
+        />
+      </div>
+
+      {/* ─── Filter row ─── */}
+      <div className="flex items-center gap-3 flex-wrap p-3 bg-white dark:bg-[#1a2a35] border border-slate-200/70 dark:border-slate-700/60 rounded-xl mb-3.5">
+        <div className="inline-flex p-0.5 bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded-lg flex-shrink-0">
+          {segOptions.map((o) => {
+            const active = filterStatus === o.id;
+            return (
+              <button
+                key={o.id}
+                onClick={() => setFilterStatus(o.id)}
+                className={`px-3 py-1.5 rounded-md text-[12.5px] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                  active
+                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 font-medium hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <span>{o.label}</span>
+                <span
+                  className={`text-[11px] tabular-nums font-medium ${
+                    active ? 'text-slate-500 dark:text-slate-400' : 'text-slate-400 dark:text-slate-500'
+                  }`}
+                >
+                  {o.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="w-px h-6 bg-slate-200 dark:bg-slate-700" />
+
+        <div className="relative flex-1 min-w-[200px] max-w-[320px]">
+          <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 text-base pointer-events-none">
+            search
+          </span>
+          <input
+            type="text"
+            value={filterName}
+            onChange={(e) => setFilterName(e.target.value)}
+            placeholder="חיפוש לפי שם אתר…"
+            className="w-full h-9 pr-10 pl-3 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[13px] text-slate-900 dark:text-white placeholder:text-slate-400 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+          />
+        </div>
+
+        <input
+          type="text"
+          value={filterCode}
+          onChange={(e) => setFilterCode(e.target.value)}
+          placeholder="קוד אתר"
+          className="w-44 h-9 px-3 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[13px] text-slate-900 dark:text-white placeholder:text-slate-400 font-mono outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+        />
+
+        <span className="flex-1" />
+
+        {hasActiveFilter && (
+          <button
+            onClick={clearFilters}
+            className="text-[12.5px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 px-2.5 py-1.5 rounded-md inline-flex items-center gap-1 transition-colors"
+          >
+            <span className="material-symbols-outlined text-[14px]">close</span>
+            נקה סינון
+          </button>
+        )}
+      </div>
+
+      {/* ─── Table card ─── */}
+      <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-sm border border-slate-200/70 dark:border-slate-700/60 overflow-hidden">
+        {isLoading ? (
+          <div className="p-12 text-center text-slate-500">טוען אתרים...</div>
+        ) : error ? (
+          <div className="p-12 text-center text-red-500">{error}</div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/60 dark:bg-slate-800/50">
+                    <th
+                      onClick={() => handleSort('site_name')}
+                      className={`px-4 py-3 text-[11.5px] font-medium tracking-wide cursor-pointer select-none border-b border-slate-200 dark:border-slate-700/60 hover:bg-slate-100/60 dark:hover:bg-slate-800/80 transition-colors ${
+                        sortField === 'site_name'
+                          ? 'text-slate-900 dark:text-white'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        שם אתר
+                        <SortIcon field="site_name" />
+                      </span>
+                    </th>
+                    <th
+                      onClick={() => handleSort('site_code')}
+                      style={{ width: 120 }}
+                      className={`px-4 py-3 text-[11.5px] font-medium tracking-wide cursor-pointer select-none border-b border-slate-200 dark:border-slate-700/60 hover:bg-slate-100/60 dark:hover:bg-slate-800/80 transition-colors ${
+                        sortField === 'site_code'
+                          ? 'text-slate-900 dark:text-white'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        קוד
+                        <SortIcon field="site_code" />
+                      </span>
+                    </th>
+                    <th
+                      onClick={() => handleSort('employee_count')}
+                      style={{ width: 130 }}
+                      className={`px-4 py-3 text-[11.5px] font-medium tracking-wide cursor-pointer select-none border-b border-slate-200 dark:border-slate-700/60 hover:bg-slate-100/60 dark:hover:bg-slate-800/80 transition-colors ${
+                        sortField === 'employee_count'
+                          ? 'text-slate-900 dark:text-white'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        עובדים
+                        <SortIcon field="employee_count" />
+                      </span>
+                    </th>
+                    <th
+                      onClick={() => handleSort('is_active')}
+                      style={{ width: 120 }}
+                      className={`px-4 py-3 text-[11.5px] font-medium tracking-wide cursor-pointer select-none border-b border-slate-200 dark:border-slate-700/60 hover:bg-slate-100/60 dark:hover:bg-slate-800/80 transition-colors ${
+                        sortField === 'is_active'
+                          ? 'text-slate-900 dark:text-white'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        סטטוס
+                        <SortIcon field="is_active" />
+                      </span>
+                    </th>
+                    <th
+                      style={{ width: 80 }}
+                      className="px-4 py-3 border-b border-slate-200 dark:border-slate-700/60 bg-slate-50/60 dark:bg-slate-800/50"
+                    />
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedSites.map((site) => {
+                    const empty = !site.employee_count;
+                    return (
+                      <tr
+                        key={site.id}
+                        onClick={() => handleRowClick(site.id)}
+                        className="group cursor-pointer hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
+                      >
+                        <td className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/40 text-[13.5px] font-medium text-slate-900 dark:text-white">
+                          {site.site_name}
+                        </td>
+                        <td className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/40">
+                          <CodeCell code={site.site_code} />
+                        </td>
+                        <td className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/40 tabular-nums">
+                          <span className="inline-flex items-baseline gap-1">
+                            <span
+                              className={`text-[13.5px] font-medium ${
+                                empty ? 'text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-white'
+                              }`}
+                            >
+                              {site.employee_count ?? 0}
+                            </span>
+                            <span className="text-xs text-slate-500 dark:text-slate-400">עובדים</span>
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/40">
+                          <StatusPill active={site.is_active} />
+                        </td>
+                        <td className="px-3 py-2 border-b border-slate-100 dark:border-slate-700/40 text-left">
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex gap-0.5">
+                            <button
+                              title="צפייה"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRowClick(site.id);
+                              }}
+                              className="w-7 h-7 rounded-md grid place-items-center hover:bg-slate-100 dark:hover:bg-slate-700/60 text-slate-500 dark:text-slate-400"
+                            >
+                              <span className="material-symbols-outlined text-base">visibility</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {sortedSites.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-12 text-center text-slate-500">
+                        {hasActiveFilter ? 'לא נמצאו אתרים התואמים את הסינון' : 'לא נמצאו אתרים'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* ─── Pagination footer ─── */}
+            {sortedSites.length > 0 && (
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-4 py-3 border-t border-slate-200 dark:border-slate-700/60 text-[13px] text-slate-500 dark:text-slate-400">
+                <div className="flex items-center gap-3">
+                  <span>
+                    מציג <b className="text-slate-900 dark:text-white tabular-nums">{paginatedSites.length}</b> מתוך{' '}
+                    <b className="text-slate-900 dark:text-white tabular-nums">{totalSites}</b> אתרים
+                  </span>
+                  <div className="w-px h-4 bg-slate-200 dark:bg-slate-700" />
+                  <label className="inline-flex items-center gap-1.5">
+                    <span>שורות לעמוד</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[12.5px] text-slate-900 dark:text-white tabular-nums cursor-pointer outline-none focus:border-primary"
+                    >
+                      {[10, 25, 50, 100].map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="w-8 h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 grid place-items-center text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-base">chevron_right</span>
+                  </button>
+                  <span className="px-2 text-[13px] text-slate-900 dark:text-white tabular-nums">
+                    {currentPage} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="w-8 h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 grid place-items-center text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-base">chevron_left</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ─── Summary export modal ─── */}
       <Modal
         isOpen={summaryExportOpen}
         onClose={() => setSummaryExportOpen(false)}
@@ -330,16 +691,11 @@ export default function SitesPage() {
             </div>
           )}
           {isSummaryExporting ? (
-            <LoadingIndicator
-              title="מכין קובץ Excel..."
-              subtitle="התהליך יכול לקחת עד דקה"
-            />
+            <LoadingIndicator title="מכין קובץ Excel..." subtitle="התהליך יכול לקחת עד דקה" />
           ) : (
             <>
               <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
-                  חודש לייצוא
-                </label>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">חודש לייצוא</label>
                 <div className="inline-flex">
                   <MonthPicker
                     value={summaryExportMonth}
@@ -370,10 +726,12 @@ export default function SitesPage() {
           )}
         </div>
       </Modal>
+
+      {/* ─── Salary export modal ─── */}
       <Modal
         isOpen={salaryExportOpen}
         onClose={() => setSalaryExportOpen(false)}
-        title={"\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave"}
+        title="הורדת תבנית שכר ל-wave"
         maxWidth="sm"
       >
         <div className="flex flex-col gap-4" dir="rtl">
@@ -383,16 +741,11 @@ export default function SitesPage() {
             </div>
           )}
           {isSalaryExporting ? (
-            <LoadingIndicator
-              title={"\u05de\u05db\u05d9\u05df \u05e7\u05d5\u05d1\u05e5 \u05e9\u05db\u05e8..."}
-              subtitle={"\u05d4\u05ea\u05d4\u05dc\u05d9\u05da \u05d9\u05db\u05d5\u05dc \u05dc\u05e7\u05d7\u05ea \u05e2\u05d3 \u05d3\u05e7\u05d4"}
-            />
+            <LoadingIndicator title="מכין קובץ שכר..." subtitle="התהליך יכול לקחת עד דקה" />
           ) : (
             <>
               <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
-                  {"\u05d7\u05d5\u05d3\u05e9 \u05dc\u05d9\u05d9\u05e6\u05d5\u05d0"}
-                </label>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">חודש לייצוא</label>
                 <div className="inline-flex">
                   <MonthPicker
                     value={salaryExportMonth}
@@ -408,7 +761,7 @@ export default function SitesPage() {
                   className="px-4 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
                   disabled={isSalaryExporting}
                 >
-                  {"\u05d1\u05d9\u05d8\u05d5\u05dc"}
+                  ביטול
                 </button>
                 <button
                   type="button"
@@ -416,9 +769,7 @@ export default function SitesPage() {
                   disabled={isSalaryExporting}
                   className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
                 >
-                  {isSalaryExporting
-                    ? '\u05de\u05d5\u05e8\u05d9\u05d3 \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave...'
-                    : '\u05d4\u05d5\u05e8\u05d3 \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave'}
+                  {isSalaryExporting ? 'מוריד תבנית שכר ל-wave...' : 'הורד תבנית שכר ל-wave'}
                 </button>
               </div>
             </>
@@ -426,184 +777,7 @@ export default function SitesPage() {
         </div>
       </Modal>
 
-      <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 p-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">סינון לפי שם</label>
-            <input
-              type="text"
-              value={filterName}
-              onChange={(e) => setFilterName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm"
-              placeholder="חפש לפי שם..."
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">סינון לפי קוד אתר</label>
-            <input
-              type="text"
-              value={filterCode}
-              onChange={(e) => setFilterCode(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm"
-              placeholder="חפש לפי קוד..."
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">סינון לפי סטטוס</label>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm"
-            >
-              <option value="">כל הסטטוסים</option>
-              <option value="active">פעיל</option>
-              <option value="inactive">לא פעיל</option>
-            </select>
-          </div>
-          <div className="flex items-end justify-end">
-            {(filterName || filterCode || filterStatus) && (
-              <button
-                onClick={clearFilters}
-                className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
-              >
-                נקה
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
-        {isLoading ? (
-          <div className="p-8 text-center text-slate-500">טוען אתרים...</div>
-        ) : error ? (
-          <div className="p-8 text-center text-red-500">{error}</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-right border-collapse">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
-                  <th
-                    className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
-                    onClick={() => handleSort('site_name')}
-                  >
-                    <div className="flex items-center gap-1">
-                      <span>שם אתר</span>
-                      <SortIcon field="site_name" />
-                    </div>
-                  </th>
-                  <th
-                    className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
-                    onClick={() => handleSort('site_code')}
-                  >
-                    <div className="flex items-center gap-1">
-                      <span>קוד אתר</span>
-                      <SortIcon field="site_code" />
-                    </div>
-                  </th>
-                  <th
-                    className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
-                    onClick={() => handleSort('employee_count')}
-                  >
-                    <div className="flex items-center gap-1">
-                      <span>מספר עובדים</span>
-                      <SortIcon field="employee_count" />
-                    </div>
-                  </th>
-                  <th
-                    className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
-                    onClick={() => handleSort('is_active')}
-                  >
-                    <div className="flex items-center gap-1">
-                      <span>סטטוס</span>
-                      <SortIcon field="is_active" />
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                {paginatedSites.map((site) => (
-                  <tr
-                    key={site.id}
-                    onClick={() => handleRowClick(site.id)}
-                    className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 cursor-pointer transition-colors"
-                  >
-                    <td className="px-6 py-5">
-                      <span className="text-[#111518] dark:text-white font-medium">{site.site_name}</span>
-                    </td>
-                    <td className="px-6 py-5">
-                      <span className="text-[#617989] dark:text-slate-400">{site.site_code || 'לא הוגדר'}</span>
-                    </td>
-                    <td className="px-6 py-5">
-                      <span className="text-[#111518] dark:text-white font-medium">
-                        {site.employee_count !== undefined ? `${site.employee_count} עובדים` : 'טוען...'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-5">
-                      {site.is_active ? (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                          פעיל
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-                          לא פעיל
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {sortedSites.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="p-8 text-center text-slate-500">
-                      {filterName || filterCode || filterStatus
-                        ? 'לא נמצאו אתרים התואמים את הסינון'
-                        : 'לא נמצאו אתרים'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-            {sortedSites.length > 0 && (
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-6 py-4 border-t border-slate-100 dark:border-slate-700/50 bg-slate-50/60 dark:bg-slate-900/40">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage(1)}
-                    disabled={currentPage === 1}
-                    className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  >
-                    ראשון
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  >
-                    הקודם
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  >
-                    הבא
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(totalPages)}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  >
-                    אחרון
-                  </button>
-                </div>
-                <div className="text-sm text-slate-600 dark:text-slate-400">
-                  עמוד {currentPage} מתוך {totalPages}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      {/* Create Site Modal */}
+      {/* ─── Create Site Modal ─── */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
@@ -612,9 +786,7 @@ export default function SitesPage() {
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               {formError && (
-                <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
-                  {formError}
-                </div>
+                <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">{formError}</div>
               )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">שם אתר</label>
@@ -656,6 +828,7 @@ export default function SitesPage() {
           </div>
         </div>
       )}
+
       <BatchUploadModal
         isOpen={globalUploadOpen}
         onClose={() => setGlobalUploadOpen(false)}
