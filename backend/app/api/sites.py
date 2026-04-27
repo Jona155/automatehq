@@ -424,10 +424,19 @@ def _populate_template_core_sheet(
     style_body,
     style_total,
     status_matrix=None,
+    monthly_totals=None,
 ):
-    """Populate a worksheet in the core template format (no fee summary rows)."""
+    """Populate a worksheet in the core template format (no fee summary rows).
+
+    When monthly_totals[employee_id] is set, the row-34 total cell for that
+    employee is written as a literal value (the manual override) instead of
+    the default =SUM(C3:C33) formula. Per-day cells still reflect any
+    extracted/manual day entries — only the total cell is overridden.
+    """
     if status_matrix is None:
         status_matrix = {}
+    if monthly_totals is None:
+        monthly_totals = {}
     days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
     employee_count = len(employees)
     last_data_col = max(2, employee_count + 1)
@@ -473,7 +482,14 @@ def _populate_template_core_sheet(
     ws.cell(row=34, column=1, value='סה"כ')._style = copy(style_total)
     for col in range(2, last_data_col + 1):
         col_letter = get_column_letter(col)
-        ws.cell(row=34, column=col, value=f'=SUM({col_letter}3:{col_letter}33)')._style = copy(style_total)
+        employee_idx = col - 2
+        employee = employees[employee_idx] if employee_idx < len(employees) else None
+        override = monthly_totals.get(str(employee.id)) if employee is not None else None
+        if override is not None:
+            cell_value = round(float(override), 2)
+        else:
+            cell_value = f'=SUM({col_letter}3:{col_letter}33)'
+        ws.cell(row=34, column=col, value=cell_value)._style = copy(style_total)
 
 def _add_tariff_summary(ws, employee_count, hourly_tariff, style_body,
                         style_site_total, style_tariff, style_tariff_label):
@@ -914,7 +930,7 @@ def get_hours_matrix(site_id):
                 }
             )
 
-def _generate_summary_xlsx(site, employees, matrix, month, status_matrix):
+def _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals=None):
     """Generate a monthly summary XLSX workbook and return (BytesIO, filename)."""
     template_path = _resolve_summary_template_path()
     workbook = load_workbook(template_path)
@@ -938,6 +954,7 @@ def _generate_summary_xlsx(site, employees, matrix, month, status_matrix):
         style_body=style_body,
         style_total=style_total,
         status_matrix=status_matrix,
+        monthly_totals=monthly_totals,
     )
 
     for extra_ws in workbook.worksheets[1:]:
@@ -979,7 +996,7 @@ def export_monthly_summary(site_id):
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
     try:
-        employees, matrix, status_map, month, status_matrix, _ = _load_hours_matrix(
+        employees, matrix, status_map, month, status_matrix, monthly_totals = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only,
@@ -993,7 +1010,7 @@ def export_monthly_summary(site_id):
         return api_response(status_code=500, message="Failed to export summary", error=str(e))
 
     try:
-        output, download_name = _generate_summary_xlsx(site, employees, matrix, month, status_matrix)
+        output, download_name = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals)
     except Exception as e:
         logger.exception(f"Failed to generate summary XLSX for site {site_id}")
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
@@ -1028,7 +1045,7 @@ def send_summary_email(site_id):
         return api_response(status_code=400, message="processing_month is required", error="Bad Request")
 
     try:
-        employees, matrix, _, month, status_matrix, __ = _load_hours_matrix(
+        employees, matrix, _, month, status_matrix, monthly_totals = _load_hours_matrix(
             site_id, processing_month, approved_only=False, include_inactive=False
         )
     except ValueError as e:
@@ -1038,7 +1055,7 @@ def send_summary_email(site_id):
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
 
     try:
-        output, filename = _generate_summary_xlsx(site, employees, matrix, month, status_matrix)
+        output, filename = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals)
     except Exception as e:
         logger.exception(f"Failed to generate summary XLSX for email, site {site_id}")
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
@@ -1110,7 +1127,7 @@ def send_summary_whatsapp(site_id):
         )
 
     try:
-        employees, matrix, _, month, status_matrix, __ = _load_hours_matrix(
+        employees, matrix, _, month, status_matrix, monthly_totals = _load_hours_matrix(
             site_id, processing_month, approved_only=False, include_inactive=False
         )
     except ValueError as e:
@@ -1120,7 +1137,7 @@ def send_summary_whatsapp(site_id):
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
 
     try:
-        output, _ = _generate_summary_xlsx(site, employees, matrix, month, status_matrix)
+        output, _ = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals)
     except Exception as e:
         logger.exception(f"Failed to generate summary XLSX for WhatsApp, site {site_id}")
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
@@ -1241,7 +1258,7 @@ def export_monthly_summary_batch():
 
         used_sheet_names = set()
         for site in sites:
-            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}})
+            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}})
             total_employee_count += len(site_data['employees'])
 
             ws = workbook.copy_worksheet(template_ws)
@@ -1255,6 +1272,7 @@ def export_monthly_summary_batch():
                 style_body=style_body,
                 style_total=style_total,
                 status_matrix=site_data['status_matrix'],
+                monthly_totals=site_data.get('monthly_totals'),
             )
             _add_tariff_summary(
                 ws,
