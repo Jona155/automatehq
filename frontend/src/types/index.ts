@@ -144,7 +144,7 @@ export interface CardGroup {
   latestUpload: string;
 }
 
-export type DayStatus = 'VACATION' | 'SICK' | 'INTERNATIONAL_VISA';
+export type DayStatus = 'VACATION' | 'SICK' | 'INTERNATIONAL_VISA' | 'HOLIDAY';
 
 export interface DayEntry {
   id: string;

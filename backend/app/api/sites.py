@@ -66,6 +66,7 @@ STATUS_DAY_LABELS = {
     'VACATION': 'חופשה',
     'SICK': 'מחלה',
     'INTERNATIONAL_VISA': 'ויזה בינלאומית',
+    'HOLIDAY': 'חג',
 }
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
