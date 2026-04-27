@@ -106,8 +106,11 @@ export default function MonthlySummaryTab({ siteId, selectedMonth, onMonthChange
 
   // Calculate total hours for an employee
   const getEmployeeTotalHours = (employeeId: string): number => {
-    if (!matrixData?.matrix[employeeId]) return 0;
-    return Object.values(matrixData.matrix[employeeId]).reduce((sum, hours) => sum + hours, 0);
+    const perDayEntries = matrixData?.matrix[employeeId];
+    if (perDayEntries && Object.keys(perDayEntries).length > 0) {
+      return Object.values(perDayEntries).reduce((sum, hours) => sum + hours, 0);
+    }
+    return matrixData?.monthly_totals?.[employeeId] ?? 0;
   };
 
   // Calculate total hours for a day across all employees

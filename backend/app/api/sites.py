@@ -533,8 +533,8 @@ def _load_hours_matrix(site_id, processing_month, approved_only, include_inactiv
         include_inactive=include_inactive,
         business_id=g.business_id,
     )
-    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}})
-    return site_data['employees'], site_data['matrix'], site_data['status_map'], month, site_data['status_matrix']
+    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}})
+    return site_data['employees'], site_data['matrix'], site_data['status_map'], month, site_data['status_matrix'], site_data['monthly_totals']
 
 
 def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, include_inactive, business_id):
@@ -545,7 +545,7 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         return {}
 
     site_results = {
-        site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}}
+        site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}}
         for site_id in unique_site_ids
     }
 
@@ -568,6 +568,7 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         WorkCard.site_id,
         WorkCard.employee_id,
         WorkCard.review_status,
+        WorkCard.monthly_total_hours,
         func.row_number().over(
             partition_by=WorkCard.employee_id,
             order_by=[
@@ -595,6 +596,7 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         ranked_cards.c.site_id,
         ranked_cards.c.employee_id,
         ranked_cards.c.review_status,
+        ranked_cards.c.monthly_total_hours,
     ).filter(
         ranked_cards.c.rank == 1
     ).all()
@@ -609,6 +611,8 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         employee_id_str = str(row.employee_id)
         work_card_to_site_employee[str(row.work_card_id)] = (row.site_id, employee_id_str)
         site_results[row.site_id]['status_map'][employee_id_str] = row.review_status
+        if row.monthly_total_hours is not None:
+            site_results[row.site_id]['monthly_totals'][employee_id_str] = float(row.monthly_total_hours)
 
     day_entries = db.session.query(
         WorkCardDayEntry.work_card_id,
@@ -871,7 +875,7 @@ def get_hours_matrix(site_id):
         include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
         try:
-            employees, matrix, status_map, _, status_matrix = _load_hours_matrix(
+            employees, matrix, status_map, _, status_matrix, monthly_totals = _load_hours_matrix(
                 site_id,
                 processing_month,
                 approved_only,
@@ -883,6 +887,7 @@ def get_hours_matrix(site_id):
                 'matrix': matrix,
                 'status_map': status_map,
                 'status_matrix': status_matrix,
+                'monthly_totals': monthly_totals,
             })
             return response
         except ValueError as e:
@@ -969,7 +974,7 @@ def export_monthly_summary(site_id):
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
     try:
-        employees, matrix, status_map, month, status_matrix = _load_hours_matrix(
+        employees, matrix, status_map, month, status_matrix, _ = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only,
@@ -1018,7 +1023,7 @@ def send_summary_email(site_id):
         return api_response(status_code=400, message="processing_month is required", error="Bad Request")
 
     try:
-        employees, matrix, _, month, status_matrix = _load_hours_matrix(
+        employees, matrix, _, month, status_matrix, __ = _load_hours_matrix(
             site_id, processing_month, approved_only=False, include_inactive=False
         )
     except ValueError as e:
@@ -1100,7 +1105,7 @@ def send_summary_whatsapp(site_id):
         )
 
     try:
-        employees, matrix, _, month, status_matrix = _load_hours_matrix(
+        employees, matrix, _, month, status_matrix, __ = _load_hours_matrix(
             site_id, processing_month, approved_only=False, include_inactive=False
         )
     except ValueError as e:
@@ -1316,7 +1321,7 @@ def export_salary_template_site(site_id):
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
 
     try:
-        employees, matrix, _, _, status_matrix = _load_hours_matrix(
+        employees, matrix, _, _, status_matrix, __ = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only=False,

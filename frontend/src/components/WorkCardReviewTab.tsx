@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup } from '../types';
-import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard } from '../api/workCards';
+import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard, getMissingWorkCardEmployees, createManualWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
 import { getFirstName } from '../utils/nameUtils';
 import MonthPicker from './MonthPicker';
@@ -80,6 +80,7 @@ const formatDateTime = (iso: string) => {
 const sourceLabel = (source: string) => (({
   ADMIN_SINGLE: 'העלאה ידנית', ADMIN_BATCH: 'העלאה קבוצתית',
   PUBLIC_PORTAL: 'פורטל ציבורי', WHATSAPP: 'וואטסאפ', TELEGRAM: 'טלגרם',
+  MANUAL: 'מילוי ידני (ללא תמונה)',
 } as Record<string, string>)[source] || source);
 
 const calcAggregateStatus = (statuses: WorkCard['review_status'][]): WorkCard['review_status'] => {
@@ -210,6 +211,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [isReextractingHours, setIsReextractingHours] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
+  const [missingEmployees, setMissingEmployees] = useState<Employee[]>([]);
+  const [isCreatingManualCard, setIsCreatingManualCard] = useState(false);
+  const [monthlyTotalInput, setMonthlyTotalInput] = useState<string>('');
   const [isAssigning, setIsAssigning] = useState(false);
   const [cardSearch, setCardSearch] = useState('');
   const [listFilter, setListFilter] = useState<'all' | 'unassigned' | 'assigned'>('all');
@@ -604,6 +608,68 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     }
   }, [siteId, selectedMonth, fetchWorkCards]);
 
+  // Fetch employees for this site that have no work card this month — these
+  // become the "no work card identified" sidebar group, which lets the admin
+  // create a manual ghost card and fill hours by hand.
+  const fetchMissingEmployees = useCallback(async () => {
+    if (!siteId || !selectedMonth) return;
+    try {
+      const month = /^\d{4}-\d{2}$/.test(selectedMonth) ? `${selectedMonth}-01` : selectedMonth;
+      const list = await getMissingWorkCardEmployees({ month, site_id: siteId });
+      setMissingEmployees(list);
+    } catch (err) {
+      console.error('Failed to fetch missing-card employees:', err);
+      setMissingEmployees([]);
+    }
+  }, [siteId, selectedMonth]);
+
+  useEffect(() => {
+    fetchMissingEmployees();
+  }, [fetchMissingEmployees]);
+
+  // Hide employees who already have an in-memory card (defense against the small
+  // window between creating the ghost card and the missing-list refetch).
+  const visibleMissingEmployees = useMemo(() => {
+    if (!missingEmployees.length) return missingEmployees;
+    const withCardEmployeeIds = new Set(
+      workCards.map(c => c.employee_id).filter((id): id is string => Boolean(id))
+    );
+    const search = cardSearch.trim().toLowerCase();
+    return missingEmployees.filter(emp => {
+      if (withCardEmployeeIds.has(emp.id)) return false;
+      if (!search) return true;
+      const name = (emp.full_name || '').toLowerCase();
+      const passport = (emp.passport_id || '').toLowerCase();
+      return name.includes(search) || passport.includes(search);
+    });
+  }, [missingEmployees, workCards, cardSearch]);
+
+  const handleCreateManualCard = useCallback(async (employee: Employee) => {
+    if (!siteId || !selectedMonth || isCreatingManualCard) return;
+    setIsCreatingManualCard(true);
+    try {
+      const month = /^\d{4}-\d{2}$/.test(selectedMonth) ? `${selectedMonth}-01` : selectedMonth;
+      const newCard = await createManualWorkCard({
+        site_id: siteId,
+        employee_id: employee.id,
+        processing_month: month,
+      });
+      const cardWithEmployee: WorkCard = { ...newCard, employee };
+      setWorkCards(prev => {
+        if (prev.some(c => c.id === cardWithEmployee.id)) return prev;
+        return [cardWithEmployee, ...prev];
+      });
+      setSelectedCard(cardWithEmployee);
+      setMissingEmployees(prev => prev.filter(e => e.id !== employee.id));
+      showToast('נוצר כרטיס ידני לעובד', 'success');
+    } catch (err) {
+      console.error('Failed to create manual work card:', err);
+      showToast('שגיאה ביצירת כרטיס ידני', 'error');
+    } finally {
+      setIsCreatingManualCard(false);
+    }
+  }, [siteId, selectedMonth, isCreatingManualCard, showToast]);
+
   // Preload extraction info per card so the sidebar doesn't show "mixed" data
   useEffect(() => {
     if (!unassignedCards.length) return;
@@ -731,6 +797,33 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     };
   }, [imageUrl]);
 
+  // Backend serializes Numeric as a string; normalize to a canonical form so
+  // input <-> saved comparison ("192" vs "192.00") doesn't show false-positive dirty.
+  const savedMonthlyTotalString = useMemo(() => {
+    const v = selectedCard?.monthly_total_hours;
+    if (v === null || v === undefined || v === '') return '';
+    const n = Number(v);
+    return Number.isFinite(n) ? String(n) : String(v);
+  }, [selectedCard?.monthly_total_hours]);
+
+  // Re-seed the input only when the selected card itself changes — typing must
+  // not trip a re-seed even if other state nearby re-renders.
+  useEffect(() => {
+    setMonthlyTotalInput(savedMonthlyTotalString);
+  }, [selectedCard?.id, savedMonthlyTotalString]);
+
+  // Derive dirtiness directly from input vs saved so it can never desync.
+  const monthlyTotalDirty = useMemo(() => {
+    const trimmed = monthlyTotalInput.trim();
+    if (trimmed === savedMonthlyTotalString) return false;
+    const a = Number(trimmed);
+    const b = Number(savedMonthlyTotalString);
+    if (trimmed !== '' && savedMonthlyTotalString !== '' && Number.isFinite(a) && Number.isFinite(b)) {
+      return a !== b;
+    }
+    return true;
+  }, [monthlyTotalInput, savedMonthlyTotalString]);
+
   // Fetch image and day entries when card is selected
   useEffect(() => {
     if (!selectedCard) return;
@@ -746,22 +839,31 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       return null;
     });
 
+    const isManualCard = selectedCard.source === 'MANUAL';
+
     const fetchCardDetails = async () => {
       setIsLoadingImage(true);
       setIsLoadingEntries(true);
 
       try {
-        const [blob, entries] = await Promise.all([
-          getWorkCardFile(cardId),
-          getDayEntries(cardId),
-        ]);
+        // Manual ghost cards have no associated file; fetch only day entries.
+        if (isManualCard) {
+          const entries = await getDayEntries(cardId);
+          if (cancelled || selectedCardIdRef.current !== cardId) return;
+          initializeDayEntries(entries);
+        } else {
+          const [blob, entries] = await Promise.all([
+            getWorkCardFile(cardId),
+            getDayEntries(cardId),
+          ]);
 
-        if (cancelled || selectedCardIdRef.current !== cardId) return;
+          if (cancelled || selectedCardIdRef.current !== cardId) return;
 
-        const url = URL.createObjectURL(blob);
-        setImageUrl(url);
+          const url = URL.createObjectURL(blob);
+          setImageUrl(url);
 
-        initializeDayEntries(entries);
+          initializeDayEntries(entries);
+        }
       } catch (err) {
         console.error('Failed to fetch card details:', err);
         showToast('שגיאה בטעינת פרטי הכרטיס', 'error');
@@ -793,6 +895,13 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
     // Clear previous card extraction immediately to avoid UI mixing between cards
     setExtraction(null);
+
+    // Manual ghost cards never have an extraction row — skip the fetch entirely
+    // so the network panel doesn't show a noisy (but harmless) 404.
+    if (selectedCard.source === 'MANUAL') {
+      setExtractionsByCardId(prev => ({ ...prev, [cardId]: null }));
+      return;
+    }
 
     const fetchExtraction = async () => {
       try {
@@ -1175,7 +1284,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       e => (!e.isLocked || manuallyUnlockedDays.has(e.day_of_month)) && e.isDirty && (e.from_time || e.to_time || e.total_hours || e.day_status !== undefined)
     );
 
-    if (dirtyEntries.length === 0) {
+    if (dirtyEntries.length === 0 && !monthlyTotalDirty) {
       if (showNoChangesToast) {
         showToast('אין שינויים לשמירה', 'info');
       }
@@ -1185,6 +1294,23 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     const overrideCount = dirtyEntries.filter(
       e => e.isLocked && manuallyUnlockedDays.has(e.day_of_month)
     ).length;
+
+    // Resolve the monthly_total_hours payload value: empty string clears it,
+    // otherwise parse to number. Validation also happens server-side.
+    let monthlyTotalPayload: number | null | undefined;
+    if (monthlyTotalDirty) {
+      const trimmed = monthlyTotalInput.trim();
+      if (trimmed === '') {
+        monthlyTotalPayload = null;
+      } else {
+        const parsed = Number(trimmed);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          showToast('סה"כ שעות חודשי חייב להיות מספר חיובי', 'error');
+          return false;
+        }
+        monthlyTotalPayload = parsed;
+      }
+    }
 
     setIsSaving(true);
     try {
@@ -1199,7 +1325,18 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
       const savedDecisions = { ...approvedConflictDecisions };
       const savedUnlockedDays = new Set(manuallyUnlockedDays);
-      await updateDayEntries(selectedCard.id, { entries });
+      await updateDayEntries(selectedCard.id, {
+        entries,
+        ...(monthlyTotalDirty ? { monthly_total_hours: monthlyTotalPayload as number | null } : {}),
+      });
+
+      // Sync the in-memory selected card with the saved monthly total so the
+      // derived dirty flag flips back to clean.
+      if (monthlyTotalDirty) {
+        const savedValue = monthlyTotalPayload ?? null;
+        setSelectedCard(prev => prev ? { ...prev, monthly_total_hours: savedValue } : prev);
+        setWorkCards(prev => prev.map(c => c.id === selectedCard.id ? { ...c, monthly_total_hours: savedValue } : c));
+      }
 
       const refreshedEntries = await getDayEntries(selectedCard.id);
 
@@ -1254,7 +1391,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     } finally {
       setIsSaving(false);
     }
-  }, [selectedCard, dayEntries, approvedConflictDecisions, manuallyUnlockedDays, initializeDayEntries, showToast]);
+  }, [selectedCard, dayEntries, approvedConflictDecisions, manuallyUnlockedDays, initializeDayEntries, showToast, monthlyTotalDirty, monthlyTotalInput]);
 
   const handleApprove = async () => {
     if (!selectedCard || !user) return;
@@ -1283,14 +1420,17 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       });
       showToast('הכרטיס אושר בהצלחה', 'success');
 
-      // Update local state
+      // Update local state — use functional update so a stale workCards closure
+      // (e.g. when called from handleApproveWithSave) can't overwrite monthly_total_hours.
       const approvedCardId = selectedCard.id;
-      const nextCards = workCards.map(c =>
+      const nextCardsForNav = workCards.map(c =>
         c.id === approvedCardId ? { ...c, review_status: 'APPROVED' as const } : c
       );
-      setWorkCards(nextCards);
+      setWorkCards(prev => prev.map(c =>
+        c.id === approvedCardId ? { ...c, review_status: 'APPROVED' as const } : c
+      ));
       if (autoAdvance) {
-        const nextCard = getNextCardAfterReviewAction(nextCards, approvedCardId);
+        const nextCard = getNextCardAfterReviewAction(nextCardsForNav, approvedCardId);
         setSelectedCard(nextCard);
       } else {
         setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
@@ -1513,8 +1653,19 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     }
   };
 
-  // Check if there are unsaved changes
-  const hasUnsavedChanges = dayEntries.some(e => e.isDirty);
+  // A day entry counts as "saveable" only if it's dirty AND carries content the
+  // backend will actually persist (the save endpoint filter is identical).
+  // Without this match, hasUnsavedChanges can light up the Save button while
+  // the underlying save bails with "no changes."
+  const hasContentfulDirtyEntries = useMemo(
+    () => dayEntries.some(e =>
+      (!e.isLocked || manuallyUnlockedDays.has(e.day_of_month)) &&
+      e.isDirty &&
+      (e.from_time || e.to_time || e.total_hours || e.day_status !== undefined)
+    ),
+    [dayEntries, manuallyUnlockedDays]
+  );
+  const hasUnsavedChanges = hasContentfulDirtyEntries || monthlyTotalDirty;
 
   const handleTableKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && hasUnsavedChanges && !isSaving) {
@@ -1623,14 +1774,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
             </div>
           ) : error ? (
             <div className="p-4 text-center text-red-500">{error}</div>
-          ) : workCards.length === 0 ? (
+          ) : workCards.length === 0 && visibleMissingEmployees.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
               <span className="material-symbols-outlined text-4xl text-slate-300 dark:text-slate-600 mb-2">folder_open</span>
               <p className="text-sm text-slate-500 dark:text-slate-400">אין כרטיסי עבודה לחודש זה</p>
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto">
-              {groupedCards.length === 0 ? (
+              {groupedCards.length === 0 && visibleMissingEmployees.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
                   <span className="material-symbols-outlined text-4xl text-slate-300 dark:text-slate-600 mb-2">manage_search</span>
                   <p className="text-sm text-slate-500 dark:text-slate-400">אין תוצאות לחיפוש/סינון</p>
@@ -1757,6 +1908,47 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                   );
                 })
               )}
+
+              {/* Section: employees with no work card identified.
+                  Click to spin up a manual ghost card and start filling hours. */}
+              {visibleMissingEmployees.length > 0 && (
+                <div className="border-t border-slate-200 dark:border-slate-700">
+                  <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/50">
+                    ללא כרטיס עבודה ({visibleMissingEmployees.length})
+                  </div>
+                  {visibleMissingEmployees.map((emp) => {
+                    const initials = (emp.full_name || '').split(' ').map(w => w[0]).join('').slice(0, 2);
+                    return (
+                      <button
+                        key={emp.id}
+                        type="button"
+                        disabled={isCreatingManualCard}
+                        onClick={() => handleCreateManualCard(emp)}
+                        className="w-full px-4 py-3 text-right flex items-center gap-3 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 border-b border-slate-100 dark:border-slate-800"
+                        title="צור כרטיס ידני לעובד זה"
+                      >
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs uppercase shrink-0 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                          {initials || <span className="material-symbols-outlined text-lg">person</span>}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-slate-900 dark:text-white truncate">
+                            {emp.full_name || 'עובד ללא שם'}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                            {emp.passport_id ? `ת.ז/דרכון: ${emp.passport_id}` : 'ת.ז/דרכון לא הוזנו'}
+                          </div>
+                          <div className="mt-1">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                              <span className="material-symbols-outlined text-xs">edit_note</span>
+                              מילוי ידני
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1819,6 +2011,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         {(selectedCard.employee?.passport_id || extraction?.extracted_passport_id) && (
                           <span className="text-xs text-slate-400 dark:text-slate-500 truncate">
                             ת.ז {selectedCard.employee?.passport_id || extraction?.extracted_passport_id}
+                          </span>
+                        )}
+                        {selectedCard.source === 'MANUAL' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                            <span className="material-symbols-outlined" style={{ fontSize: '11px' }}>edit_note</span>
+                            מילוי ידני
                           </span>
                         )}
                         {hasUnsavedChanges && (
@@ -2109,6 +2307,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             />
                           )}
                         </div>
+                      ) : selectedCard?.source === 'MANUAL' ? (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-400 text-center px-6">
+                          <span className="material-symbols-outlined text-4xl mb-2">edit_note</span>
+                          <span className="text-sm font-medium text-slate-600 dark:text-slate-300">כרטיס ידני — אין תמונה מצורפת</span>
+                          <span className="text-xs mt-1">מלאו את השעות בטבלה משמאל ושמרו</span>
+                        </div>
                       ) : (
                         <div className="flex flex-col items-center justify-center h-full text-slate-400">
                           <span className="material-symbols-outlined text-4xl mb-2">broken_image</span>
@@ -2157,6 +2361,26 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       <div className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-full">
                         סה"כ {totalHours.toFixed(2)} שעות
                       </div>
+                      {selectedCard?.source === 'MANUAL' && (
+                        <label
+                          className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
+                          htmlFor="monthly-total-input"
+                          title="סה״כ שעות חודשי — מאפשר רישום מספר אחד לכל החודש כשאין פירוט יומי"
+                        >
+                          סה"כ חודשי
+                          <input
+                            id="monthly-total-input"
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={monthlyTotalInput}
+                            onChange={(e) => setMonthlyTotalInput(e.target.value)}
+                            placeholder="--"
+                            className="w-24 px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                            aria-label="סה״כ שעות חודשי"
+                          />
+                        </label>
+                      )}
                       <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300" htmlFor="jump-to-day-input">
                         עבור ליום
                         <input

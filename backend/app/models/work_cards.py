@@ -26,6 +26,8 @@ class WorkCard(db.Model):
     source_page_number = db.Column(db.Integer, nullable=True)
     source_page_position = db.Column(db.Text, nullable=True)  # TOP, BOTTOM, FULL
     telegram_caption = db.Column(db.Text, nullable=True)
+    # Set when the user records a single month-level hours figure instead of per-day entries.
+    monthly_total_hours = db.Column(db.Numeric(7, 2), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
