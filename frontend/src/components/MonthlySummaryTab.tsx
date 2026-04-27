@@ -104,13 +104,23 @@ export default function MonthlySummaryTab({ siteId, selectedMonth, onMonthChange
     return config;
   };
 
-  // Calculate total hours for an employee
+  // Calculate total hours for an employee.
+  // monthly_total_hours, when set, is treated as a manual override and wins over the per-day sum.
   const getEmployeeTotalHours = (employeeId: string): number => {
+    const monthlyOverride = matrixData?.monthly_totals?.[employeeId];
+    if (monthlyOverride !== undefined && monthlyOverride !== null) {
+      return monthlyOverride;
+    }
     const perDayEntries = matrixData?.matrix[employeeId];
     if (perDayEntries && Object.keys(perDayEntries).length > 0) {
       return Object.values(perDayEntries).reduce((sum, hours) => sum + hours, 0);
     }
-    return matrixData?.monthly_totals?.[employeeId] ?? 0;
+    return 0;
+  };
+
+  const hasMonthlyOverride = (employeeId: string): boolean => {
+    const v = matrixData?.monthly_totals?.[employeeId];
+    return v !== undefined && v !== null;
   };
 
   // Calculate total hours for a day across all employees
@@ -269,12 +279,17 @@ export default function MonthlySummaryTab({ siteId, selectedMonth, onMonthChange
                 {matrixData.employees.map((employee) => {
                   const total = getEmployeeTotalHours(employee.id);
                   const config = getCellStyle(employee.id);
+                  const overridden = hasMonthlyOverride(employee.id);
                   return (
                     <td
                       key={employee.id}
                       className={`px-2 py-3 text-center border-t-2 border-l border-slate-300 dark:border-slate-600 ${config.bg}`}
+                      title={overridden ? 'סה״כ חודשי הוזן ידנית — דורס את סכום הימים' : undefined}
                     >
-                      <span className={config.text}>{total > 0 ? total.toFixed(1) : '-'}</span>
+                      <span className={config.text}>
+                        {total > 0 ? total.toFixed(1) : '-'}
+                        {overridden && total > 0 && <span className="ml-0.5 text-amber-600 dark:text-amber-400">*</span>}
+                      </span>
                     </td>
                   );
                 })}

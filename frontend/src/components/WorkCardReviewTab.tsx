@@ -2361,26 +2361,32 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       <div className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-full">
                         סה"כ {totalHours.toFixed(2)} שעות
                       </div>
-                      {selectedCard?.source === 'MANUAL' && (
-                        <label
-                          className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
-                          htmlFor="monthly-total-input"
-                          title="סה״כ שעות חודשי — מאפשר רישום מספר אחד לכל החודש כשאין פירוט יומי"
-                        >
-                          סה"כ חודשי
-                          <input
-                            id="monthly-total-input"
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={monthlyTotalInput}
-                            onChange={(e) => setMonthlyTotalInput(e.target.value)}
-                            placeholder="--"
-                            className="w-24 px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/50"
-                            aria-label="סה״כ שעות חודשי"
-                          />
-                        </label>
-                      )}
+                      <label
+                        className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
+                        htmlFor="monthly-total-input"
+                        title="סה״כ שעות חודשי — כשהוזן ידנית, דורס את סכום הימים בסיכום החודשי"
+                      >
+                        סה"כ חודשי
+                        <input
+                          id="monthly-total-input"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={monthlyTotalInput}
+                          onChange={(e) => setMonthlyTotalInput(e.target.value)}
+                          placeholder="--"
+                          className="w-24 px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                          aria-label="סה״כ שעות חודשי"
+                        />
+                        {monthlyTotalInput.trim() !== '' && totalHours > 0 && (
+                          <span
+                            className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                            title="הסה״כ החודשי הידני דורס את סכום הימים"
+                          >
+                            דורס סכום ימים
+                          </span>
+                        )}
+                      </label>
                       <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300" htmlFor="jump-to-day-input">
                         עבור ליום
                         <input
