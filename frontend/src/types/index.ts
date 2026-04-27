@@ -126,6 +126,7 @@ export interface WorkCard {
   source_page_number?: number | null;
   source_page_position?: 'TOP' | 'BOTTOM' | 'FULL' | null;
   telegram_caption?: string | null;
+  monthly_total_hours?: number | string | null;
   employee?: Employee;
   site?: Site;
 }
@@ -189,6 +190,7 @@ export interface MatrixData {
   matrix: Record<string, Record<number, number>>; // employee_id -> day -> hours
   status_matrix: Record<string, Record<number, string>>; // employee_id -> day -> day_status
   status_map: Record<string, string | null>; // employee_id -> review_status
+  monthly_totals?: Record<string, number>; // employee_id -> manual monthly total (no per-day entries)
 }
 
 export interface WorkCardExtraction {

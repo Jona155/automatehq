@@ -36,6 +36,7 @@ export interface UpdateDayEntriesRequest {
     to_time: string | null;
     total_hours: number | null;
   }>;
+  monthly_total_hours?: number | null;
 }
 
 export interface UploadBatchResponse {
@@ -228,6 +229,21 @@ export async function getMissingWorkCardEmployees(params: {
   const response = await client.get<{ data: Employee[] }>('/work_cards/missing', { params });
   return response.data.data;
 }
+
+// Create a manual (no-image) work card so an employee with no physical card
+// can still have hours recorded.
+export const createManualWorkCard = async (params: {
+  site_id: string;
+  employee_id: string;
+  processing_month: string;
+}): Promise<WorkCard> => {
+  const response = await client.post<{ data: WorkCard }>('/work_cards/manual', {
+    site_id: params.site_id,
+    employee_id: params.employee_id,
+    processing_month: normalizeMonthFormat(params.processing_month),
+  });
+  return response.data.data;
+};
 
 // Upload batch work cards without a site (employee-first flow)
 export const uploadSitelessBatchWorkCards = async (processingMonth: string, files: File[]) => {

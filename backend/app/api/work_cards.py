@@ -17,6 +17,7 @@ from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required, role_required
 from ..extensions import db
 from ..models.sites import Site
+from ..models.work_cards import WorkCard
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,98 @@ def _get_previous_card_context(card: Any) -> Tuple[Optional[Any], Dict[int, Any]
         return None, {}
     previous_entries_by_day = {entry.day_of_month: entry for entry in previous_card.day_entries}
     return previous_card, previous_entries_by_day
+
+@work_cards_bp.route('/manual', methods=['POST'])
+@token_required
+@role_required('ADMIN')
+def create_manual_work_card():
+    """Create a ghost work card (no image, no extraction) for manual hours entry.
+
+    Used when an employee has no physical work card but the admin still wants to
+    record their hours. Reuses every downstream pipeline (day entries, conflict
+    detection, approval) by relying on a regular `work_cards` row whose `files`
+    and `extraction` relationships stay null.
+    """
+    import uuid as uuid_module
+
+    data = request.get_json() or {}
+    site_id_str = data.get('site_id')
+    employee_id_str = data.get('employee_id')
+    month_str = data.get('processing_month')
+
+    if not site_id_str or not employee_id_str or not month_str:
+        return api_response(
+            status_code=400,
+            message="site_id, employee_id, and processing_month are required",
+            error="Bad Request"
+        )
+
+    try:
+        site_id = uuid_module.UUID(site_id_str)
+        employee_id = uuid_module.UUID(employee_id_str)
+    except ValueError:
+        return api_response(status_code=400, message="Invalid UUID format", error="Bad Request")
+
+    try:
+        month = datetime.strptime(month_str, '%Y-%m-%d').date()
+    except ValueError:
+        return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
+
+    # Verify the employee belongs to this business and site.
+    employee = employee_repo.get_by_id(employee_id)
+    if not employee or employee.business_id != g.business_id:
+        return api_response(status_code=404, message="Employee not found", error="Not Found")
+    if employee.site_id and employee.site_id != site_id:
+        return api_response(
+            status_code=400,
+            message="Employee does not belong to this site",
+            error="Bad Request"
+        )
+
+    # Verify the site belongs to this business.
+    site = db.session.query(Site).filter_by(id=site_id, business_id=g.business_id).first()
+    if not site:
+        return api_response(status_code=404, message="Site not found", error="Not Found")
+
+    # Prevent duplicate manual ghost cards for the same (employee, site, month).
+    # Image cards uploaded later are still allowed — they go through the conflict flow.
+    existing_manual = (
+        db.session.query(WorkCard)
+        .filter(
+            WorkCard.business_id == g.business_id,
+            WorkCard.site_id == site_id,
+            WorkCard.employee_id == employee_id,
+            WorkCard.processing_month == month,
+            WorkCard.source == 'MANUAL',
+        )
+        .first()
+    )
+    if existing_manual:
+        return api_response(
+            data=model_to_dict(existing_manual),
+            message="Manual work card already exists for this employee/site/month",
+            status_code=200,
+        )
+
+    try:
+        work_card = repo.create(
+            business_id=g.business_id,
+            site_id=site_id,
+            employee_id=employee_id,
+            processing_month=month,
+            source='MANUAL',
+            uploaded_by_user_id=g.current_user.id,
+            review_status='NEEDS_REVIEW',
+        )
+        return api_response(
+            data=model_to_dict(work_card),
+            message="Manual work card created successfully",
+            status_code=201,
+        )
+    except Exception as e:
+        logger.exception("Failed to create manual work card")
+        return api_response(status_code=500, message="Failed to create manual work card", error=str(e))
+
 
 @work_cards_bp.route('/missing', methods=['GET'])
 @token_required
@@ -596,10 +689,34 @@ def update_day_entries(card_id):
     data = request.get_json()
     if not data or 'entries' not in data:
         return api_response(status_code=400, message="entries array is required", error="Bad Request")
-    
+
     entries_data = data['entries']
     if not isinstance(entries_data, list):
         return api_response(status_code=400, message="entries must be an array", error="Bad Request")
+
+    # Optional top-level monthly_total_hours: a single per-month figure used when the
+    # admin can't (or doesn't want to) record per-day hours. Stored on the card itself.
+    monthly_total_provided = 'monthly_total_hours' in data
+    monthly_total_value = None
+    if monthly_total_provided:
+        raw_monthly_total = data.get('monthly_total_hours')
+        if raw_monthly_total in (None, ''):
+            monthly_total_value = None
+        else:
+            try:
+                monthly_total_value = round(float(raw_monthly_total), 2)
+            except (TypeError, ValueError):
+                return api_response(
+                    status_code=400,
+                    message="monthly_total_hours must be numeric",
+                    error="Bad Request"
+                )
+            if monthly_total_value < 0:
+                return api_response(
+                    status_code=400,
+                    message="monthly_total_hours must be non-negative",
+                    error="Bad Request"
+                )
     
     # Validation helper
     def validate_time_format(time_str):
@@ -723,7 +840,12 @@ def update_day_entries(card_id):
                     entry_data['source'] = 'MANUAL'
                 new_entry = day_entry_repo.create(**entry_data)
                 updated_entries.append(new_entry)
-        
+
+        # Persist monthly_total_hours on the card itself when supplied.
+        if monthly_total_provided:
+            card.monthly_total_hours = monthly_total_value
+            db.session.commit()
+
         return api_response(
             data=models_to_list(updated_entries),
             message="Day entries updated successfully"
