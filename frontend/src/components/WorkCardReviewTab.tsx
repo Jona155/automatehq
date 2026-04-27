@@ -2647,6 +2647,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     <option value="VACATION">חופשה</option>
                                     <option value="SICK">מחלה</option>
                                     <option value="INTERNATIONAL_VISA">ויזה בינלאומית</option>
+                                    <option value="HOLIDAY">חג</option>
                                   </select>
                                 </td>
                               </tr>
