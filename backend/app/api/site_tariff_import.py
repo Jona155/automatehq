@@ -4,11 +4,15 @@ from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-from flask import Blueprint, request, g
+from flask import Blueprint, request, g, send_file
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 from ..auth_utils import token_required, role_required
 from ..repositories.site_repository import SiteRepository
 from .employee_imports import _normalize_cell
+from .sites import _normalize_contractor_phone, EMAIL_REGEX
 from .utils import api_response
 
 logger = logging.getLogger(__name__)
@@ -19,6 +23,10 @@ site_repo = SiteRepository()
 
 SITE_NAME_ALIASES = ['שם האתר', 'שם אתר', 'site_name', 'אתר']
 TARIFF_ALIASES = ['מחיר', 'תעריף', 'תעריף שעתי', 'tariff', 'hourly_tariff', 'price']
+PHONE_ALIASES = ['טלפון איש קשר', 'טלפון', 'מספר טלפון', 'phone', 'contact_phone', 'contractor_phone', 'contractor_phone_number']
+EMAIL_ALIASES = ['מייל איש קשר', 'אימייל איש קשר', 'מייל', 'אימייל', 'email', 'contact_email', 'contractor_email', 'contractor_emails']
+
+EMAIL_SPLIT_RE = re.compile(r'[;,]')
 
 
 def _normalize_name(name: str) -> str:
@@ -46,33 +54,104 @@ def _match_site(site_name: str, by_name: Dict[str, Any], by_normalized: Dict[str
 
 
 def _validate_tariff(tariff_raw) -> Tuple[Optional[float], List[str]]:
-    """Validate and parse a tariff value. Returns (parsed_value, errors)."""
-    errors = []
-    if tariff_raw is None:
-        errors.append('תעריף לא תקין')
-        return None, errors
+    """Validate and parse a tariff cell.
+
+    Returns (parsed_value, errors). Empty / missing cell yields (None, [])
+    meaning "no change for this field"; only non-empty values are validated.
+    """
+    if tariff_raw is None or (isinstance(tariff_raw, str) and not tariff_raw.strip()):
+        return None, []
     try:
         value = float(tariff_raw)
         if value < 0:
-            errors.append('תעריף חייב להיות חיובי')
-            return None, errors
+            return None, ['תעריף חייב להיות חיובי']
         return value, []
     except (ValueError, TypeError):
-        errors.append('תעריף לא תקין')
+        return None, ['תעריף לא תקין']
+
+
+def _validate_phone_cell(phone_raw) -> Tuple[Optional[str], List[str]]:
+    """Validate and normalize a phone cell.
+
+    Empty / missing cell yields (None, []) — no change. Otherwise normalises
+    via the same logic the per-site UI uses, so manual edits and bulk imports
+    produce identical stored values.
+
+    Excel-specific recovery: numeric cells lose their leading zero, so a value
+    like 0508123456 arrives here as '508123456'. When the input is purely
+    digits, exactly 9 characters long, and starts with 5 (IL mobile prefix
+    shape), we restore the leading 0 before handing off to the shared
+    normaliser. Formatted input (with separators or '+') is trusted as-is.
+    """
+    if phone_raw is None:
+        return None, []
+    if not isinstance(phone_raw, str):
+        phone_raw = str(phone_raw)
+    raw = phone_raw.strip()
+    if not raw:
+        return None, []
+
+    if raw.isdigit() and len(raw) == 9 and raw[0] == '5':
+        raw = '0' + raw
+
+    digits, err = _normalize_contractor_phone(raw)
+    if err:
+        return None, [f'מספר טלפון לא תקין: {phone_raw}']
+    return digits, []
+
+
+def _validate_emails_cell(emails_raw) -> Tuple[Optional[List[str]], List[str]]:
+    """Validate and normalise an emails cell (semicolon or comma separated)."""
+    if emails_raw is None:
+        return None, []
+    if not isinstance(emails_raw, str):
+        emails_raw = str(emails_raw)
+    if not emails_raw.strip():
+        return None, []
+
+    parts = [p.strip() for p in EMAIL_SPLIT_RE.split(emails_raw)]
+    cleaned: List[str] = []
+    errors: List[str] = []
+    for part in parts:
+        if not part:
+            continue
+        lowered = part.lower()
+        if not EMAIL_REGEX.match(lowered):
+            errors.append(f'כתובת מייל לא תקינה: {part}')
+            continue
+        if lowered not in cleaned:
+            cleaned.append(lowered)
+    if errors:
         return None, errors
+    return cleaned, []
 
 
 def _tariff_changed(current: Optional[float], new: Optional[float]) -> bool:
-    """Compare tariffs safely, handling Decimal->float rounding."""
-    if current is None and new is None:
+    """Compare tariffs safely, handling Decimal->float rounding.
+
+    `new is None` means "leave the field as-is" — never reported as a change.
+    """
+    if new is None:
         return False
-    if current is None or new is None:
+    if current is None:
         return True
     return round(current, 2) != round(new, 2)
 
 
+def _phone_changed(current: Optional[str], new: Optional[str]) -> bool:
+    if new is None:
+        return False
+    return (current or '') != (new or '')
+
+
+def _emails_changed(current: Optional[List[str]], new: Optional[List[str]]) -> bool:
+    if new is None:
+        return False
+    cur = [e.lower() for e in (current or [])]
+    return sorted(cur) != sorted(new)
+
+
 def _summarize(rows: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Compute summary counts by action."""
     summary = {'update': 0, 'no_change': 0, 'error': 0, 'total': len(rows)}
     for row in rows:
         action = row.get('action')
@@ -83,58 +162,81 @@ def _summarize(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     return summary
 
 
+def _find_column(row_values: List[str], aliases: List[str]) -> Optional[int]:
+    for ci, cell in enumerate(row_values):
+        if cell in aliases:
+            return ci
+    return None
+
+
 def _parse_tariff_file(file_bytes: bytes) -> List[Dict[str, Any]]:
-    """Parse Excel file, auto-detect header row and columns."""
+    """Parse Excel file, auto-detecting header row and (optional) columns.
+
+    Required: a header row with the site-name column. At least one of
+    tariff/phone/email columns must be present (otherwise the file has nothing
+    to import). Empty cells in a present column are treated as "no change" by
+    the diff stage rather than as errors — this lets users round-trip the
+    export and edit only the fields they care about.
+    """
     try:
         df = pd.read_excel(BytesIO(file_bytes), header=None, sheet_name='תעריפים לכל אתר')
     except (KeyError, ValueError):
         df = pd.read_excel(BytesIO(file_bytes), header=None, sheet_name=0)
 
-    # Scan for header row
     header_row = None
     site_col = None
     tariff_col = None
+    phone_col = None
+    email_col = None
 
     for idx, row in df.iterrows():
         row_values = [str(v).strip() if pd.notna(v) else '' for v in row]
-        for ci, cell in enumerate(row_values):
-            if cell in SITE_NAME_ALIASES:
-                site_col_candidate = ci
-                for cj, cell2 in enumerate(row_values):
-                    if cell2 in TARIFF_ALIASES:
-                        header_row = idx
-                        site_col = site_col_candidate
-                        tariff_col = cj
-                        break
-                if header_row is not None:
-                    break
-        if header_row is not None:
-            break
+        site_candidate = _find_column(row_values, SITE_NAME_ALIASES)
+        if site_candidate is None:
+            continue
+        tariff_candidate = _find_column(row_values, TARIFF_ALIASES)
+        phone_candidate = _find_column(row_values, PHONE_ALIASES)
+        email_candidate = _find_column(row_values, EMAIL_ALIASES)
+        if tariff_candidate is None and phone_candidate is None and email_candidate is None:
+            continue
+        header_row = idx
+        site_col = site_candidate
+        tariff_col = tariff_candidate
+        phone_col = phone_candidate
+        email_col = email_candidate
+        break
 
     if header_row is None:
-        raise ValueError('לא נמצאו כותרות מתאימות בקובץ (שם האתר / מחיר)')
+        raise ValueError('לא נמצאו כותרות מתאימות בקובץ (שם האתר ולפחות אחת מ: תעריף / טלפון / מייל)')
 
     rows = []
     for idx in range(header_row + 1, len(df)):
         site_name = _normalize_cell(df.iloc[idx, site_col])
-        tariff_raw = _normalize_cell(df.iloc[idx, tariff_col])
-
         if not site_name:
             continue
 
         rows.append({
-            'row_number': idx + 1,  # 1-based for display
+            'row_number': idx + 1,
             'site_name': site_name,
-            'tariff_raw': tariff_raw,
+            'tariff_raw': _normalize_cell(df.iloc[idx, tariff_col]) if tariff_col is not None else None,
+            'phone_raw': _normalize_cell(df.iloc[idx, phone_col]) if phone_col is not None else None,
+            'emails_raw': _normalize_cell(df.iloc[idx, email_col]) if email_col is not None else None,
         })
 
     return rows
 
 
-def _build_diff_row(site_name: str, row_number: int, new_tariff: Optional[float],
-                    tariff_errors: List[str], by_name: Dict, by_normalized: Dict) -> Dict[str, Any]:
-    """Build a single diff row with matching and validation."""
-    errors = list(tariff_errors)
+def _build_diff_row(
+    site_name: str,
+    row_number: int,
+    new_tariff: Optional[float],
+    new_phone: Optional[str],
+    new_emails: Optional[List[str]],
+    field_errors: List[str],
+    by_name: Dict,
+    by_normalized: Dict,
+) -> Dict[str, Any]:
+    errors = list(field_errors)
     warnings: List[str] = []
 
     matched_site = _match_site(site_name, by_name, by_normalized)
@@ -142,6 +244,8 @@ def _build_diff_row(site_name: str, row_number: int, new_tariff: Optional[float]
     matched_site_id = None
     matched_site_name = None
     current_tariff = None
+    current_phone = None
+    current_emails = None
     action = 'error'
 
     if not matched_site:
@@ -150,12 +254,16 @@ def _build_diff_row(site_name: str, row_number: int, new_tariff: Optional[float]
         matched_site_id = str(matched_site.id)
         matched_site_name = matched_site.site_name
         current_tariff = float(matched_site.hourly_tariff) if matched_site.hourly_tariff is not None else None
+        current_phone = matched_site.contractor_phone_number or None
+        current_emails = list(matched_site.contractor_emails or [])
 
         if not errors:
-            if not _tariff_changed(current_tariff, new_tariff):
-                action = 'no_change'
-            else:
-                action = 'update'
+            any_change = (
+                _tariff_changed(current_tariff, new_tariff)
+                or _phone_changed(current_phone, new_phone)
+                or _emails_changed(current_emails, new_emails)
+            )
+            action = 'update' if any_change else 'no_change'
 
     if errors:
         action = 'error'
@@ -167,6 +275,10 @@ def _build_diff_row(site_name: str, row_number: int, new_tariff: Optional[float]
         'matched_site_name': matched_site_name,
         'current_tariff': current_tariff,
         'new_tariff': new_tariff,
+        'current_phone': current_phone,
+        'new_phone': new_phone,
+        'current_emails': current_emails,
+        'new_emails': new_emails,
         'action': action,
         'errors': errors,
         'warnings': warnings,
@@ -182,13 +294,17 @@ def _build_tariff_diff(parsed_rows: List[Dict[str, Any]], business_id) -> Tuple[
 
     for parsed in parsed_rows:
         site_name = parsed['site_name']
-        new_tariff, tariff_errors = _validate_tariff(parsed['tariff_raw'])
+        new_tariff, tariff_errors = _validate_tariff(parsed.get('tariff_raw'))
+        new_phone, phone_errors = _validate_phone_cell(parsed.get('phone_raw'))
+        new_emails, email_errors = _validate_emails_cell(parsed.get('emails_raw'))
+        field_errors = tariff_errors + phone_errors + email_errors
 
         row_entry = _build_diff_row(
-            site_name, parsed['row_number'], new_tariff, tariff_errors, by_name, by_normalized
+            site_name, parsed['row_number'],
+            new_tariff, new_phone, new_emails,
+            field_errors, by_name, by_normalized,
         )
 
-        # Handle duplicates — mark earlier occurrence as error
         norm_key = _normalize_name(site_name)
         if norm_key in seen_names:
             prev_idx = seen_names[norm_key]
@@ -198,7 +314,6 @@ def _build_tariff_diff(parsed_rows: List[Dict[str, Any]], business_id) -> Tuple[
         seen_names[norm_key] = len(diff_rows)
         diff_rows.append(row_entry)
 
-    # Strip internal fields before response
     for row in diff_rows:
         row.pop('_matched_site', None)
 
@@ -255,12 +370,20 @@ def apply_tariff_import():
                 continue
 
             new_tariff, tariff_errors = _validate_tariff(row.get('new_tariff'))
+            new_phone, phone_errors = _validate_phone_cell(row.get('new_phone'))
+            # new_emails arrives as either a list (from frontend) or a string (defensive)
+            raw_emails = row.get('new_emails')
+            if isinstance(raw_emails, list):
+                raw_emails = '; '.join(str(e) for e in raw_emails)
+            new_emails, email_errors = _validate_emails_cell(raw_emails)
+            field_errors = tariff_errors + phone_errors + email_errors
 
             row_entry = _build_diff_row(
-                site_name, row_number, new_tariff, tariff_errors, by_name, by_normalized
+                site_name, row_number,
+                new_tariff, new_phone, new_emails,
+                field_errors, by_name, by_normalized,
             )
 
-            # Handle duplicates
             norm_key = _normalize_name(site_name)
             if norm_key in seen_names:
                 prev_idx = seen_names[norm_key]
@@ -272,20 +395,37 @@ def apply_tariff_import():
             matched_site = row_entry.pop('_matched_site', None)
 
             if row_entry['action'] == 'update' and matched_site:
-                matched_site.hourly_tariff = new_tariff
-                applied.append({
-                    'site_id': str(matched_site.id),
-                    'site_name': matched_site.site_name,
-                    'old_tariff': row_entry['current_tariff'],
-                    'new_tariff': new_tariff,
-                })
+                site_changes: Dict[str, Any] = {}
+                if _tariff_changed(row_entry['current_tariff'], new_tariff):
+                    matched_site.hourly_tariff = new_tariff
+                    site_changes['tariff'] = {
+                        'old': row_entry['current_tariff'],
+                        'new': new_tariff,
+                    }
+                if _phone_changed(row_entry['current_phone'], new_phone):
+                    matched_site.contractor_phone_number = new_phone
+                    site_changes['phone'] = {
+                        'old': row_entry['current_phone'],
+                        'new': new_phone,
+                    }
+                if _emails_changed(row_entry['current_emails'], new_emails):
+                    matched_site.contractor_emails = new_emails
+                    site_changes['emails'] = {
+                        'old': row_entry['current_emails'],
+                        'new': new_emails,
+                    }
+
+                if site_changes:
+                    applied.append({
+                        'site_id': str(matched_site.id),
+                        'site_name': matched_site.site_name,
+                        'changes': site_changes,
+                    })
 
             diff_rows.append(row_entry)
 
-        # Single atomic commit for all updates
         site_repo.commit()
 
-        # Strip internal fields and recompute summary after duplicate handling
         for row in diff_rows:
             row.pop('_matched_site', None)
 
@@ -297,3 +437,76 @@ def apply_tariff_import():
         site_repo.rollback()
         logger.exception("Failed to apply site tariff import")
         return api_response(status_code=500, message="Failed to apply site tariff import", error=str(e))
+
+
+@site_tariff_import_bp.route('/export', methods=['GET'])
+@token_required
+@role_required('ADMIN')
+def export_tariffs():
+    """Export site details as an Excel file matching the import format.
+
+    Round-trips through /preview + /apply: download → edit → re-upload.
+    Includes site name, hourly tariff, contact phone and contact emails.
+    """
+    try:
+        include_inactive = request.args.get('include_inactive', 'true').lower() == 'true'
+        sites = site_repo.get_all_for_business(g.business_id)
+        if not include_inactive:
+            sites = [s for s in sites if s.is_active]
+
+        sites = sorted(sites, key=lambda s: (s.site_name or '').strip().lower())
+
+        workbook = Workbook()
+        ws = workbook.active
+        ws.title = 'תעריפים לכל אתר'
+        ws.sheet_view.rightToLeft = True
+
+        header_font = Font(bold=True, color='FFFFFF')
+        header_fill = PatternFill('solid', fgColor='1F4E78')
+        center = Alignment(horizontal='center', vertical='center')
+
+        headers = ['שם האתר', 'תעריף שעתי', 'טלפון איש קשר', 'מייל איש קשר']
+        for col_idx, label in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=label)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center
+
+        for row_idx, site in enumerate(sites, start=2):
+            ws.cell(row=row_idx, column=1, value=site.site_name)
+
+            tariff_cell = ws.cell(row=row_idx, column=2)
+            if site.hourly_tariff is not None:
+                tariff_cell.value = float(site.hourly_tariff)
+                tariff_cell.number_format = '0.00'
+
+            phone_cell = ws.cell(row=row_idx, column=3)
+            # Force text format so Excel won't strip a leading 0 from local-format
+            # numbers users might type when editing (e.g. 0508... → 508...).
+            phone_cell.number_format = '@'
+            if site.contractor_phone_number:
+                phone_cell.value = f'+{site.contractor_phone_number}'
+
+            emails = site.contractor_emails or []
+            if emails:
+                ws.cell(row=row_idx, column=4, value='; '.join(emails))
+
+        ws.column_dimensions[get_column_letter(1)].width = 36
+        ws.column_dimensions[get_column_letter(2)].width = 14
+        ws.column_dimensions[get_column_letter(3)].width = 20
+        ws.column_dimensions[get_column_letter(4)].width = 40
+        ws.freeze_panes = 'A2'
+
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='site_details.xlsx',
+        )
+    except Exception as e:
+        logger.exception("Failed to export site details")
+        return api_response(status_code=500, message="Failed to export site details", error=str(e))

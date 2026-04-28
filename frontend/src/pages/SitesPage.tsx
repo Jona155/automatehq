@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Site } from '../types';
 import {
@@ -16,6 +16,7 @@ import LoadingIndicator from '../components/LoadingIndicator';
 import { downloadBlobFile } from '../utils/fileDownload';
 import BatchUploadModal from '../components/BatchUploadModal';
 import SiteTariffImportModal from '../components/SiteTariffImportModal';
+import { downloadSiteTariffsExport } from '../api/siteTariffImport';
 import { getDefaultMonth } from '../utils/monthUtils';
 
 type SortField = 'site_name' | 'site_code' | 'employee_count' | 'is_active';
@@ -130,8 +131,29 @@ export default function SitesPage() {
   const [salaryExportError, setSalaryExportError] = useState<string | null>(null);
   const [globalUploadOpen, setGlobalUploadOpen] = useState(false);
   const [tariffImportOpen, setTariffImportOpen] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [isTariffExporting, setIsTariffExporting] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
   const { showToast, ToastContainer } = useToast();
+
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const handlePointer = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExportMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointer);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handlePointer);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [exportMenuOpen]);
 
   const fetchSites = async () => {
     setIsLoading(true);
@@ -290,6 +312,21 @@ export default function SitesPage() {
     }
   };
 
+  const handleDownloadTariffsExport = async () => {
+    setExportMenuOpen(false);
+    setIsTariffExporting(true);
+    try {
+      const blob = await downloadSiteTariffsExport({ include_inactive: true });
+      downloadBlobFile(blob, 'site_details.xlsx');
+      showToast('קובץ פרטי האתרים הורד בהצלחה', 'success');
+    } catch (err: any) {
+      console.error('Failed to export site details:', err);
+      showToast(err?.response?.data?.message || 'שגיאה בהורדת פרטי האתרים', 'error');
+    } finally {
+      setIsTariffExporting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.site_name.trim()) {
@@ -370,20 +407,60 @@ export default function SitesPage() {
 
         {isAdmin && (
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            <button
-              onClick={handleOpenSummaryExport}
-              className="h-9 px-3.5 inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
-            >
-              <span className="material-symbols-outlined text-base">download</span>
-              סיכום אתרים (xlsx)
-            </button>
-            <button
-              onClick={handleOpenSalaryExport}
-              className="h-9 px-3.5 inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
-            >
-              <span className="material-symbols-outlined text-base">request_quote</span>
-              תבנית שכר ל-wave
-            </button>
+            <div className="relative" ref={exportMenuRef}>
+              <button
+                onClick={() => setExportMenuOpen((v) => !v)}
+                disabled={isTariffExporting}
+                aria-haspopup="menu"
+                aria-expanded={exportMenuOpen}
+                className="h-9 px-3.5 inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <span className="material-symbols-outlined text-base">
+                  {isTariffExporting ? 'progress_activity' : 'download'}
+                </span>
+                ייצוא Excel
+                <span className="material-symbols-outlined text-base -mx-1">expand_more</span>
+              </button>
+              {exportMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute end-0 mt-1.5 w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg shadow-slate-900/5 dark:shadow-black/30 py-1 z-20"
+                >
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      handleOpenSummaryExport();
+                    }}
+                    className="w-full text-right px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 inline-flex items-center gap-2.5"
+                  >
+                    <span className="material-symbols-outlined text-base text-slate-500 dark:text-slate-400">summarize</span>
+                    סיכום אתרים (xlsx)
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      handleOpenSalaryExport();
+                    }}
+                    className="w-full text-right px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 inline-flex items-center gap-2.5"
+                  >
+                    <span className="material-symbols-outlined text-base text-slate-500 dark:text-slate-400">request_quote</span>
+                    תבנית שכר ל-wave
+                  </button>
+                  <div className="my-1 h-px bg-slate-100 dark:bg-slate-700/60" />
+                  <button
+                    role="menuitem"
+                    onClick={handleDownloadTariffsExport}
+                    disabled={isTariffExporting}
+                    className="w-full text-right px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 inline-flex items-center gap-2.5 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <span className="material-symbols-outlined text-base text-slate-500 dark:text-slate-400">price_change</span>
+                    פרטי אתרים (xlsx)
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setTariffImportOpen(true)}
               className="h-9 px-3.5 inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
@@ -839,7 +916,7 @@ export default function SitesPage() {
         onClose={() => setTariffImportOpen(false)}
         onApplied={() => {
           fetchSites();
-          showToast('התעריפים עודכנו בהצלחה', 'success');
+          showToast('פרטי האתרים עודכנו בהצלחה', 'success');
         }}
       />
     </div>

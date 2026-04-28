@@ -88,6 +88,10 @@ export interface SiteTariffImportRow {
   matched_site_name: string | null;
   current_tariff: number | null;
   new_tariff: number | null;
+  current_phone: string | null;
+  new_phone: string | null;
+  current_emails: string[] | null;
+  new_emails: string[] | null;
   action: 'update' | 'no_change' | 'error';
   errors: string[];
   warnings: string[];
