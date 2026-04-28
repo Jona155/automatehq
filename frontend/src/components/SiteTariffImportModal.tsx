@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import type { ReactElement } from 'react';
 import type { SiteTariffImportRow, SiteTariffImportSummary } from '../types';
 import { previewSiteTariffImport, applySiteTariffImport } from '../api/siteTariffImport';
 import Modal from './Modal';
@@ -10,6 +11,80 @@ interface SiteTariffImportModalProps {
 }
 
 type FilterTab = 'all' | 'update' | 'no_change' | 'error';
+
+const formatPhone = (digits: string | null) => (digits ? `+${digits}` : '');
+const formatEmails = (emails: string[] | null) => (emails && emails.length > 0 ? emails.join(', ') : '');
+const formatTariff = (value: number | null) => (value != null ? `${value}₪` : '');
+
+const sameEmails = (a: string[] | null, b: string[] | null) => {
+  const left = [...(a || [])].map((e) => e.toLowerCase()).sort();
+  const right = [...(b || [])].map((e) => e.toLowerCase()).sort();
+  if (left.length !== right.length) return false;
+  return left.every((v, i) => v === right[i]);
+};
+
+function FieldDiff({
+  label,
+  before,
+  after,
+}: {
+  label: string;
+  before: string;
+  after: string;
+}) {
+  const beforeText = before || '—';
+  const afterText = after || '—';
+  return (
+    <div className="flex items-baseline gap-1.5 text-xs">
+      <span className="text-slate-500 dark:text-slate-400 font-medium min-w-[3.5rem]">{label}:</span>
+      <span className="text-slate-500 dark:text-slate-400 line-through">{beforeText}</span>
+      <span className="text-slate-400">←</span>
+      <span className="text-slate-900 dark:text-white font-medium">{afterText}</span>
+    </div>
+  );
+}
+
+function ChangesCell({ row }: { row: SiteTariffImportRow }) {
+  const changes: ReactElement[] = [];
+
+  // Tariff: only show if "new_tariff" was supplied (column present + cell non-empty)
+  // and the value actually differs from the current.
+  if (row.new_tariff != null && row.new_tariff !== row.current_tariff) {
+    changes.push(
+      <FieldDiff
+        key="tariff"
+        label="תעריף"
+        before={formatTariff(row.current_tariff)}
+        after={formatTariff(row.new_tariff)}
+      />
+    );
+  }
+  if (row.new_phone != null && row.new_phone !== (row.current_phone || '')) {
+    changes.push(
+      <FieldDiff
+        key="phone"
+        label="טלפון"
+        before={formatPhone(row.current_phone)}
+        after={formatPhone(row.new_phone)}
+      />
+    );
+  }
+  if (row.new_emails != null && !sameEmails(row.current_emails, row.new_emails)) {
+    changes.push(
+      <FieldDiff
+        key="emails"
+        label="מייל"
+        before={formatEmails(row.current_emails)}
+        after={formatEmails(row.new_emails)}
+      />
+    );
+  }
+
+  if (changes.length === 0) {
+    return <span className="text-slate-400 text-xs">ללא שינוי</span>;
+  }
+  return <div className="flex flex-col gap-1">{changes}</div>;
+}
 
 export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: SiteTariffImportModalProps) {
   const [phase, setPhase] = useState<'upload' | 'preview' | 'applying'>('upload');
@@ -57,7 +132,7 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
       onApplied();
       handleClose();
     } catch (err: any) {
-      setError(err?.response?.data?.message || 'שגיאה בעדכון תעריפים');
+      setError(err?.response?.data?.message || 'שגיאה בעדכון פרטי האתרים');
       setPhase('preview');
     }
   };
@@ -86,7 +161,7 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="ייבוא תעריפים מקובץ" maxWidth="4xl">
+    <Modal isOpen={isOpen} onClose={handleClose} title="ייבוא פרטי אתרים מקובץ" maxWidth="4xl">
       <div className="flex flex-col gap-4" dir="rtl">
         {error && (
           <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
@@ -97,7 +172,8 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
         {phase === 'upload' && (
           <>
             <p className="text-sm text-slate-600 dark:text-slate-400">
-              העלה קובץ Excel עם עמודות שם אתר ותעריף שעתי. המערכת תתאים אוטומטית את האתרים הקיימים.
+              העלה קובץ Excel עם עמודות שם אתר, תעריף שעתי, טלפון איש קשר ומייל איש קשר.
+              המערכת תתאים אוטומטית את האתרים הקיימים. תאים ריקים נשארים ללא שינוי.
             </p>
             <div>
               <input
@@ -174,24 +250,20 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
                     <th className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-300">#</th>
                     <th className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-300">שם אתר (קובץ)</th>
                     <th className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-300">אתר מותאם</th>
-                    <th className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-300">תעריף נוכחי</th>
-                    <th className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-300">תעריף חדש</th>
+                    <th className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-300">שינויים</th>
                     <th className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-300">סטטוס</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
                   {filteredRows.map((row, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                    <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 align-top">
                       <td className="px-3 py-2 text-slate-500">{row.row_number}</td>
                       <td className="px-3 py-2 text-slate-900 dark:text-white">{row.site_name_from_file}</td>
                       <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
                         {row.matched_site_name || <span className="text-slate-400">—</span>}
                       </td>
-                      <td className="px-3 py-2 text-slate-600 dark:text-slate-400">
-                        {row.current_tariff != null ? `${row.current_tariff}₪` : '—'}
-                      </td>
-                      <td className="px-3 py-2 font-medium text-slate-900 dark:text-white">
-                        {row.new_tariff != null ? `${row.new_tariff}₪` : '—'}
+                      <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                        <ChangesCell row={row} />
                       </td>
                       <td className="px-3 py-2">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${actionColor(row.action)}`}>
@@ -208,7 +280,7 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
                   ))}
                   {filteredRows.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
                         אין שורות להצגה
                       </td>
                     </tr>
@@ -241,7 +313,7 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
         {phase === 'applying' && (
           <div className="flex flex-col items-center justify-center py-8 gap-3">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-            <p className="text-sm text-slate-600 dark:text-slate-400">מעדכן תעריפים...</p>
+            <p className="text-sm text-slate-600 dark:text-slate-400">מעדכן פרטי אתרים...</p>
           </div>
         )}
       </div>

@@ -6,10 +6,25 @@ export interface SiteTariffImportPreviewResponse {
   rows: SiteTariffImportRow[];
 }
 
+export interface SiteTariffImportFieldChange<T> {
+  old: T | null;
+  new: T | null;
+}
+
+export interface SiteTariffImportAppliedRow {
+  site_id: string;
+  site_name: string;
+  changes: {
+    tariff?: SiteTariffImportFieldChange<number>;
+    phone?: SiteTariffImportFieldChange<string>;
+    emails?: SiteTariffImportFieldChange<string[]>;
+  };
+}
+
 export interface SiteTariffImportApplyResponse {
   summary: SiteTariffImportSummary;
   rows: SiteTariffImportRow[];
-  applied: Array<{ site_id: string; site_name: string; old_tariff: number | null; new_tariff: number }>;
+  applied: SiteTariffImportAppliedRow[];
 }
 
 export const previewSiteTariffImport = async (file: File) => {
@@ -36,4 +51,16 @@ export const applySiteTariffImport = async (rows: SiteTariffImportRow[]) => {
   );
 
   return response.data.data;
+};
+
+export const downloadSiteTariffsExport = async (
+  options?: { include_inactive?: boolean }
+) => {
+  const response = await client.get('/sites/tariff-import/export', {
+    params: {
+      include_inactive: options?.include_inactive === false ? 'false' : 'true',
+    },
+    responseType: 'blob',
+  });
+  return response.data as Blob;
 };
