@@ -437,6 +437,17 @@ class WorkCardRepository(BaseRepository[WorkCard]):
                     selected.append(approved_card if approved_card else latest)
         return selected
 
+    def find_by_hash(self, business_id: UUID, processing_month: date, sha256_hash: str) -> Optional[WorkCard]:
+        return (
+            self.session.query(WorkCard)
+            .filter(
+                WorkCard.business_id == business_id,
+                WorkCard.processing_month == processing_month,
+                WorkCard.sha256_hash == sha256_hash,
+            )
+            .first()
+        )
+
     def update_review_status(self, card_id: UUID, status: str, business_id: UUID) -> Optional[WorkCard]:
         """
         Update the review status of a work card.
