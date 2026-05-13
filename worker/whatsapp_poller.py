@@ -12,6 +12,7 @@ Environment variables:
     WA_LISTENER_FETCH_LIMIT       — default 50
 """
 import base64
+import hashlib
 import logging
 import os
 import re
@@ -44,6 +45,7 @@ FETCH_LIMIT = int(os.environ.get('WA_LISTENER_FETCH_LIMIT', '50'))
 _DATA_URL_RE = re.compile(r'^data:(image/[a-zA-Z0-9+.-]+);base64,(.+)$')
 
 INGEST_ACK_MESSAGE = '✅ קיבלנו! מעבד את התמונה...'
+DUPLICATE_ACK_MESSAGE = '⚠️ תמונה זו כבר הועלתה החודש'
 
 
 def _decode_media(data_url: str) -> Optional[tuple[bytes, str]]:
@@ -76,17 +78,25 @@ def _ingest_image(
     message_id: str,
     caption: Optional[str],
     config,
-) -> str:
+) -> tuple[str, bool]:
     """
     Create WorkCard + WorkCardFile + WorkCardExtraction(PENDING).
     Mirrors worker/telegram_poller.py::_ingest_image — one group per business,
     site assignment happens downstream via employee matching in run.py.
 
-    Returns the work_card_id as a string.
+    Returns (work_card_id, is_duplicate).
     """
     work_card_repo = WorkCardRepository()
     file_repo = WorkCardFileRepository()
     extraction_repo = WorkCardExtractionRepository()
+
+    file_hash = hashlib.sha256(image_bytes).hexdigest()
+    existing = work_card_repo.find_by_hash(
+        config.business_id, config.current_processing_month, file_hash
+    )
+    if existing:
+        logger.info('[WhatsApp] Skipping duplicate image (hash=%s, existing_card=%s)', file_hash[:8], existing.id)
+        return str(existing.id), True
 
     ext = mime_type.split('/')[-1].split('+')[0] or 'jpg'
     filename = f'whatsapp_{message_id}.{ext}'
@@ -103,6 +113,7 @@ def _ingest_image(
         file_size_bytes=len(image_bytes),
         review_status='NEEDS_ASSIGNMENT',
         telegram_caption=caption,  # reused column; see docs/whatsapp_integration_phase2.md
+        sha256_hash=file_hash,
     )
 
     file_repo.create(
@@ -117,7 +128,7 @@ def _ingest_image(
         status='PENDING',
     )
 
-    return str(work_card.id)
+    return str(work_card.id), False
 
 
 def _process_config(client: WhatsAppListenerClient, config) -> None:
@@ -208,7 +219,7 @@ def _process_config(client: WhatsAppListenerClient, config) -> None:
 
         image_bytes, mime_type = decoded
         try:
-            work_card_id = _ingest_image(
+            work_card_id, is_duplicate = _ingest_image(
                 image_bytes=image_bytes,
                 mime_type=mime_type,
                 message_id=message_id,
@@ -223,10 +234,11 @@ def _process_config(client: WhatsAppListenerClient, config) -> None:
             ingested += 1
             logger.info(
                 f"[WhatsApp] ingested message_id={message_id} → work_card {work_card_id} "
-                f"(caption={(m.get('text') or '')[:40]!r})"
+                f"(caption={(m.get('text') or '')[:40]!r}, duplicate={is_duplicate})"
             )
+            ack_text = DUPLICATE_ACK_MESSAGE if is_duplicate else INGEST_ACK_MESSAGE
             try:
-                client.send(chat_id=config.chat_id, text=INGEST_ACK_MESSAGE)
+                client.send(chat_id=config.chat_id, text=ack_text)
                 logger.info(
                     f"[WhatsApp] ack sent to {config.chat_id} for work_card {work_card_id}"
                 )

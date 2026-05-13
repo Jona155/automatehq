@@ -16,6 +16,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+import hashlib
+
 import requests
 
 # Add backend to path (same pattern as run.py)
@@ -96,14 +98,22 @@ def _send_reply(chat_id: int, message_id: int, text: str) -> None:
         logger.warning(f"[Telegram] Failed to send reply: {e}")
 
 
-def _ingest_image(image_bytes: bytes, file_unique_id: str, config, app_context, telegram_caption=None) -> str:
+def _ingest_image(image_bytes: bytes, file_unique_id: str, config, app_context, telegram_caption=None) -> tuple[str, bool]:
     """
     Create WorkCard + WorkCardFile + WorkCardExtraction(PENDING).
-    Returns the work_card_id as a string.
+    Returns (work_card_id, is_duplicate).
     """
     work_card_repo = WorkCardRepository()
     file_repo = WorkCardFileRepository()
     extraction_repo = WorkCardExtractionRepository()
+
+    file_hash = hashlib.sha256(image_bytes).hexdigest()
+    existing = work_card_repo.find_by_hash(
+        config.business_id, config.current_processing_month, file_hash
+    )
+    if existing:
+        logger.info('[Telegram] Skipping duplicate image (hash=%s, existing_card=%s)', file_hash[:8], existing.id)
+        return str(existing.id), True
 
     work_card = work_card_repo.create(
         business_id=config.business_id,
@@ -117,6 +127,7 @@ def _ingest_image(image_bytes: bytes, file_unique_id: str, config, app_context, 
         file_size_bytes=len(image_bytes),
         review_status='NEEDS_ASSIGNMENT',
         telegram_caption=telegram_caption,
+        sha256_hash=file_hash,
     )
 
     file_repo.create(
@@ -131,7 +142,7 @@ def _ingest_image(image_bytes: bytes, file_unique_id: str, config, app_context, 
         status='PENDING',
     )
 
-    return str(work_card.id)
+    return str(work_card.id), False
 
 
 def poll_once(flask_app) -> None:
@@ -239,7 +250,7 @@ def poll_once(flask_app) -> None:
                     raise RuntimeError(f"Could not download file_path={file_path}")
 
                 # Ingest
-                work_card_id = _ingest_image(image_bytes, file_unique_id, config, flask_app, telegram_caption=caption)
+                work_card_id, is_duplicate = _ingest_image(image_bytes, file_unique_id, config, flask_app, telegram_caption=caption)
 
                 ingested_repo.create(
                     **ingested_record_kwargs,
@@ -250,9 +261,12 @@ def poll_once(flask_app) -> None:
 
                 # Send acknowledgement
                 if chat_id and message_id:
-                    reply_text = '\u2713 Work card received'
-                    if caption:
-                        reply_text += f' ({caption[:40]})'
+                    if is_duplicate:
+                        reply_text = '⚠️ This image was already uploaded this month'
+                    else:
+                        reply_text = '\u2713 Work card received'
+                        if caption:
+                            reply_text += f' ({caption[:40]})'
                     _send_reply(chat_id, message_id, reply_text)
 
             except Exception as e:
