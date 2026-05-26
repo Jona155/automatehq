@@ -243,6 +243,37 @@ export default function DashboardPage() {
 
       {!isLoading && !error && summary && (
         <>
+          {summary.today_unassigned_count > 0 ? (
+            <div className="flex items-center gap-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl px-5 py-4">
+              <span className="material-symbols-outlined text-amber-500 text-2xl shrink-0">assignment_late</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                  היום הועלו {summary.today_unassigned_count} כרטיסי עבודה חדשים שלא שויכו לעובד
+                </p>
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                  הכרטיסים עברו עיבוד אך לא נמצא להם עובד מתאים — נדרש שיוך ידני
+                </p>
+              </div>
+              <button
+                onClick={() => navigate(`/${businessCode}/unassigned-work-cards`)}
+                className="shrink-0 px-4 py-2 text-sm font-medium bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors"
+              >
+                עבור לשיוך
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-xl px-5 py-4">
+              <span className="material-symbols-outlined text-green-500 text-2xl shrink-0">check_circle</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-green-800 dark:text-green-300">
+                  אין כרטיסי עבודה חדשים שממתינים לשיוך היום
+                </p>
+                <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+                  כל הכרטיסים שהועלו היום שויכו לעובד — הכל מסודר
+                </p>
+              </div>
+            </div>
+          )}
           {viewMode === 'kanban' ? (
             <>
               <DashboardSummaryBar

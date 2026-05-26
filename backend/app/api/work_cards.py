@@ -310,6 +310,9 @@ def update_work_card(card_id):
         if not updated_card:
             return api_response(status_code=404, message="Work card not found", error="Not Found")
 
+        if 'employee_id' in data:
+            from .dashboard import invalidate_business_cache
+            invalidate_business_cache(g.business_id)
         return api_response(data=model_to_dict(updated_card), message="Work card updated successfully")
     except Exception as e:
         return api_response(status_code=500, message="Failed to update work card", error=str(e))
@@ -479,6 +482,8 @@ def delete_work_card(card_id):
 
         db.session.delete(card)
         db.session.commit()
+        from .dashboard import invalidate_business_cache
+        invalidate_business_cache(g.business_id)
         return api_response(message="Work card deleted successfully", status_code=200)
     except Exception as e:
         db.session.rollback()
@@ -1171,6 +1176,9 @@ def upload_batch():
                     'error': str(e)
                 })
 
+        if uploaded:
+            from .dashboard import invalidate_business_cache
+            invalidate_business_cache(g.business_id)
         return api_response(
             data={
                 'uploaded': uploaded,
@@ -1303,6 +1311,9 @@ def upload_siteless_batch():
             except Exception as e:
                 failed.append({'filename': file.filename, 'error': str(e)})
 
+        if uploaded:
+            from .dashboard import invalidate_business_cache
+            invalidate_business_cache(g.business_id)
         return api_response(
             data={
                 'uploaded': uploaded,
@@ -1320,6 +1331,7 @@ def upload_siteless_batch():
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
     except Exception as e:
         return api_response(status_code=500, message="Failed to process siteless batch upload", error=str(e))
+
 
 
 @work_cards_bp.route('/unassigned', methods=['GET'])

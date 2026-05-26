@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import Dict, Any, List, Tuple, Optional
 
 from flask import Blueprint, g, request
@@ -85,11 +85,27 @@ def get_dashboard_summary():
 
         business_id = str(g.business_id)
         cache_key = (business_id, month_start.isoformat())
+
+        # Always compute fresh — the worker updates this asynchronously so it must
+        # bypass the cache to stay accurate.
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
+        today_unassigned_count = int(db.session.query(func.count(WorkCard.id)).filter(
+            WorkCard.business_id == g.business_id,
+            WorkCard.employee_id.is_(None),
+            WorkCard.review_status == 'NEEDS_ASSIGNMENT',
+            WorkCard.created_at >= today_start,
+            WorkCard.created_at < today_end,
+        ).scalar() or 0)
+
         bust_cache = request.args.get('bust_cache') == '1'
         if not bust_cache:
             cached = _get_cached(cache_key)
             if cached:
-                return api_response(data=cached, meta={"cached": True, "cache_ttl_seconds": CACHE_TTL_SECONDS})
+                return api_response(
+                    data={**cached, "today_unassigned_count": today_unassigned_count},
+                    meta={"cached": True, "cache_ttl_seconds": CACHE_TTL_SECONDS},
+                )
 
         # Core counts
         sites_count = db.session.query(func.count(Site.id)).filter(
@@ -324,7 +340,10 @@ def get_dashboard_summary():
         }
 
         _set_cached(cache_key, payload)
-        return api_response(data=payload, meta={"cached": False, "cache_ttl_seconds": CACHE_TTL_SECONDS})
+        return api_response(
+            data={**payload, "today_unassigned_count": today_unassigned_count},
+            meta={"cached": False, "cache_ttl_seconds": CACHE_TTL_SECONDS},
+        )
     except Exception as e:
         logger.exception("Failed to load dashboard summary")
         return api_response(status_code=500, message="Failed to load dashboard summary", error=str(e))
