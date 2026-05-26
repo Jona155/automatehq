@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { Employee, Site } from '../types';
-import { getUnassignedWorkCards, updateWorkCard, getWorkCardFile, type UnassignedWorkCard } from '../api/workCards';
+import { getUnassignedWorkCards, updateWorkCard, getWorkCardFile, deleteWorkCard, type UnassignedWorkCard } from '../api/workCards';
 import { getEmployees } from '../api/employees';
 import { getSites } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
@@ -246,6 +246,12 @@ const formatMonth = (isoDate: string): string => {
   return d.toLocaleDateString('he-IL', { year: 'numeric', month: 'long' });
 };
 
+const formatDateTime = (iso: string): string =>
+  new Intl.DateTimeFormat('he-IL', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  }).format(new Date(iso));
+
 const PAGE_SIZE = 20;
 
 // ── Page component ────────────────────────────────────────────────────────────
@@ -289,6 +295,10 @@ export default function UnassignedWorkCardsPage() {
   // Site filter state
   const [sites, setSites] = useState<Site[]>([]);
   const [filterSiteIds, setFilterSiteIds] = useState<string[]>([]);
+
+  // Delete confirmation state
+  const [cardToDelete, setCardToDelete] = useState<UnassignedWorkCard | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -495,6 +505,22 @@ export default function UnassignedWorkCardsPage() {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!cardToDelete) return;
+    setIsDeleting(true);
+    try {
+      await deleteWorkCard(cardToDelete.id);
+      setCardToDelete(null);
+      fetchCards(currentPage);
+    } catch (err) {
+      console.error('Failed to delete work card:', err);
+      setError('שגיאה במחיקת הכרטיס');
+      setCardToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const getExtractionStatusLabel = (status?: string) => {
     switch (status) {
       case 'PENDING': return { label: 'ממתין', cls: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' };
@@ -596,6 +622,7 @@ export default function UnassignedWorkCardsPage() {
                   <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">ת.ז. שחולצה</th>
                   <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">חודש</th>
                   <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">קובץ</th>
+                  <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">תאריך העלאה</th>
                   <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">סטטוס חילוץ</th>
                   <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">פעולה</th>
                 </tr>
@@ -648,24 +675,38 @@ export default function UnassignedWorkCardsPage() {
                         )}
                       </td>
                       <td className="px-6 py-4">
+                        <span className="text-[#617989] dark:text-slate-400 text-sm whitespace-nowrap">
+                          {formatDateTime(card.created_at)}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cls}`}>
                           {label}
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <button
-                          onClick={() => handleOpenAssign(card)}
-                          className="px-3 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
-                        >
-                          שייך עובד
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleOpenAssign(card)}
+                            className="px-3 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
+                          >
+                            שייך עובד
+                          </button>
+                          <button
+                            onClick={() => setCardToDelete(card)}
+                            className="p-1.5 text-slate-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                            title="מחק כרטיס"
+                          >
+                            <span className="material-symbols-outlined text-[18px] leading-none">delete</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
                 {filteredCards.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-slate-500">
+                    <td colSpan={7} className="p-8 text-center text-slate-500">
                       {searchQuery ? 'לא נמצאו כרטיסים התואמים את החיפוש' : 'אין כרטיסים לא משויכים לחודש זה'}
                     </td>
                   </tr>
@@ -995,6 +1036,42 @@ export default function UnassignedWorkCardsPage() {
           </div>
           </div> {/* end form panel */}
         </div> {/* end two-column flex */}
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        isOpen={!!cardToDelete}
+        onClose={() => setCardToDelete(null)}
+        title="מחיקת כרטיס עבודה"
+        maxWidth="sm"
+      >
+        <div className="flex flex-col gap-5">
+          <p className="text-slate-600 dark:text-slate-300 text-sm">
+            האם למחוק את כרטיס העבודה{' '}
+            {cardToDelete?.original_filename && (
+              <span className="font-medium text-slate-900 dark:text-white">
+                "{cardToDelete.original_filename}"
+              </span>
+            )}
+            ? פעולה זו אינה ניתנת לביטול.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setCardToDelete(null)}
+              disabled={isDeleting}
+              className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+            >
+              ביטול
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors disabled:opacity-60"
+            >
+              {isDeleting ? 'מוחק...' : 'מחק'}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

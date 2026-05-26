@@ -353,6 +353,7 @@ export interface DashboardSummary {
     export_count: number;
     last_exported_at: string | null;
   }>;
+  today_unassigned_count: number;
 }
 
 export type KanbanColumn =
