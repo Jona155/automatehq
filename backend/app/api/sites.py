@@ -528,16 +528,27 @@ def _add_tariff_summary(ws, employee_count, hourly_tariff, style_body,
         # Row 34: grand total value
         ws.cell(row=34, column=value_col, value=grand_total_formula)._style = copy(style_site_total)
 
-        # Row 36: tariff per hour
-        ws.cell(row=36, column=value_col, value=f'{tariff_int} ₪')._style = copy(style_tariff)
+        NIS_FORMAT = '[$₪-40D]#,##0.00'
+
+        # Row 36: tariff per hour (numeric so row 37 can reference it in a formula)
+        tariff_cell = ws.cell(row=36, column=value_col)
+        tariff_cell.value = tariff
+        tariff_cell._style = copy(style_tariff)
+        tariff_cell.number_format = NIS_FORMAT
         ws.cell(row=36, column=label_col, value='מחיר לשעה')._style = copy(style_tariff_label)
 
         # Row 37: cost without VAT
-        ws.cell(row=37, column=value_col, value=f'={value_col_letter}34*{tariff_int}')._style = copy(style_tariff)
+        price_no_vat_cell = ws.cell(row=37, column=value_col)
+        price_no_vat_cell.value = f'={value_col_letter}34*{value_col_letter}36'
+        price_no_vat_cell._style = copy(style_tariff)
+        price_no_vat_cell.number_format = NIS_FORMAT
         ws.cell(row=37, column=label_col, value='מחיר ללא מע"מ')._style = copy(style_tariff_label)
 
         # Row 38: cost with VAT (×1.18)
-        ws.cell(row=38, column=value_col, value=f'={value_col_letter}37*1.18')._style = copy(style_tariff)
+        price_vat_cell = ws.cell(row=38, column=value_col)
+        price_vat_cell.value = f'={value_col_letter}37*1.18'
+        price_vat_cell._style = copy(style_tariff)
+        price_vat_cell.number_format = NIS_FORMAT
         ws.cell(row=38, column=label_col, value='מחיר כולל מע"מ')._style = copy(style_tariff_label)
 
 
