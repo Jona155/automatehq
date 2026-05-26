@@ -11,6 +11,7 @@ from .employee_imports import employee_imports_bp
 from .telegram_settings import telegram_settings_bp
 from .whatsapp_settings import whatsapp_settings_bp
 from .site_tariff_import import site_tariff_import_bp
+from .site_hours_import import site_hours_import_bp
 
 def register_blueprints(app: Flask):
     """Register all API blueprints."""
@@ -26,3 +27,4 @@ def register_blueprints(app: Flask):
     app.register_blueprint(telegram_settings_bp)
     app.register_blueprint(whatsapp_settings_bp)
     app.register_blueprint(site_tariff_import_bp)
+    app.register_blueprint(site_hours_import_bp)
