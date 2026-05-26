@@ -40,6 +40,13 @@ const getDaysInMonth = (yearMonth: string): number => {
   return new Date(year, month, 0).getDate();
 };
 
+const HEBREW_DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
+const getDayOfWeek = (yearMonth: string, dayOfMonth: number): number => {
+  const [year, month] = yearMonth.split('-').map(Number);
+  return new Date(year, month - 1, dayOfMonth).getDay(); // 0=Sun … 6=Sat
+};
+
 // Calculate hours between two times (HH:MM format)
 const calculateHours = (from: string | null, to: string | null): number | null => {
   if (!from || !to) return null;
@@ -2489,6 +2496,8 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             const isOffMark = extractionQualityMeta.offMark.has(entry.day_of_month) || dayQuality?.row_state === 'OFF_MARK';
                             const isManualOverride = entry.isLocked && manuallyUnlockedDays.has(entry.day_of_month);
                             const cellEditable = isCellEditable(entry);
+                            const dayIndex = getDayOfWeek(selectedCard!.processing_month, entry.day_of_month);
+                            const isSaturday = dayIndex === 6;
                             return (
                               <tr
                                 key={entry.day_of_month}
@@ -2510,47 +2519,54 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     ? 'bg-yellow-50 dark:bg-yellow-900/10'
                                     : entry.day_status
                                     ? 'bg-purple-50 dark:bg-purple-900/10'
+                                    : isSaturday
+                                    ? 'bg-teal-50 dark:bg-teal-900/10'
                                     : ''
                                 }`}
                               >
                                 <td className="px-3 py-2 text-center font-medium text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-700">
-                                  <div className="flex items-center justify-center gap-1">
-                                    <button
-                                      type="button"
-                                      className="font-medium underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded"
-                                      onClick={() => activateDay(entry.day_of_month)}
-                                      aria-label={`בחר יום ${entry.day_of_month}`}
-                                    >
-                                      {entry.day_of_month}
-                                    </button>
-                                    {entry.isLocked && isAdmin && (
+                                  <div className="flex flex-col items-center gap-0.5">
+                                    <div className="flex items-center justify-center gap-1">
                                       <button
                                         type="button"
-                                        onClick={() => handleToggleCellLock(entry.day_of_month)}
-                                        className="text-slate-400 hover:text-orange-500 transition-colors"
-                                        title={isManualOverride ? 'נעל מחדש' : 'בטל נעילה לעריכה'}
-                                        aria-label={isManualOverride ? 'Re-lock day' : 'Unlock day for editing'}
+                                        className="font-medium underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded"
+                                        onClick={() => activateDay(entry.day_of_month)}
+                                        aria-label={`בחר יום ${entry.day_of_month}`}
                                       >
-                                        <span className="material-symbols-outlined text-sm">
-                                          {isManualOverride ? 'lock_open' : 'lock'}
-                                        </span>
+                                        {entry.day_of_month}
                                       </button>
-                                    )}
-                                    {typeof zone?.confidence === 'number' && (
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" title={`Confidence ${Math.round(zone.confidence * 100)}%`}>
-                                        {Math.round(zone.confidence * 100)}%
-                                      </span>
-                                    )}
-                                    {isReviewRequired && (
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" title={dayQuality?.reasons?.join(', ') || 'Requires review'}>
-                                        בדיקה
-                                      </span>
-                                    )}
-                                    {isOffMark && !isReviewRequired && (
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" title="Marked as off-day line/strike">
-                                        קו
-                                      </span>
-                                    )}
+                                      {entry.isLocked && isAdmin && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleCellLock(entry.day_of_month)}
+                                          className="text-slate-400 hover:text-orange-500 transition-colors"
+                                          title={isManualOverride ? 'נעל מחדש' : 'בטל נעילה לעריכה'}
+                                          aria-label={isManualOverride ? 'Re-lock day' : 'Unlock day for editing'}
+                                        >
+                                          <span className="material-symbols-outlined text-sm">
+                                            {isManualOverride ? 'lock_open' : 'lock'}
+                                          </span>
+                                        </button>
+                                      )}
+                                      {typeof zone?.confidence === 'number' && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" title={`Confidence ${Math.round(zone.confidence * 100)}%`}>
+                                          {Math.round(zone.confidence * 100)}%
+                                        </span>
+                                      )}
+                                      {isReviewRequired && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" title={dayQuality?.reasons?.join(', ') || 'Requires review'}>
+                                          בדיקה
+                                        </span>
+                                      )}
+                                      {isOffMark && !isReviewRequired && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" title="Marked as off-day line/strike">
+                                          קו
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className={`text-[11px] leading-none ${isSaturday ? 'text-teal-600 dark:text-teal-400 font-semibold' : 'text-slate-400 dark:text-slate-500'}`}>
+                                      {HEBREW_DAY_NAMES[dayIndex]}
+                                    </span>
                                   </div>
                                 </td>
                                 <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
