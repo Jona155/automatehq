@@ -10,6 +10,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import UploadWorkCardModal from '../components/UploadWorkCardModal';
 import BatchUploadModal from '../components/BatchUploadModal';
 import WorkCardExportModal from '../components/WorkCardExportModal';
+import SiteHoursImportModal from '../components/SiteHoursImportModal';
 import WorkCardReviewTab from '../components/WorkCardReviewTab';
 import MonthlySummaryTab from '../components/MonthlySummaryTab';
 import AccessLinksManager from '../components/AccessLinksManager';
@@ -64,6 +65,8 @@ export default function SiteDetailsPage() {
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [isDownloadingSalaryTemplate, setIsDownloadingSalaryTemplate] = useState(false);
   const [salaryModalOpen, setSalaryModalOpen] = useState(false);
+  const [hoursImportOpen, setHoursImportOpen] = useState(false);
+  const [reviewKey, setReviewKey] = useState(0);
   const [salaryExportMonth, setSalaryExportMonth] = useState<string>(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [salaryExportSiteId, setSalaryExportSiteId] = useState<string>('');
   const [salarySites, setSalarySites] = useState<Site[]>([]);
@@ -464,6 +467,16 @@ export default function SiteDetailsPage() {
                     : '\u05d4\u05d5\u05e8\u05d3\u05ea \u05ea\u05d1\u05e0\u05d9\u05ea \u05e9\u05db\u05e8 \u05dc-wave'}
                 </span>
               </button>
+              <button
+                onClick={() => {
+                  setActionsOpen(false);
+                  setHoursImportOpen(true);
+                }}
+                className="w-full text-right px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-lg">upload_file</span>
+                <span>{"\u05d9\u05d9\u05d1\u05d5\u05d0 \u05e9\u05e2\u05d5\u05ea \u05de-Excel"}</span>
+              </button>
             </div>
           )}
         </div>}
@@ -616,6 +629,7 @@ export default function SiteDetailsPage() {
         {activeTab === 'review' && (
           <div className="flex flex-col">
             <WorkCardReviewTab
+              key={reviewKey}
               siteId={siteId!}
               selectedMonth={selectedMonth}
               onMonthChange={setSelectedMonth}
@@ -967,6 +981,17 @@ export default function SiteDetailsPage() {
         siteId={siteId!}
         siteName={site.site_name}
         employees={employees}
+      />
+
+      <SiteHoursImportModal
+        isOpen={hoursImportOpen}
+        onClose={() => setHoursImportOpen(false)}
+        siteId={siteId!}
+        selectedMonth={selectedMonth}
+        onSuccess={() => {
+          setReviewKey((k) => k + 1);
+          showToast('השעות עודכנו בהצלחה', 'success');
+        }}
       />
     </div>
   );
