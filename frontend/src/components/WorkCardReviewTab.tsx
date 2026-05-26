@@ -183,7 +183,6 @@ const useDayImageZoneMapping = (extraction: WorkCardExtraction | null) => {
 };
 
 function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey, isAdmin = true, isEmbedded = false, initialCardId }: WorkCardReviewTabProps) {
-  const AUTO_ADVANCE_STORAGE_KEY = 'workCardReview:autoAdvance';
   const [workCards, setWorkCards] = useState<WorkCard[]>([]);
   const [selectedCard, setSelectedCard] = useState<WorkCard | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -229,11 +228,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [isPanningImage, setIsPanningImage] = useState(false);
   const [highlightedImageDay, setHighlightedImageDay] = useState<number | null>(null);
   const [panStart, setPanStart] = useState<{ x: number; y: number; originX: number; originY: number } | null>(null);
-  const [autoAdvance, setAutoAdvance] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true;
-    const storedValue = window.localStorage.getItem(AUTO_ADVANCE_STORAGE_KEY);
-    return storedValue === null ? true : storedValue === 'true';
-  });
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestedExtractionsRef = useRef<Set<string>>(new Set());
   const selectedCardIdRef = useRef<string | null>(null);
@@ -501,11 +495,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   }, [selectedCard?.id]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(AUTO_ADVANCE_STORAGE_KEY, String(autoAdvance));
-  }, [autoAdvance]);
-
-  useEffect(() => {
     if (!selectedCard) return;
     if (visibleCards.some((card) => card.id === selectedCard.id)) return;
     setSelectedCard(visibleCards[0] ?? null);
@@ -533,23 +522,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     const startIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0;
     return visibleCards.some((card, index) => index >= startIndex && card.review_status !== 'APPROVED');
   }, [selectedVisibleIndex, visibleCards]);
-
-  const getNextCardAfterReviewAction = useCallback((cards: WorkCard[], currentCardId: string) => {
-    const nextFilteredCards = filterCards(cards);
-    const nextVisibleCards = [...nextFilteredCards.unassigned, ...nextFilteredCards.assigned];
-    const currentIndex = nextVisibleCards.findIndex((card) => card.id === currentCardId);
-    const firstPendingAfterCurrent = nextVisibleCards.find(
-      (card, index) => index > currentIndex && card.review_status !== 'APPROVED'
-    );
-    if (firstPendingAfterCurrent) return firstPendingAfterCurrent;
-    if (currentIndex >= 0 && currentIndex + 1 < nextVisibleCards.length) {
-      return nextVisibleCards[currentIndex + 1];
-    }
-    if (currentIndex > 0) {
-      return nextVisibleCards[currentIndex - 1];
-    }
-    return nextVisibleCards[0] ?? null;
-  }, [filterCards]);
 
   useEffect(() => {
     if (!isFocusMode || !selectedCard) return;
@@ -1423,20 +1395,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       // Update local state — use functional update so a stale workCards closure
       // (e.g. when called from handleApproveWithSave) can't overwrite monthly_total_hours.
       const approvedCardId = selectedCard.id;
-      const nextCardsForNav = workCards.map(c =>
-        c.id === approvedCardId ? { ...c, review_status: 'APPROVED' as const } : c
-      );
       setWorkCards(prev => prev.map(c =>
         c.id === approvedCardId ? { ...c, review_status: 'APPROVED' as const } : c
       ));
-      if (autoAdvance) {
-        const nextCard = getNextCardAfterReviewAction(nextCardsForNav, approvedCardId);
-        setSelectedCard(nextCard);
-      } else {
-        setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
-        const refreshedEntries = await getDayEntries(approvedCardId);
-        initializeDayEntries(refreshedEntries);
-      }
+      setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
+      const refreshedEntries = await getDayEntries(approvedCardId);
+      initializeDayEntries(refreshedEntries);
     } catch (err) {
       console.error('Failed to approve card:', err);
       showToast('שגיאה באישור הכרטיס', 'error');
@@ -1608,12 +1572,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       // Remove from list
       const nextCards = workCards.filter(c => c.id !== rejectedCardId);
       setWorkCards(nextCards);
-      if (autoAdvance) {
-        const nextCard = getNextCardAfterReviewAction(nextCards, rejectedCardId);
-        setSelectedCard(nextCard);
-      } else {
-        setSelectedCard(null);
-      }
+      setSelectedCard(null);
       setImageUrl(null);
       setDayEntries([]);
       setShowRejectModal(false);
@@ -2143,16 +2102,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
               {/* Info strip — always-visible secondary metadata + controls */}
               <div className="px-5 py-1.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center gap-3 flex-wrap text-xs text-slate-500 dark:text-slate-400">
-                <label className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={autoAdvance}
-                    onChange={(e) => setAutoAdvance(e.target.checked)}
-                    className="rounded border-slate-300 text-primary focus:ring-primary/40"
-                  />
-                  מעבר אוטומטי
-                </label>
-                <span className="text-slate-300 dark:text-slate-600">|</span>
                 <span className="font-mono">#{String(selectedCard.id).slice(0, 8)}</span>
                 {isAdmin && (
                   <>
