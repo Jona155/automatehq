@@ -189,6 +189,26 @@ export interface EmployeeUploadStatus {
   work_card_id: string | null;
 }
 
+export interface WorkCardMonthlyBreakdownCard {
+  id: string;
+  review_status: WorkCard['review_status'];
+  approved_at: string | null;
+  created_at: string | null;
+  source: string | null;
+  contribution_hours: number;
+  is_current: boolean;
+}
+
+export interface WorkCardMonthlyBreakdown {
+  employee_id: string | null;
+  processing_month: string;
+  site_id: string | null;
+  cards: WorkCardMonthlyBreakdownCard[];
+  approved_total_hours: number;
+  current_card_contribution_hours: number;
+  projected_total_hours: number;
+}
+
 export interface MatrixData {
   employees: Employee[];
   matrix: Record<string, Record<number, number>>; // employee_id -> day -> hours

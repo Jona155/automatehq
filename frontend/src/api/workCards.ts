@@ -1,5 +1,5 @@
 import client from './client';
-import type { WorkCard, DayEntry, EmployeeUploadStatus, MatrixData, WorkCardExtraction, Employee } from '../types';
+import type { WorkCard, DayEntry, EmployeeUploadStatus, MatrixData, WorkCardExtraction, Employee, WorkCardMonthlyBreakdown } from '../types';
 
 // Helper to normalize month format: converts YYYY-MM to YYYY-MM-01 if needed
 const normalizeMonthFormat = (month: string): string => {
@@ -166,16 +166,30 @@ export const downloadWorkCardsExport = async (params: WorkCardExportParams): Pro
   return response.data;
 };
 
+// Get per-card monthly hours breakdown for the card's employee/site/month
+export const getWorkCardMonthlyBreakdown = async (cardId: string) => {
+  const response = await client.get<{ data: WorkCardMonthlyBreakdown }>(`/work_cards/${cardId}/monthly-breakdown`);
+  return response.data.data;
+};
+
 // Get day entries for a work card
 export const getDayEntries = async (cardId: string) => {
   const response = await client.get<{ data: DayEntry[] }>(`/work_cards/${cardId}/day-entries`);
   return response.data.data;
 };
 
-// Bulk update day entries for a work card
+// Bulk update day entries for a work card.
+// Backend flips an APPROVED card back to NEEDS_REVIEW when entries actually
+// change; the resulting status is returned in meta.card_review_status.
 export const updateDayEntries = async (cardId: string, entries: UpdateDayEntriesRequest) => {
-  const response = await client.put<{ data: DayEntry[] }>(`/work_cards/${cardId}/day-entries`, entries);
-  return response.data.data;
+  const response = await client.put<{ data: DayEntry[]; meta?: { card_review_status?: WorkCard['review_status'] } }>(
+    `/work_cards/${cardId}/day-entries`,
+    entries
+  );
+  return {
+    entries: response.data.data,
+    cardReviewStatus: response.data.meta?.card_review_status ?? null,
+  };
 };
 
 // Get employee upload status for a site and month

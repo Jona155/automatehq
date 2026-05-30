@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup } from '../types';
-import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard, getMissingWorkCardEmployees, createManualWorkCard } from '../api/workCards';
+import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup, WorkCardMonthlyBreakdown } from '../types';
+import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard, getMissingWorkCardEmployees, createManualWorkCard, getWorkCardMonthlyBreakdown } from '../api/workCards';
 import { getEmployees } from '../api/employees';
 import { getFirstName } from '../utils/nameUtils';
 import MonthPicker from './MonthPicker';
@@ -9,6 +9,7 @@ import { useToast } from '../hooks/useToast';
 import { useAuth } from '../context/AuthContext';
 import Modal from './Modal';
 import BulkDayUpdatePanel from './BulkDayUpdatePanel';
+import MonthlyHoursPanel from './MonthlyHoursPanel';
 
 interface WorkCardReviewTabProps {
   siteId: string;
@@ -200,16 +201,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [isSaving, setIsSaving] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
-  const [showConflictModal, setShowConflictModal] = useState(false);
-  const [approvedConflictDecisions, setApprovedConflictDecisions] = useState<Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'>>({});
   const [manuallyUnlockedDays, setManuallyUnlockedDays] = useState<Set<number>>(new Set());
-  const [draftConflictDecisions, setDraftConflictDecisions] = useState<Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'>>({});
-  const [conflictImageTab, setConflictImageTab] = useState<'current' | 'previous'>('current');
-  const [previousCardImageUrl, setPreviousCardImageUrl] = useState<string | null>(null);
-  const [isLoadingPreviousImage, setIsLoadingPreviousImage] = useState(false);
-  const [conflictImageScale, setConflictImageScale] = useState(1);
-  const [conflictImageOffset, setConflictImageOffset] = useState({ x: 0, y: 0 });
-  const [conflictPanStart, setConflictPanStart] = useState<{ x: number; y: number; originX: number; originY: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
   const [extractionsByCardId, setExtractionsByCardId] = useState<Record<string, WorkCardExtraction | null>>({});
@@ -220,6 +212,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [missingEmployees, setMissingEmployees] = useState<Employee[]>([]);
   const [isCreatingManualCard, setIsCreatingManualCard] = useState(false);
   const [monthlyTotalInput, setMonthlyTotalInput] = useState<string>('');
+  const [monthlyBreakdown, setMonthlyBreakdown] = useState<WorkCardMonthlyBreakdown | null>(null);
   const [isAssigning, setIsAssigning] = useState(false);
   const [cardSearch, setCardSearch] = useState('');
   const [listFilter, setListFilter] = useState<'all' | 'unassigned' | 'assigned'>('all');
@@ -440,36 +433,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     if (jumpDayNumber === null) return displayedEntries;
     return displayedEntries.filter(({ entry }) => entry.day_of_month === jumpDayNumber);
   }, [displayedEntries, jumpToDay, jumpDayValidationMessage, jumpDayNumber]);
-
-  const conflictingEntries = useMemo(
-    () => dayEntries.filter((entry) => entry.conflictType === 'WITH_APPROVED' || entry.conflictType === 'WITH_PENDING'),
-    [dayEntries]
-  );
-
-  const approvedConflictDays = useMemo(
-    () =>
-      dayEntries
-        .filter((entry) => entry.conflictType === 'WITH_APPROVED')
-        .map((entry) => entry.day_of_month),
-    [dayEntries]
-  );
-
-  const conflictDays = useMemo(
-    () => conflictingEntries.map((entry) => entry.day_of_month),
-    [conflictingEntries]
-  );
-
-  const unresolvedConflictDays = useMemo(
-    () => conflictDays.filter((day) => !approvedConflictDecisions[day]),
-    [conflictDays, approvedConflictDecisions]
-  );
-
-  const unresolvedConflictCount = unresolvedConflictDays.length;
-
-  const conflictCount = conflictDays.length;
-
-  const approvedConflictCount = approvedConflictDays.length;
-  const pendingConflictCount = conflictCount - approvedConflictCount;
 
   // Check for identity mismatch between extracted passport and assigned employee
   const hasIdentityMismatch = useMemo(() => {
@@ -759,12 +722,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       });
     }
     setDayEntries(rows);
-    setApprovedConflictDecisions({});
-    setDraftConflictDecisions({});
     setManuallyUnlockedDays(autoUnlockedDays);
-    setShowConflictModal(false);
-    if (autoUnlockedDays.size > 0) {
-    }
   }, [selectedMonth]);
 
   // Revoke object URLs to avoid leaking memory when switching cards
@@ -813,10 +771,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     // Clear previous UI while loading the next card
     setImageUrl(null);
     setShowBulkPanel(false);
-    setPreviousCardImageUrl(prev => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
 
     const isManualCard = selectedCard.source === 'MANUAL';
 
@@ -860,6 +814,43 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       cancelled = true;
     };
   }, [selectedCard?.id, initializeDayEntries, showToast]);
+
+  // Fetch monthly hours breakdown so the admin sees the running employee total
+  // (already-approved + this card pending = projected after approval).
+  const refreshMonthlyBreakdown = useCallback(async () => {
+    if (!selectedCard?.id || !selectedCard?.employee_id) {
+      setMonthlyBreakdown(null);
+      return;
+    }
+    try {
+      const data = await getWorkCardMonthlyBreakdown(selectedCard.id);
+      setMonthlyBreakdown(data);
+    } catch (err) {
+      console.error('Failed to fetch monthly breakdown:', err);
+      setMonthlyBreakdown(null);
+    }
+  }, [selectedCard?.id, selectedCard?.employee_id]);
+
+  useEffect(() => {
+    if (!selectedCard?.id || !selectedCard?.employee_id) {
+      setMonthlyBreakdown(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await getWorkCardMonthlyBreakdown(selectedCard.id);
+        if (cancelled) return;
+        setMonthlyBreakdown(data);
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Failed to fetch monthly breakdown:', err);
+          setMonthlyBreakdown(null);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedCard?.id, selectedCard?.employee_id, selectedCard?.review_status]);
 
   // Fetch extraction status when card is selected
   useEffect(() => {
@@ -1020,7 +1011,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     setDayEntries(prev => {
       const updated = [...prev];
       const entry = updated[dayIndex];
-      if (entry.isLocked && !manuallyUnlockedDays.has(entry.day_of_month)) {
+      if (isEntryEffectivelyLocked(entry) && !manuallyUnlockedDays.has(entry.day_of_month)) {
         return prev;
       }
       updated[dayIndex] = {
@@ -1047,7 +1038,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const handleStatusChange = (dayIndex: number, status: DayStatus | null) => {
     setDayEntries(prev => {
       const updated = [...prev];
-      if (updated[dayIndex].isLocked && !manuallyUnlockedDays.has(updated[dayIndex].day_of_month)) {
+      if (isEntryEffectivelyLocked(updated[dayIndex]) && !manuallyUnlockedDays.has(updated[dayIndex].day_of_month)) {
         return prev;
       }
       updated[dayIndex] = {
@@ -1073,7 +1064,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       const updated = [...prev];
       for (let i = 0; i < updated.length; i++) {
         if (!selected.has(updated[i].day_of_month)) continue;
-        if (updated[i].isLocked && !manuallyUnlockedDays.has(updated[i].day_of_month)) continue;
+        if (isEntryEffectivelyLocked(updated[i]) && !manuallyUnlockedDays.has(updated[i].day_of_month)) continue;
 
         const entry = { ...updated[i], isDirty: true };
 
@@ -1103,9 +1094,19 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     showToast(`עודכנו ${selectedDays.length} ימים`, 'success');
   };
 
+  // An entry is "effectively locked" when either the backend marked it
+  // is_locked (conflict with a previous approved card) OR the current card
+  // itself is already approved — in both cases edits must go through the
+  // explicit per-cell unlock affordance.
+  const isEntryEffectivelyLocked = (entry: DayEntryRow): boolean => {
+    if (entry.isLocked) return true;
+    if (selectedCard?.review_status === 'APPROVED') return true;
+    return false;
+  };
+
   const isCellEditable = (entry: DayEntryRow): boolean => {
     if (!isAdmin) return false;
-    if (entry.isLocked && !manuallyUnlockedDays.has(entry.day_of_month)) return false;
+    if (isEntryEffectivelyLocked(entry) && !manuallyUnlockedDays.has(entry.day_of_month)) return false;
     return true;
   };
 
@@ -1260,7 +1261,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     const { showNoChangesToast = true, showSuccessToast = true } = options ?? {};
 
     const dirtyEntries = dayEntries.filter(
-      e => (!e.isLocked || manuallyUnlockedDays.has(e.day_of_month)) && e.isDirty && (e.from_time || e.to_time || e.total_hours || e.day_status !== undefined)
+      e => (!isEntryEffectivelyLocked(e) || manuallyUnlockedDays.has(e.day_of_month)) && e.isDirty && (e.from_time || e.to_time || e.total_hours || e.day_status !== undefined)
     );
 
     if (dirtyEntries.length === 0 && !monthlyTotalDirty) {
@@ -1302,9 +1303,8 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         ...(e.isLocked && manuallyUnlockedDays.has(e.day_of_month) ? { is_override: true } : {}),
       }));
 
-      const savedDecisions = { ...approvedConflictDecisions };
-      const savedUnlockedDays = new Set(manuallyUnlockedDays);
-      await updateDayEntries(selectedCard.id, {
+      const wasApproved = selectedCard.review_status === 'APPROVED';
+      const { cardReviewStatus } = await updateDayEntries(selectedCard.id, {
         entries,
         ...(monthlyTotalDirty ? { monthly_total_hours: monthlyTotalPayload as number | null } : {}),
       });
@@ -1317,46 +1317,35 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         setWorkCards(prev => prev.map(c => c.id === selectedCard.id ? { ...c, monthly_total_hours: savedValue } : c));
       }
 
-      const refreshedEntries = await getDayEntries(selectedCard.id);
-
-      initializeDayEntries(refreshedEntries);
-
-      // Restore conflict decisions so resolved entries stay unlocked after refresh
-      if (Object.keys(savedDecisions).length > 0) {
-        setApprovedConflictDecisions(savedDecisions);
-        setDayEntries(prev => prev.map(entry => {
-          const decision = savedDecisions[entry.day_of_month];
-          if (decision) {
-            return { ...entry, isLocked: false, resolvedApprovedConflict: decision };
-          }
-          return entry;
-        }));
+      // The backend un-approves a card when its entries change, so the admin
+      // can re-review and re-approve. Mirror that locally so the Approve
+      // button reactivates without a page reload.
+      if (cardReviewStatus && cardReviewStatus !== selectedCard.review_status) {
+        const cardId = selectedCard.id;
+        setSelectedCard(prev => prev ? { ...prev, review_status: cardReviewStatus, approved_at: null, approved_by_user_id: null } : prev);
+        setWorkCards(prev => prev.map(c => c.id === cardId ? { ...c, review_status: cardReviewStatus, approved_at: null, approved_by_user_id: null } : c));
+        if (wasApproved && cardReviewStatus === 'NEEDS_REVIEW') {
+          refreshMonthlyBreakdown();
+        }
       }
 
-      // Restore manually unlocked days and swap values back to the current card's
-      // saved values. The GET endpoint replaces main fields with approved values
-      // and puts the current card's values in latest_* (from suggested_entry).
-      if (savedUnlockedDays.size > 0) {
-        setManuallyUnlockedDays(savedUnlockedDays);
-        setDayEntries(prev => {
-          const result = prev.map(entry => {
-            if (!savedUnlockedDays.has(entry.day_of_month)) return entry;
-            // Use latest_* values which hold the current card's actual saved data
-            return {
-              ...entry,
-              from_time: entry.latest_from_time,
-              to_time: entry.latest_to_time,
-              total_hours: entry.latest_total_hours,
-              day_status: entry.latest_day_status,
-              isDirty: false,
-            };
-          });
-          return result;
-        });
-      }
+      // Mark just-saved entries as clean in place. We deliberately do NOT
+      // refetch from the backend here: the user's typed values are already
+      // authoritative on the server, and refetching causes a full table
+      // re-render (visible jump) plus the backend's conflict-detection layer
+      // would otherwise overwrite the displayed value with a previous-card's
+      // baseline whenever the saved entry differs from a still-approved
+      // sibling card.
+      const dirtyDays = new Set(dirtyEntries.map(e => e.day_of_month));
+      setDayEntries(prev => prev.map(entry =>
+        dirtyDays.has(entry.day_of_month) ? { ...entry, isDirty: false } : entry
+      ));
 
       if (showSuccessToast) {
-        if (overrideCount > 0) {
+        const flippedToReview = cardReviewStatus === 'NEEDS_REVIEW' && wasApproved;
+        if (flippedToReview) {
+          showToast('הנתונים נשמרו. הכרטיס הוחזר לסטטוס "ממתין לסקירה" — יש לאשרו מחדש.', 'success');
+        } else if (overrideCount > 0) {
           showToast(`הנתונים נשמרו. ${overrideCount} ימים מאושרים עודכנו ידנית.`, 'success');
         } else {
           showToast('הנתונים נשמרו בהצלחה', 'success');
@@ -1370,32 +1359,23 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     } finally {
       setIsSaving(false);
     }
-  }, [selectedCard, dayEntries, approvedConflictDecisions, manuallyUnlockedDays, initializeDayEntries, showToast, monthlyTotalDirty, monthlyTotalInput]);
+  }, [selectedCard, dayEntries, manuallyUnlockedDays, initializeDayEntries, showToast, monthlyTotalDirty, monthlyTotalInput, refreshMonthlyBreakdown]);
 
   const handleApprove = async () => {
     if (!selectedCard || !user) return;
 
-    // Only block for unresolved WITH_PENDING conflicts; WITH_APPROVED auto-keeps approved values
-    const unresolvedPendingConflicts = dayEntries.filter(
-      (e) => e.conflictType === 'WITH_PENDING' && !approvedConflictDecisions[e.day_of_month]
-    );
-    if (unresolvedPendingConflicts.length > 0) {
-      openConflictModal();
-      showToast('יש לעבור על ההתנגשויות ולהחיל החלטות לפני אישור', 'info');
-      return;
-    }
     try {
-      const modalOverrideDays = approvedConflictDays.filter((day) => approvedConflictDecisions[day] === 'USE_LATEST');
-      // Include all manually unlocked days — after save, isDirty is false but
-      // the override values are persisted and must be kept during approval.
+      // Cell-level overrides: any day the admin explicitly unlocked is an
+      // intentional override of an approved previous value.
       const cellOverrideDays = [...manuallyUnlockedDays].filter(day =>
         dayEntries.find(e => e.day_of_month === day && e.isLocked)
       );
-      const overrideDays = [...new Set([...modalOverrideDays, ...cellOverrideDays])];
       await approveWorkCard(selectedCard.id, user.id, {
-        override_conflict_days: overrideDays.length > 0 ? overrideDays : undefined,
-        confirm_override_approved: overrideDays.length > 0 ? true : undefined,
-        auto_keep_approved: approvedConflictDays.length > 0 ? true : undefined,
+        override_conflict_days: cellOverrideDays.length > 0 ? cellOverrideDays : undefined,
+        confirm_override_approved: cellOverrideDays.length > 0 ? true : undefined,
+        // Always defer to the approved previous card for days it already
+        // covers. The second card is just filling in the remaining days.
+        auto_keep_approved: true,
       });
       showToast('הכרטיס אושר בהצלחה', 'success');
 
@@ -1408,6 +1388,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
       const refreshedEntries = await getDayEntries(approvedCardId);
       initializeDayEntries(refreshedEntries);
+      refreshMonthlyBreakdown();
     } catch (err) {
       console.error('Failed to approve card:', err);
       showToast('שגיאה באישור הכרטיס', 'error');
@@ -1421,152 +1402,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       if (!saved) return;
     }
     await handleApprove();
-  };
-
-  const formatConflictValue = (
-    from: string | null | undefined,
-    to: string | null | undefined,
-    total: string | number | null | undefined
-  ) => {
-    const fromDisplay = from || '--:--';
-    const toDisplay = to || '--:--';
-    const totalDisplay = total === '' || total === null || typeof total === 'undefined' ? '--' : String(total);
-    return `${fromDisplay} - ${toDisplay} (${totalDisplay} ש')`;
-  };
-
-  const openConflictModal = () => {
-    const initialDecisions: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...approvedConflictDecisions };
-    for (const row of dayEntries) {
-      if ((row.conflictType === 'WITH_APPROVED' || row.conflictType === 'WITH_PENDING') && row.resolvedApprovedConflict) {
-        initialDecisions[row.day_of_month] = row.resolvedApprovedConflict;
-      }
-      // Pre-populate manually unlocked+edited days as USE_LATEST
-      if (manuallyUnlockedDays.has(row.day_of_month) && row.isDirty && !initialDecisions[row.day_of_month]) {
-        initialDecisions[row.day_of_month] = 'USE_LATEST';
-      }
-      if ((row.conflictType === 'WITH_APPROVED' || row.conflictType === 'WITH_PENDING') && !initialDecisions[row.day_of_month]) {
-        initialDecisions[row.day_of_month] = row.conflictType === 'WITH_APPROVED' ? 'KEEP_PREVIOUS' : 'USE_LATEST';
-      }
-    }
-    setDraftConflictDecisions(initialDecisions);
-    setConflictImageTab('current');
-    setConflictImageScale(1);
-    setConflictImageOffset({ x: 0, y: 0 });
-    setShowConflictModal(true);
-
-    // Fetch previous card image
-    const previousCardId = conflictingEntries.find(e => e.previousEntry)?.previous_work_card_id;
-    if (previousCardId && !previousCardImageUrl) {
-      setIsLoadingPreviousImage(true);
-      getWorkCardFile(previousCardId)
-        .then(blob => {
-          const url = URL.createObjectURL(blob);
-          setPreviousCardImageUrl(url);
-        })
-        .catch(err => console.error('Failed to load previous card image:', err))
-        .finally(() => setIsLoadingPreviousImage(false));
-    }
-  };
-
-  const conflictZoom = useCallback((direction: 'in' | 'out') => {
-    setConflictImageScale(prev => {
-      const next = direction === 'in' ? prev + 0.2 : prev - 0.2;
-      return Math.min(4, Math.max(0.5, Number(next.toFixed(2))));
-    });
-  }, []);
-
-  const conflictFitImage = useCallback(() => {
-    setConflictImageScale(1);
-    setConflictImageOffset({ x: 0, y: 0 });
-  }, []);
-
-  const handleConflictImageWheel = useCallback((event: React.WheelEvent) => {
-    event.preventDefault();
-    const zoomDelta = Math.max(-0.35, Math.min(0.35, -event.deltaY * 0.002));
-    setConflictImageScale(prev => Math.min(4, Math.max(0.5, Number((prev + zoomDelta).toFixed(3)))));
-  }, []);
-
-  const handleConflictImagePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || conflictImageScale <= 1) return;
-    event.preventDefault();
-    (event.target as HTMLElement).setPointerCapture(event.pointerId);
-    setConflictPanStart({ x: event.clientX, y: event.clientY, originX: conflictImageOffset.x, originY: conflictImageOffset.y });
-  }, [conflictImageOffset.x, conflictImageOffset.y, conflictImageScale]);
-
-  const handleConflictImagePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!conflictPanStart) return;
-    event.preventDefault();
-    setConflictImageOffset({
-      x: conflictPanStart.originX + (event.clientX - conflictPanStart.x),
-      y: conflictPanStart.originY + (event.clientY - conflictPanStart.y),
-    });
-  }, [conflictPanStart]);
-
-  const handleConflictImagePointerUp = useCallback(() => {
-    setConflictPanStart(null);
-  }, []);
-
-  const applyConflictDecisions = () => {
-    const unresolvedDays = conflictDays.filter((day) => !draftConflictDecisions[day]);
-    if (unresolvedDays.length > 0) {
-      showToast(`יש לבחור החלטה לכל ההתנגשויות (נותרו ${unresolvedDays.length})`, 'error');
-      return;
-    }
-
-    setApprovedConflictDecisions(draftConflictDecisions);
-
-    // Clean up manuallyUnlockedDays for days where user chose KEEP_PREVIOUS
-    setManuallyUnlockedDays(prev => {
-      const next = new Set(prev);
-      for (const [dayStr, decision] of Object.entries(draftConflictDecisions)) {
-        if (decision === 'KEEP_PREVIOUS') {
-          next.delete(Number(dayStr));
-        }
-      }
-      return next;
-    });
-
-    setDayEntries((prev) =>
-      prev.map((entry) => {
-        if (entry.conflictType !== 'WITH_APPROVED' && entry.conflictType !== 'WITH_PENDING') return entry;
-
-        const decision = draftConflictDecisions[entry.day_of_month];
-        if (!decision) return entry;
-
-        if (decision === 'KEEP_PREVIOUS' && entry.previousEntry) {
-          const nextFrom = normalizeTimeToHourMinute(entry.previousEntry.from_time);
-          const nextTo = normalizeTimeToHourMinute(entry.previousEntry.to_time);
-          const nextTotal = entry.previousEntry.total_hours?.toString() || '';
-          const changed = entry.from_time !== nextFrom || entry.to_time !== nextTo || entry.total_hours !== nextTotal;
-          return {
-            ...entry,
-            from_time: nextFrom,
-            to_time: nextTo,
-            total_hours: nextTotal,
-            hasConflict: false,
-            conflictType: entry.conflictType,
-            isLocked: false,
-            isDirty: changed,
-            resolvedApprovedConflict: decision,
-          };
-        }
-
-        return {
-          ...entry,
-          from_time: entry.latest_from_time,
-          to_time: entry.latest_to_time,
-          total_hours: entry.latest_total_hours,
-          hasConflict: false,
-          conflictType: entry.conflictType,
-          isLocked: false,
-          isDirty: false,
-          resolvedApprovedConflict: decision,
-        };
-      })
-    );
-
-    setShowConflictModal(false);
-    showToast('החלטות ההתנגשות הוחלו על הטבלה. אם בחרת בערכים קודמים בהתנגשות לא מאושרת, יש לשמור לפני אישור.', 'success');
   };
 
   const handleReject = async () => {
@@ -1625,11 +1460,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   // the underlying save bails with "no changes."
   const hasContentfulDirtyEntries = useMemo(
     () => dayEntries.some(e =>
-      (!e.isLocked || manuallyUnlockedDays.has(e.day_of_month)) &&
+      (!isEntryEffectivelyLocked(e) || manuallyUnlockedDays.has(e.day_of_month)) &&
       e.isDirty &&
       (e.from_time || e.to_time || e.total_hours || e.day_status !== undefined)
     ),
-    [dayEntries, manuallyUnlockedDays]
+    // isEntryEffectivelyLocked closes over selectedCard.review_status, which is
+    // captured here so the memo re-runs when the card's status flips.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dayEntries, manuallyUnlockedDays, selectedCard?.review_status]
   );
   const hasUnsavedChanges = hasContentfulDirtyEntries || monthlyTotalDirty;
 
@@ -2043,17 +1881,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       </button>
                     )}
 
-                    {conflictCount > 0 && (
-                      <button
-                        type="button"
-                        onClick={openConflictModal}
-                        className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors font-medium text-xs flex items-center gap-1.5"
-                      >
-                        <span className="material-symbols-outlined text-base">warning</span>
-                        <span>{unresolvedConflictCount > 0 ? unresolvedConflictCount : conflictCount} התנגשויות</span>
-                      </button>
-                    )}
-
                     {isAdmin && (
                       <div className="flex items-stretch gap-2">
                         <button
@@ -2372,21 +2199,18 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       >
                         קפוץ
                       </button>
-                      {conflictCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={openConflictModal}
-                          className="text-xs text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/30 px-2 py-1 rounded-full hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
-                        >
-                          {conflictCount} התנגשויות{unresolvedConflictCount > 0 ? ` (${unresolvedConflictCount} דורשות החלטה)` : ''}
-                        </button>
-                      )}
                     </div>
                   </div>
 
                   <div className="px-4 pt-3 space-y-3">
                     {jumpDayValidationMessage && (
                       <p className="text-xs text-amber-700 dark:text-amber-300" role="status">{jumpDayValidationMessage}</p>
+                    )}
+                    {monthlyBreakdown && selectedCard.employee_id && (
+                      <MonthlyHoursPanel
+                        breakdown={monthlyBreakdown}
+                        currentCardStatus={selectedCard.review_status}
+                      />
                     )}
                     {/* Identity Mismatch Warning */}
                     {hasIdentityMismatch && (
@@ -2494,7 +2318,8 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             const dayQuality = extractionQualityMeta.rowQuality[String(entry.day_of_month)] || null;
                             const isReviewRequired = extractionQualityMeta.reviewRequired.has(entry.day_of_month) || Boolean(dayQuality?.review_required);
                             const isOffMark = extractionQualityMeta.offMark.has(entry.day_of_month) || dayQuality?.row_state === 'OFF_MARK';
-                            const isManualOverride = entry.isLocked && manuallyUnlockedDays.has(entry.day_of_month);
+                            const effectivelyLocked = isEntryEffectivelyLocked(entry);
+                            const isManualOverride = effectivelyLocked && manuallyUnlockedDays.has(entry.day_of_month);
                             const cellEditable = isCellEditable(entry);
                             const dayIndex = getDayOfWeek(selectedCard!.processing_month, entry.day_of_month);
                             const isSaturday = dayIndex === 6;
@@ -2507,14 +2332,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     ? 'ring-2 ring-inset ring-primary/60 bg-primary/5 dark:bg-primary/10'
                                     : isManualOverride
                                     ? 'bg-orange-50 dark:bg-orange-900/10'
-                                    : entry.isLocked
+                                    : effectivelyLocked
                                     ? 'bg-slate-100 dark:bg-slate-800/40'
                                     : isReviewRequired
                                     ? 'bg-amber-50 dark:bg-amber-900/10'
                                     : isOffMark
                                     ? 'bg-blue-50 dark:bg-blue-900/10'
-                                    : entry.hasConflict
-                                    ? 'bg-red-50 dark:bg-red-900/10'
                                     : entry.isDirty
                                     ? 'bg-yellow-50 dark:bg-yellow-900/10'
                                     : entry.day_status
@@ -2535,7 +2358,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                       >
                                         {entry.day_of_month}
                                       </button>
-                                      {entry.isLocked && isAdmin && (
+                                      {effectivelyLocked && isAdmin && (
                                         <button
                                           type="button"
                                           onClick={() => handleToggleCellLock(entry.day_of_month)}
@@ -2677,260 +2500,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
               <span className="material-symbols-outlined text-lg">delete</span>
               <span>דחה ומחק</span>
             </button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        isOpen={showConflictModal}
-        onClose={() => setShowConflictModal(false)}
-        title="פתרון התנגשויות"
-        maxWidth="6xl"
-      >
-        <div className="flex flex-col lg:flex-row gap-4" style={{ maxHeight: 'calc(100vh - 12rem)' }}>
-          {/* Right side: Image viewer with tabs and zoom */}
-          <div className="lg:w-1/2 flex flex-col border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shrink-0">
-            {/* Tabs */}
-            <div className="flex border-b border-slate-200 dark:border-slate-700 shrink-0">
-              <button
-                type="button"
-                onClick={() => { setConflictImageTab('current'); setConflictImageScale(1); setConflictImageOffset({ x: 0, y: 0 }); }}
-                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
-                  conflictImageTab === 'current'
-                    ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-600 dark:bg-blue-900/20 dark:text-blue-300'
-                    : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm align-middle ml-1">description</span>
-                כרטיס חדש (חילוץ)
-              </button>
-              <button
-                type="button"
-                onClick={() => { setConflictImageTab('previous'); setConflictImageScale(1); setConflictImageOffset({ x: 0, y: 0 }); }}
-                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
-                  conflictImageTab === 'previous'
-                    ? 'bg-slate-100 text-slate-800 border-b-2 border-slate-600 dark:bg-slate-700 dark:text-slate-200'
-                    : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm align-middle ml-1">history</span>
-                כרטיס מאושר
-              </button>
-            </div>
-            {/* Zoom controls */}
-            <div className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shrink-0">
-              <button type="button" onClick={() => conflictZoom('out')} className="w-7 h-7 inline-flex items-center justify-center rounded hover:bg-slate-200 dark:hover:bg-slate-700">
-                <span className="material-symbols-outlined text-sm">zoom_out</span>
-              </button>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400 min-w-[3rem] text-center">{Math.round(conflictImageScale * 100)}%</span>
-              <button type="button" onClick={() => conflictZoom('in')} className="w-7 h-7 inline-flex items-center justify-center rounded hover:bg-slate-200 dark:hover:bg-slate-700">
-                <span className="material-symbols-outlined text-sm">zoom_in</span>
-              </button>
-              <button type="button" onClick={conflictFitImage} className="w-7 h-7 inline-flex items-center justify-center rounded hover:bg-slate-200 dark:hover:bg-slate-700" title="התאם לגודל">
-                <span className="material-symbols-outlined text-sm">fit_screen</span>
-              </button>
-            </div>
-            {/* Image viewport */}
-            <div
-              className={`flex-1 overflow-hidden bg-slate-50 dark:bg-slate-900/40 ${conflictImageScale > 1 ? (conflictPanStart ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
-              onWheel={handleConflictImageWheel}
-              onPointerDown={handleConflictImagePointerDown}
-              onPointerMove={handleConflictImagePointerMove}
-              onPointerUp={handleConflictImagePointerUp}
-              onPointerCancel={handleConflictImagePointerUp}
-              style={{ touchAction: conflictImageScale > 1 ? 'none' : 'pan-y', minHeight: '300px' }}
-            >
-              <div className="w-full h-full flex items-center justify-center p-2" style={{ minHeight: '300px' }}>
-                {conflictImageTab === 'current' ? (
-                  imageUrl ? (
-                    <img
-                      src={imageUrl}
-                      alt="כרטיס נוכחי"
-                      className="max-w-full max-h-full object-contain select-none"
-                      draggable={false}
-                      style={{
-                        transform: `translate(${conflictImageOffset.x}px, ${conflictImageOffset.y}px) scale(${conflictImageScale})`,
-                        transformOrigin: 'center center',
-                        transition: conflictPanStart ? 'none' : 'transform 120ms ease-out',
-                      }}
-                    />
-                  ) : (
-                    <div className="text-sm text-slate-400">אין תמונה זמינה</div>
-                  )
-                ) : (
-                  isLoadingPreviousImage ? (
-                    <div className="text-sm text-slate-400 flex items-center gap-2">
-                      <span className="material-symbols-outlined animate-spin text-base">progress_activity</span>
-                      טוען תמונה...
-                    </div>
-                  ) : previousCardImageUrl ? (
-                    <img
-                      src={previousCardImageUrl}
-                      alt="כרטיס קודם"
-                      className="max-w-full max-h-full object-contain select-none"
-                      draggable={false}
-                      style={{
-                        transform: `translate(${conflictImageOffset.x}px, ${conflictImageOffset.y}px) scale(${conflictImageScale})`,
-                        transformOrigin: 'center center',
-                        transition: conflictPanStart ? 'none' : 'transform 120ms ease-out',
-                      }}
-                    />
-                  ) : (
-                    <div className="text-sm text-slate-400">אין תמונה זמינה לכרטיס הקודם</div>
-                  )
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Left side: Conflict resolution */}
-          <div className="lg:w-1/2 flex flex-col gap-3 overflow-hidden">
-            <div className="flex items-start gap-2 p-2.5 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 shrink-0">
-              <span className="material-symbols-outlined text-amber-700 dark:text-amber-300 text-base mt-0.5">rule</span>
-              <div className="text-xs text-amber-800 dark:text-amber-200 space-y-0.5">
-                <p>עברו על כל יום עם התנגשות ובחרו איזה ערך יישמר.</p>
-                <p>הטבלה מציגה את הערכים המאושרים. כאן תוכלו לקבל ערכים מהחילוץ החדש.</p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
-              <div className="text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">
-                {approvedConflictCount} מול מאושר | {pendingConflictCount} מול לא מאושר
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const allLatest: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...draftConflictDecisions };
-                    conflictDays.forEach((day) => { allLatest[day] = 'USE_LATEST'; });
-                    setDraftConflictDecisions(allLatest);
-                  }}
-                  className={`px-2 py-1 text-xs rounded border transition-colors ${
-                    conflictDays.every((day) => draftConflictDecisions[day] === 'USE_LATEST')
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  {approvedConflictCount > 0 ? 'קבל חילוץ לכולם' : 'בחר חדש לכולם'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const allPrevious: Record<number, 'KEEP_PREVIOUS' | 'USE_LATEST'> = { ...draftConflictDecisions };
-                    conflictDays.forEach((day) => { allPrevious[day] = 'KEEP_PREVIOUS'; });
-                    setDraftConflictDecisions(allPrevious);
-                  }}
-                  className={`px-2 py-1 text-xs rounded border transition-colors ${
-                    conflictDays.every((day) => draftConflictDecisions[day] === 'KEEP_PREVIOUS')
-                      ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100'
-                      : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  {approvedConflictCount > 0 ? 'שמור מאושר לכולם' : 'בחר קודם לכולם'}
-                </button>
-              </div>
-            </div>
-
-            {/* Conflict entries list */}
-            {conflictingEntries.length === 0 ? (
-              <div className="text-sm text-slate-500 dark:text-slate-400">לא נמצאו התנגשויות בכרטיס זה.</div>
-            ) : (
-              <div className="border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-200 dark:divide-slate-700 overflow-y-auto flex-1">
-                {conflictingEntries.map((entry) => {
-                  const draftDecision = draftConflictDecisions[entry.day_of_month];
-                  return (
-                    <div key={entry.day_of_month} className="p-2.5 space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                          יום {entry.day_of_month}
-                        </div>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                            entry.conflictType === 'WITH_APPROVED'
-                              ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-                              : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                          }`}
-                        >
-                          {entry.conflictType === 'WITH_APPROVED' ? 'מול מאושר' : 'מול קודם'}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">
-                            {entry.conflictType === 'WITH_APPROVED' ? 'ערך מאושר' : 'ערך קודם'}
-                          </div>
-                          <div className="text-xs text-slate-800 dark:text-slate-200">
-                            {formatConflictValue(
-                              entry.previousEntry?.from_time,
-                              entry.previousEntry?.to_time,
-                              entry.previousEntry?.total_hours
-                            )}
-                          </div>
-                        </div>
-                        <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700">
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">
-                            {entry.conflictType === 'WITH_APPROVED' ? 'חילוץ חדש' : 'ערך חדש'}
-                          </div>
-                          <div className="text-xs text-slate-800 dark:text-slate-200">
-                            {formatConflictValue(entry.latest_from_time, entry.latest_to_time, entry.latest_total_hours)}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDraftConflictDecisions((prev) => ({ ...prev, [entry.day_of_month]: 'KEEP_PREVIOUS' }))
-                          }
-                          className={`px-2 py-1 text-xs rounded border ${
-                            draftDecision === 'KEEP_PREVIOUS'
-                              ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100'
-                              : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
-                          }`}
-                        >
-                          {entry.conflictType === 'WITH_APPROVED' ? 'שמור מאושר' : 'שמור קודם'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDraftConflictDecisions((prev) => ({ ...prev, [entry.day_of_month]: 'USE_LATEST' }))
-                          }
-                          className={`px-2 py-1 text-xs rounded border ${
-                            draftDecision === 'USE_LATEST'
-                              ? 'bg-blue-600 text-white border-blue-600'
-                              : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'
-                          }`}
-                        >
-                          {entry.conflictType === 'WITH_APPROVED' ? 'קבל חילוץ' : 'שמור חדש'}
-                        </button>
-                        {!draftDecision && (
-                          <span className="text-[10px] text-red-600 dark:text-red-300">נדרשת בחירה</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-1 shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowConflictModal(false)}
-                className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm"
-              >
-                ביטול
-              </button>
-              <button
-                type="button"
-                onClick={applyConflictDecisions}
-                className="px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 text-sm"
-              >
-                החל החלטות
-              </button>
-            </div>
           </div>
         </div>
       </Modal>

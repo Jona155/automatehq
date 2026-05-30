@@ -272,6 +272,121 @@ def get_work_card(card_id):
             
     return api_response(data=data)
 
+def compute_monthly_breakdown_payload(current_card: WorkCard, sibling_cards) -> Dict[str, Any]:
+    """Pure-function variant: given the current card and the pre-loaded sibling
+    cards (with day_entries loaded), compute the per-card contribution payload.
+
+    Days that exist in an earlier-ordered card are attributed to that card; later
+    cards only get credit for the new days they add.
+    """
+
+    # Order: APPROVED first, then by approved_at asc, then created_at asc, then id.
+    def _order_key(card: WorkCard):
+        return (
+            0 if card.review_status == 'APPROVED' else 1,
+            card.approved_at or card.created_at,
+            card.created_at,
+            str(card.id),
+        )
+
+    ordered = sorted(sibling_cards, key=_order_key)
+
+    claimed_days: Set[int] = set()
+    cards_payload = []
+    approved_total = 0.0
+    current_card_contribution = 0.0
+
+    for card in ordered:
+        contribution = 0.0
+        new_days = []
+        for entry in card.day_entries:
+            if entry.day_of_month in claimed_days:
+                continue
+            if entry.total_hours is None:
+                continue
+            contribution += float(entry.total_hours)
+            new_days.append(entry.day_of_month)
+        claimed_days.update(new_days)
+
+        is_current = card.id == current_card.id
+        if card.review_status == 'APPROVED':
+            approved_total += contribution
+        if is_current:
+            current_card_contribution = contribution
+
+        cards_payload.append({
+            'id': str(card.id),
+            'review_status': card.review_status,
+            'approved_at': card.approved_at.isoformat() if card.approved_at else None,
+            'created_at': card.created_at.isoformat() if card.created_at else None,
+            'source': card.source,
+            'contribution_hours': round(contribution, 2),
+            'is_current': is_current,
+        })
+
+    if current_card.review_status == 'APPROVED':
+        projected_total = approved_total
+    else:
+        projected_total = approved_total + current_card_contribution
+
+    return {
+        'employee_id': str(current_card.employee_id),
+        'processing_month': current_card.processing_month.isoformat(),
+        'site_id': str(current_card.site_id) if current_card.site_id else None,
+        'cards': cards_payload,
+        'approved_total_hours': round(approved_total, 2),
+        'current_card_contribution_hours': round(current_card_contribution, 2),
+        'projected_total_hours': round(projected_total, 2),
+    }
+
+
+def unapprove_card_on_edit(card: WorkCard, had_any_change: bool) -> bool:
+    """Editing an approved card un-approves it so the admin must re-review.
+    Returns True if the card was flipped, False otherwise. Mutates the card
+    in place; caller is responsible for committing.
+    """
+    if card.review_status == 'APPROVED' and had_any_change:
+        card.review_status = 'NEEDS_REVIEW'
+        card.approved_at = None
+        card.approved_by_user_id = None
+        return True
+    return False
+
+
+def _compute_monthly_breakdown(current_card: WorkCard) -> Dict[str, Any]:
+    sibling_cards = repo.get_for_monthly_breakdown(
+        employee_id=current_card.employee_id,
+        month=current_card.processing_month,
+        business_id=current_card.business_id,
+        site_id=current_card.site_id,
+    )
+    return compute_monthly_breakdown_payload(current_card, sibling_cards)
+
+
+@work_cards_bp.route('/<uuid:card_id>/monthly-breakdown', methods=['GET'])
+@token_required
+def get_work_card_monthly_breakdown(card_id):
+    """Return per-card monthly hours breakdown for the card's employee/site/month."""
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+
+    if not card.employee_id:
+        return api_response(
+            data={
+                'employee_id': None,
+                'processing_month': card.processing_month.isoformat(),
+                'site_id': str(card.site_id) if card.site_id else None,
+                'cards': [],
+                'approved_total_hours': 0.0,
+                'current_card_contribution_hours': 0.0,
+                'projected_total_hours': 0.0,
+            }
+        )
+
+    return api_response(data=_compute_monthly_breakdown(card))
+
+
 @work_cards_bp.route('/<uuid:card_id>', methods=['PUT'])
 @token_required
 @role_required('ADMIN')
@@ -849,11 +964,22 @@ def update_day_entries(card_id):
         # Persist monthly_total_hours on the card itself when supplied.
         if monthly_total_provided:
             card.monthly_total_hours = monthly_total_value
+
+        # Editing an approved card un-approves it: the admin must re-approve to
+        # re-commit the new values. Without this, saves to an approved card
+        # would silently overwrite "locked" data with no review gate.
+        flipped_to_review = unapprove_card_on_edit(
+            card,
+            had_any_change=bool(updated_entries) or monthly_total_provided,
+        )
+
+        if monthly_total_provided or flipped_to_review:
             db.session.commit()
 
         return api_response(
             data=models_to_list(updated_entries),
-            message="Day entries updated successfully"
+            message="Day entries updated successfully",
+            meta={'card_review_status': card.review_status}
         )
     except Exception as e:
         return api_response(status_code=500, message="Failed to update day entries", error=str(e))
