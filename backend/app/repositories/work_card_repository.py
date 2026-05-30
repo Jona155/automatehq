@@ -92,6 +92,28 @@ class WorkCardRepository(BaseRepository[WorkCard]):
             business_id=business_id
         ).order_by(WorkCard.created_at.desc()).all()
 
+    def get_for_monthly_breakdown(
+        self,
+        employee_id: UUID,
+        month: date,
+        business_id: UUID,
+        site_id: Optional[UUID],
+    ) -> List[WorkCard]:
+        """
+        Get all work cards for an employee/month/(site) in a business with day entries
+        eagerly loaded, for computing the per-card monthly hours breakdown.
+        """
+        query = self.session.query(WorkCard).options(
+            joinedload(WorkCard.day_entries)
+        ).filter(
+            WorkCard.employee_id == employee_id,
+            WorkCard.processing_month == month,
+            WorkCard.business_id == business_id,
+        )
+        if site_id is not None:
+            query = query.filter(WorkCard.site_id == site_id)
+        return query.all()
+
     def get_previous_card_for_employee_month(
         self,
         employee_id: UUID,
