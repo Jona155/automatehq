@@ -458,8 +458,8 @@ def _populate_template_core_sheet(
         first_name = (employee.full_name or '').split()[0] if employee.full_name else ''
         ws.cell(row=2, column=idx, value=first_name)._style = copy(style_body)
 
-    # Body rows: fixed 31-day structure (rows 3..33)
-    for day in range(1, 32):
+    # Body rows: one row per actual day in the month (rows 3..days_in_month+2)
+    for day in range(1, days_in_month + 1):
         row = day + 2
         ws.cell(
             row=row,
@@ -479,7 +479,17 @@ def _populate_template_core_sheet(
                     value = _day_fallback_value(month_date.year, month_date.month, day, days_in_month)
             ws.cell(row=row, column=idx, value=value)._style = copy(style_body)
 
-    ws.cell(row=34, column=1, value='סה"כ')._style = copy(style_total)
+    # Clear template styling for any excess rows (e.g. days 29-31 when month has 28 days)
+    for excess_day in range(days_in_month + 1, 32):
+        excess_row = excess_day + 2
+        for col in range(1, clear_max_col + 1):
+            cell = ws.cell(row=excess_row, column=col)
+            cell.value = None
+            cell._style = copy(style_body)
+
+    total_row = days_in_month + 3
+    last_day_row = days_in_month + 2
+    ws.cell(row=total_row, column=1, value='סה"כ')._style = copy(style_total)
     for col in range(2, last_data_col + 1):
         col_letter = get_column_letter(col)
         employee_idx = col - 2
@@ -488,16 +498,23 @@ def _populate_template_core_sheet(
         if override is not None:
             cell_value = round(float(override), 2)
         else:
-            cell_value = f'=SUM({col_letter}3:{col_letter}33)'
-        ws.cell(row=34, column=col, value=cell_value)._style = copy(style_total)
+            cell_value = f'=SUM({col_letter}3:{col_letter}{last_day_row})'
+        ws.cell(row=total_row, column=col, value=cell_value)._style = copy(style_total)
+
+    return total_row
 
 def _add_tariff_summary(ws, employee_count, hourly_tariff, style_body,
-                        style_site_total, style_tariff, style_tariff_label):
+                        style_site_total, style_tariff, style_tariff_label,
+                        total_row=34):
     """Add tariff/fee summary rows to a populated site sheet.
 
     Clears the template's fixed colored cells and, when the site has an
     hourly tariff, writes grand-total, price-per-hour, cost-without-VAT
     and cost-with-VAT at dynamic columns based on employee count.
+
+    total_row: the row written by _populate_template_core_sheet for the
+    'סה"כ' totals; defaults to 34 (31-day month). For shorter months this
+    shifts up so that tariff rows follow immediately after the total.
     """
     TMPL_VALUE_COL = 8
     TMPL_LABEL_COL = 9
@@ -506,50 +523,61 @@ def _add_tariff_summary(ws, employee_count, hourly_tariff, style_body,
     value_col = last_data_col + 1
     label_col = value_col + 1
 
+    label_row = total_row - 1   # last day row — used for site total label
+    tariff_row = total_row + 2  # tariff per hour
+    no_vat_row = total_row + 3  # cost without VAT
+    vat_row = total_row + 4     # cost with VAT
+
     # Clear the template's fixed colored cells so stale content doesn't
-    # appear on copied sheets.
-    for r in (33, 34, 36, 37, 38):
+    # appear on copied sheets.  For the data rows (last-day and total) we
+    # must NOT overwrite employee columns — when there are 7+ employees,
+    # column 8 (TMPL_VALUE_COL) is an employee column and clearing it would
+    # destroy that employee's hours/total that _populate_template_core_sheet
+    # just wrote.  The tariff-section rows (tariff_row and beyond) are safely
+    # past all employee data so we always clear those.
+    for r in (label_row, total_row, tariff_row, no_vat_row, vat_row):
         for c in (TMPL_VALUE_COL, TMPL_LABEL_COL):
+            if r in (label_row, total_row) and c <= last_data_col:
+                continue  # employee column in a data row — leave it alone
             cell = ws.cell(row=r, column=c)
             cell.value = None
             cell._style = copy(style_body)
 
     if hourly_tariff is not None:
         tariff = float(hourly_tariff)
-        tariff_int = int(tariff) if tariff == int(tariff) else tariff
 
         total_letters = [get_column_letter(c) for c in range(2, last_data_col + 1)]
-        grand_total_formula = '=SUM(' + ','.join(f'{cl}34' for cl in total_letters) + ')'
+        grand_total_formula = '=SUM(' + ','.join(f'{cl}{total_row}' for cl in total_letters) + ')'
         value_col_letter = get_column_letter(value_col)
 
-        # Row 33: site total label
-        ws.cell(row=33, column=value_col, value='סה"כ שעות לאתר:')._style = copy(style_site_total)
+        # Site total label (last day row, side column)
+        ws.cell(row=label_row, column=value_col, value='סה"כ שעות לאתר:')._style = copy(style_site_total)
 
-        # Row 34: grand total value
-        ws.cell(row=34, column=value_col, value=grand_total_formula)._style = copy(style_site_total)
+        # Grand total value (total row, side column)
+        ws.cell(row=total_row, column=value_col, value=grand_total_formula)._style = copy(style_site_total)
 
         NIS_FORMAT = '[$₪-40D]#,##0.00'
 
-        # Row 36: tariff per hour (numeric so row 37 can reference it in a formula)
-        tariff_cell = ws.cell(row=36, column=value_col)
+        # Tariff per hour (numeric so no-VAT row can reference it in a formula)
+        tariff_cell = ws.cell(row=tariff_row, column=value_col)
         tariff_cell.value = tariff
         tariff_cell._style = copy(style_tariff)
         tariff_cell.number_format = NIS_FORMAT
-        ws.cell(row=36, column=label_col, value='מחיר לשעה')._style = copy(style_tariff_label)
+        ws.cell(row=tariff_row, column=label_col, value='מחיר לשעה')._style = copy(style_tariff_label)
 
-        # Row 37: cost without VAT
-        price_no_vat_cell = ws.cell(row=37, column=value_col)
-        price_no_vat_cell.value = f'={value_col_letter}34*{value_col_letter}36'
+        # Cost without VAT
+        price_no_vat_cell = ws.cell(row=no_vat_row, column=value_col)
+        price_no_vat_cell.value = f'={value_col_letter}{total_row}*{value_col_letter}{tariff_row}'
         price_no_vat_cell._style = copy(style_tariff)
         price_no_vat_cell.number_format = NIS_FORMAT
-        ws.cell(row=37, column=label_col, value='מחיר ללא מע"מ')._style = copy(style_tariff_label)
+        ws.cell(row=no_vat_row, column=label_col, value='מחיר ללא מע"מ')._style = copy(style_tariff_label)
 
-        # Row 38: cost with VAT (×1.18)
-        price_vat_cell = ws.cell(row=38, column=value_col)
-        price_vat_cell.value = f'={value_col_letter}37*1.18'
+        # Cost with VAT (×1.18)
+        price_vat_cell = ws.cell(row=vat_row, column=value_col)
+        price_vat_cell.value = f'={value_col_letter}{no_vat_row}*1.18'
         price_vat_cell._style = copy(style_tariff)
         price_vat_cell.number_format = NIS_FORMAT
-        ws.cell(row=38, column=label_col, value='מחיר כולל מע"מ')._style = copy(style_tariff_label)
+        ws.cell(row=vat_row, column=label_col, value='מחיר כולל מע"מ')._style = copy(style_tariff_label)
 
 
 def _load_hours_matrix(site_id, processing_month, approved_only, include_inactive):
@@ -956,7 +984,7 @@ def _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthl
 
     ws.title = _safe_sheet_name(site.site_name, set())
 
-    _populate_template_core_sheet(
+    total_row = _populate_template_core_sheet(
         ws,
         employees,
         matrix,
@@ -979,6 +1007,7 @@ def _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthl
         style_site_total=style_site_total,
         style_tariff=style_tariff,
         style_tariff_label=style_tariff_label,
+        total_row=total_row,
     )
 
     output = BytesIO()
@@ -1274,7 +1303,7 @@ def export_monthly_summary_batch():
 
             ws = workbook.copy_worksheet(template_ws)
             ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
-            _populate_template_core_sheet(
+            total_row = _populate_template_core_sheet(
                 ws,
                 site_data['employees'],
                 site_data['matrix'],
@@ -1293,6 +1322,7 @@ def export_monthly_summary_batch():
                 style_site_total=style_site_total,
                 style_tariff=style_tariff,
                 style_tariff_label=style_tariff_label,
+                total_row=total_row,
             )
 
         if workbook.worksheets and len(workbook.worksheets) > 1:
