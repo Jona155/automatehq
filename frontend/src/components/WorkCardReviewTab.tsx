@@ -43,6 +43,20 @@ const getDaysInMonth = (yearMonth: string): number => {
 
 const HEBREW_DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
+// Prevent accidental value changes on number/time cells: mouse-wheel scrolling
+// while the cell is focused, and the up/down arrow keys. Users edit these by
+// typing, so blocking these inputs avoids unintended modifications.
+const blockWheelValueChange = (e: React.WheelEvent<HTMLInputElement>) => {
+  // Blur so the wheel scrolls the page instead of changing the focused value.
+  e.currentTarget.blur();
+};
+
+const blockArrowKeyValueChange = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault();
+  }
+};
+
 const getDayOfWeek = (yearMonth: string, dayOfMonth: number): number => {
   const [year, month] = yearMonth.split('-').map(Number);
   return new Date(year, month - 1, dayOfMonth).getDay(); // 0=Sun … 6=Sat
@@ -2405,6 +2419,8 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     value={entry.from_time}
                                     onChange={(e) => handleEntryChange(index, 'from_time', e.target.value)}
                                     onFocus={() => activateDay(entry.day_of_month)}
+                                    onWheel={blockWheelValueChange}
+                                    onKeyDown={blockArrowKeyValueChange}
                                     disabled={!cellEditable || !!entry.day_status}
                                     className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 ${isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
                                     aria-label={`שעת כניסה יום ${entry.day_of_month}`}
@@ -2416,6 +2432,8 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     value={entry.to_time}
                                     onChange={(e) => handleEntryChange(index, 'to_time', e.target.value)}
                                     onFocus={() => activateDay(entry.day_of_month)}
+                                    onWheel={blockWheelValueChange}
+                                    onKeyDown={blockArrowKeyValueChange}
                                     disabled={!cellEditable || !!entry.day_status}
                                     className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 ${isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
                                     aria-label={`שעת יציאה יום ${entry.day_of_month}`}
@@ -2430,8 +2448,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     value={entry.total_hours}
                                     onChange={(e) => handleEntryChange(index, 'total_hours', e.target.value)}
                                     onFocus={() => activateDay(entry.day_of_month)}
+                                    onWheel={blockWheelValueChange}
+                                    onKeyDown={blockArrowKeyValueChange}
                                     disabled={!cellEditable || !!entry.day_status}
-                                    className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 ${isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
+                                    className={`no-spinner w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 ${isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
                                     placeholder="0"
                                     aria-label={`סך שעות יום ${entry.day_of_month}`}
                                   />
