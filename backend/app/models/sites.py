@@ -17,6 +17,11 @@ class Site(db.Model):
         db.ForeignKey('employees.id', ondelete='SET NULL'),
         nullable=True
     )
+    field_manager_id = db.Column(
+        UUID(as_uuid=True),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True
+    )
     hourly_tariff = db.Column(db.Numeric(10, 2), nullable=True)
     contractor_emails = db.Column(JSONB, nullable=True, default=list)
     contractor_phone_number = db.Column(db.Text, nullable=True)
@@ -27,6 +32,7 @@ class Site(db.Model):
     __table_args__ = (
         Index('ix_sites_business_id', 'business_id'),
         Index('ix_sites_responsible_employee_id', 'responsible_employee_id'),
+        Index('ix_sites_field_manager_id', 'field_manager_id'),
         db.UniqueConstraint('business_id', 'site_name', name='uq_sites_business_name'),
     )
 

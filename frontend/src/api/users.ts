@@ -3,10 +3,11 @@ import type { User } from '../types';
 
 export interface CreateUserPayload {
   full_name: string;
-  email: string;
+  email?: string;
   password?: string;
   role?: string;
   phone_number?: string;
+  site_ids?: string[];
 }
 
 export interface UpdateUserPayload {
@@ -15,6 +16,7 @@ export interface UpdateUserPayload {
   password?: string;
   role?: string;
   phone_number?: string;
+  site_ids?: string[];
 }
 
 export const getUsers = async (params?: { active?: boolean; role?: string }) => {

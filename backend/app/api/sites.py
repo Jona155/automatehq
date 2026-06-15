@@ -22,6 +22,7 @@ from ..repositories.site_repository import SiteRepository
 from ..repositories.employee_repository import EmployeeRepository
 from ..repositories.upload_access_request_repository import UploadAccessRequestRepository
 from ..repositories.business_repository import BusinessRepository
+from ..repositories.user_repository import UserRepository
 from ..services.sites.hours_matrix_service import (
     build_employee_upload_status_map,
     get_latest_work_card_with_extraction_by_employee,
@@ -53,6 +54,7 @@ repo = SiteRepository()
 employee_repo = EmployeeRepository()
 access_repo = UploadAccessRequestRepository()
 business_repo = BusinessRepository()
+user_repo = UserRepository()
 
 STATUS_LABELS = {
     'APPROVED': 'מאושר',
@@ -837,7 +839,23 @@ def update_site(site_id):
                     return api_response(status_code=400, message="Responsible employee is not active", error="Bad Request")
 
                 data['responsible_employee_id'] = responsible_employee_uuid
-        
+
+        if 'field_manager_id' in data:
+            field_manager_id = data.get('field_manager_id')
+            if not field_manager_id:
+                data['field_manager_id'] = None
+            else:
+                try:
+                    field_manager_uuid = uuid.UUID(str(field_manager_id))
+                except ValueError:
+                    return api_response(status_code=400, message="Invalid field_manager_id format", error="Bad Request")
+
+                manager = user_repo.get_by_id(field_manager_uuid)
+                if not manager or manager.business_id != g.business_id or manager.role != 'FIELD_MANAGER':
+                    return api_response(status_code=404, message="Field manager not found for this business", error="Not Found")
+
+                data['field_manager_id'] = field_manager_uuid
+
         updated_site = repo.update(site_id, **data)
         if not updated_site:
             return api_response(status_code=404, message="Site not found", error="Not Found")
