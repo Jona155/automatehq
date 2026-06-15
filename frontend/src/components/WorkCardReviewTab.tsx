@@ -1300,7 +1300,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         to_time: normalizeTimeToHourMinute(e.to_time) || null,
         total_hours: e.total_hours ? parseFloat(e.total_hours) : null,
         day_status: e.day_status || null,
-        ...(e.isLocked && manuallyUnlockedDays.has(e.day_of_month) ? { is_override: true } : {}),
+        // Any day the admin explicitly unlocked and edited is a deliberate
+        // override. Persist that intent (source=MANUAL_OVERRIDE) so it survives
+        // a reload — do NOT key this off e.isLocked, which is only true when the
+        // value already differed from an approved sibling at load time and is
+        // false for the common "edit a duplicate day" case.
+        ...(manuallyUnlockedDays.has(e.day_of_month) ? { is_override: true } : {}),
       }));
 
       const wasApproved = selectedCard.review_status === 'APPROVED';
@@ -1366,10 +1371,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
     try {
       // Cell-level overrides: any day the admin explicitly unlocked is an
-      // intentional override of an approved previous value.
-      const cellOverrideDays = [...manuallyUnlockedDays].filter(day =>
-        dayEntries.find(e => e.day_of_month === day && e.isLocked)
-      );
+      // intentional override of an approved previous value — regardless of
+      // whether the load-time value happened to match the previous card (in
+      // which case e.isLocked is false). Filtering on e.isLocked here was the
+      // bug: a duplicate day edited after unlocking was dropped from the
+      // override list and silently reverted on approve.
+      const cellOverrideDays = [...manuallyUnlockedDays];
       await approveWorkCard(selectedCard.id, user.id, {
         override_conflict_days: cellOverrideDays.length > 0 ? cellOverrideDays : undefined,
         confirm_override_approved: cellOverrideDays.length > 0 ? true : undefined,
