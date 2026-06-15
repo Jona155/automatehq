@@ -7,6 +7,7 @@ import {
   getWhatsAppStatus,
   linkWhatsAppGroup,
   unlinkWhatsAppGroup,
+  updateWhatsAppCutoffDay,
   type WhatsAppConfig,
   type WhatsAppGroup,
   type WhatsAppStatus,
@@ -112,6 +113,11 @@ export default function WhatsAppSettings() {
     setConfig(next);
   };
 
+  const handleSaveCutoff = async (day: number) => {
+    const next = await updateWhatsAppCutoffDay(day);
+    setConfig(next);
+  };
+
   const handleUnlinkGroup = async () => {
     setConfirmDisconnectGroup(false);
     try {
@@ -153,7 +159,7 @@ export default function WhatsAppSettings() {
       <div className="max-w-[780px] mx-auto px-7 py-9 pb-20 space-y-4">
         <PageHeader
           title="הגדרות WhatsApp"
-          sub="קליטת הודעות מקבוצת עבודה נבחרת ב-WhatsApp ישירות לתוך AutoHQ. לאחר חיבור, הודעות מסונכרנות אוטומטית על־פי ההגדרות כאן."
+          sub="קליטת הודעות מקבוצת עבודה נבחרת ב-WhatsApp ישירות לתוך AutoHQ. שיוך התמונות לחודש נקבע אך ורק לפי יום החיתוך שמוגדר כאן."
         />
 
         {error && (
@@ -183,6 +189,10 @@ export default function WhatsAppSettings() {
             onLink={handleLink}
             onDisconnectGroup={() => setConfirmDisconnectGroup(true)}
           />
+        )}
+
+        {!statusError && isConnected && config && (
+          <MonthAssignmentCard config={config} onSave={handleSaveCutoff} />
         )}
 
         {!statusError && !isConnected && status && (
@@ -566,10 +576,7 @@ function LinkedGroupPanel({
 
       <div className="mt-4 grid grid-cols-3 gap-4 px-4 py-3.5 bg-slate-50/70 border border-slate-200 rounded-lg">
         <Stat label="סנכרון אחרון" value={config.last_seen_timestamp ? relativeTime(config.last_seen_timestamp) : '—'} />
-        <Stat
-          label="חודש פעיל"
-          value={config.current_processing_month ? formatMonth(config.current_processing_month) : '—'}
-        />
+        <Stat label="יום חיתוך" value={`עד ה-${config.previous_month_cutoff_day} בחודש`} />
         <Stat label="מזהה קבוצה" value={group.chat_id} mono />
       </div>
 
@@ -671,6 +678,125 @@ function Stat({ label, value, mono = false }: { label: string; value: string; mo
         {value}
       </div>
     </div>
+  );
+}
+
+// --------------------------------------------------------------------------
+// Month assignment (cutoff day) card
+// --------------------------------------------------------------------------
+
+function monthForUpload(uploadDate: Date, cutoffDay: number): Date {
+  // Mirrors backend processing_month_for_upload: uploads on/before the cutoff
+  // day belong to the previous month. JS Date handles the Dec→Jan year wrap.
+  if (uploadDate.getDate() <= cutoffDay) {
+    return new Date(uploadDate.getFullYear(), uploadDate.getMonth() - 1, 1);
+  }
+  return new Date(uploadDate.getFullYear(), uploadDate.getMonth(), 1);
+}
+
+function MonthAssignmentCard({
+  config,
+  onSave,
+}: {
+  config: WhatsAppConfig;
+  onSave: (day: number) => Promise<void>;
+}) {
+  const [day, setDay] = useState<number>(config.previous_month_cutoff_day);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setDay(config.previous_month_cutoff_day);
+  }, [config.previous_month_cutoff_day]);
+
+  const dirty = day !== config.previous_month_cutoff_day;
+
+  const today = new Date();
+  const targetMonth = useMemo(
+    () => fmtMonthLabel(monthForUpload(today, config.previous_month_cutoff_day)),
+    [config.previous_month_cutoff_day],
+  );
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await onSave(day);
+      setSaved(true);
+    } catch (err) {
+      setError(errorMessage(err) || 'שמירת ההגדרה נכשלה');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        icon="calendar_month"
+        title="שיוך חודשי"
+        sub="קובע לאיזה חודש משויכות התמונות שנקלטות מ-WhatsApp"
+      />
+
+      {/* Emphasized rule */}
+      <div className="px-5 pt-4">
+        <div className="flex items-start gap-3 px-4 py-3.5 bg-indigo-50 border border-indigo-200 rounded-xl">
+          <span className="material-symbols-outlined text-[20px] text-indigo-600 shrink-0">info</span>
+          <div className="text-[13.5px] text-indigo-900 leading-[1.6]">
+            תמונות שמועלות <span className="font-semibold">עד וכולל היום ה-{config.previous_month_cutoff_day}</span> בכל
+            חודש משויכות <span className="font-semibold">לחודש הקודם</span>. תמונות שמועלות מהיום שאחריו ואילך משויכות
+            לחודש הנוכחי.
+          </div>
+        </div>
+      </div>
+
+      {/* Editor */}
+      <div className="px-5 py-5">
+        <label className="block text-[12.5px] font-medium text-slate-700 mb-2">
+          יום החיתוך (1–31)
+        </label>
+        <div className="flex items-center gap-2.5">
+          <input
+            type="number"
+            min={1}
+            max={31}
+            value={day}
+            onChange={(e) => {
+              setSaved(false);
+              setDay(Math.min(31, Math.max(1, parseInt(e.target.value) || 1)));
+            }}
+            className="w-24 h-10 px-3 text-[14px] text-slate-900 bg-white border border-slate-300 rounded-lg tabular-nums focus:outline-none focus:border-indigo-500 focus:shadow-[0_0_0_3px_rgba(99,102,241,0.18)]"
+          />
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            className="h-10 px-4 text-[13px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg inline-flex items-center gap-1.5 transition-colors"
+          >
+            {saving && <span className="material-symbols-outlined animate-spin text-[15px]">progress_activity</span>}
+            {saving ? 'שומר…' : 'שמור'}
+          </button>
+          {saved && !dirty && (
+            <span className="inline-flex items-center gap-1 text-[12.5px] text-emerald-700">
+              <span className="material-symbols-outlined text-[16px]">check_circle</span>
+              נשמר
+            </span>
+          )}
+        </div>
+
+        <div className="mt-3 text-[12.5px] text-slate-500 leading-[1.55]">
+          כרגע: תמונה שתועלה היום (ה-{today.getDate()} בחודש) תשויך לחודש <span className="font-medium text-slate-700">{targetMonth}</span>.
+        </div>
+
+        {error && (
+          <div className="mt-3 px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-[12.5px] text-rose-700">
+            {error}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -1009,8 +1135,7 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString('he-IL');
 }
 
-function formatMonth(iso: string): string {
-  const d = new Date(iso);
+function fmtMonthLabel(d: Date): string {
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
 }

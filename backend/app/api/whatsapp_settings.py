@@ -1,5 +1,4 @@
 import logging
-from datetime import date
 
 from flask import Blueprint, request, g
 
@@ -38,8 +37,7 @@ def _config_to_dict(config):
     return {
         'chat_id': config.chat_id,
         'chat_name': config.chat_name,
-        'current_processing_month': config.current_processing_month.isoformat() if config.current_processing_month else None,
-        'auto_advance_day': config.auto_advance_day,
+        'previous_month_cutoff_day': config.previous_month_cutoff_day,
         'last_seen_timestamp': config.last_seen_timestamp.isoformat() if config.last_seen_timestamp else None,
         'is_active': config.is_active,
     }
@@ -103,6 +101,29 @@ def get_config():
 
     config = config_repo.get_by_business(business_id)
     return api_response(data=_config_to_dict(config))
+
+
+@whatsapp_settings_bp.route('/config', methods=['PATCH'])
+@token_required
+def update_config():
+    """Update the month-cutoff day for the current business's WhatsApp group."""
+    business_id = g.business_id
+    if not business_id:
+        return api_response(status_code=403, message="No business context", error="Forbidden")
+
+    data = request.get_json() or {}
+    if 'previous_month_cutoff_day' not in data:
+        return api_response(status_code=400, message="previous_month_cutoff_day is required", error="Bad Request")
+
+    day = data['previous_month_cutoff_day']
+    if not isinstance(day, int) or isinstance(day, bool) or not (1 <= day <= 31):
+        return api_response(status_code=400, message="previous_month_cutoff_day must be an integer 1–31", error="Bad Request")
+
+    config = config_repo.update_cutoff_day(business_id, day)
+    if config is None:
+        return api_response(status_code=404, message="No WhatsApp group linked", error="Not Found")
+
+    return api_response(data=_config_to_dict(config), message="WhatsApp settings updated")
 
 
 @whatsapp_settings_bp.route('/groups', methods=['GET'])
@@ -198,13 +219,10 @@ def create_link():
     except WhatsAppListenerError:
         pass
 
-    today = date.today()
-    current_month = date(today.year, today.month, 1)
     config = config_repo.create(
         business_id=business_id,
         chat_id=chat_id,
         chat_name=chat_name,
-        current_processing_month=current_month,
         is_active=True,
     )
     return api_response(data=_config_to_dict(config), message="WhatsApp group linked successfully")

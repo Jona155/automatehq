@@ -1,5 +1,5 @@
 from typing import Optional, List
-from datetime import date, datetime
+from datetime import datetime
 from uuid import UUID
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -47,24 +47,16 @@ class WhatsAppGroupConfigRepository(BaseRepository[WhatsAppGroupConfig]):
             self.session.rollback()
             raise e
 
-    def advance_month_if_due(self, config: WhatsAppGroupConfig) -> bool:
-        """Mirror Telegram's auto-advance. Returns True if the month was advanced."""
-        if config.auto_advance_day is None:
-            return False
-
-        today = date.today()
-        if today.day < config.auto_advance_day:
-            return False
-
-        current_month_first = date(today.year, today.month, 1)
-        if config.current_processing_month >= current_month_first:
-            return False
-
+    def update_cutoff_day(self, business_id: UUID, day: int) -> Optional[WhatsAppGroupConfig]:
+        """Update the previous-month cutoff day for a business. Returns the config, or None if not linked."""
+        config = self.get_by_business(business_id)
+        if not config:
+            return None
         try:
-            config.current_processing_month = current_month_first
+            config.previous_month_cutoff_day = day
             config.updated_at = utc_now()
             self.session.commit()
-            return True
+            return config
         except SQLAlchemyError as e:
             self.session.rollback()
             raise e

@@ -19,8 +19,7 @@ export interface WhatsAppGroup {
 export interface WhatsAppConfig {
   chat_id: string;
   chat_name: string | null;
-  current_processing_month: string | null;
-  auto_advance_day: number | null;
+  previous_month_cutoff_day: number;
   last_seen_timestamp: string | null;
   is_active: boolean;
 }
@@ -47,6 +46,13 @@ export const getWhatsAppGroups = async (): Promise<WhatsAppGroup[]> => {
 
 export const linkWhatsAppGroup = async (chat_id: string): Promise<WhatsAppConfig> => {
   const response = await client.post<{ data: WhatsAppConfig }>('/whatsapp/link', { chat_id });
+  return response.data.data;
+};
+
+export const updateWhatsAppCutoffDay = async (day: number): Promise<WhatsAppConfig> => {
+  const response = await client.patch<{ data: WhatsAppConfig }>('/whatsapp/config', {
+    previous_month_cutoff_day: day,
+  });
   return response.data.data;
 };
 

@@ -18,7 +18,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 # Add backend to path (same pattern as run.py)
@@ -60,6 +60,22 @@ def _decode_media(data_url: str) -> Optional[tuple[bytes, str]]:
         return None
 
 
+def processing_month_for_upload(upload_date: date, cutoff_day: int) -> date:
+    """
+    Decide which processing month an image belongs to, based on its upload date.
+
+    Cutoff semantics (inclusive): an image uploaded on day <= cutoff_day belongs
+    to the PREVIOUS month; later uploads belong to the current month. This is the
+    single source of truth for WhatsApp month assignment.
+    """
+    first_of_current = upload_date.replace(day=1)
+    if upload_date.day <= cutoff_day:  # belongs to previous month
+        if first_of_current.month == 1:
+            return date(first_of_current.year - 1, 12, 1)
+        return date(first_of_current.year, first_of_current.month - 1, 1)
+    return first_of_current
+
+
 def _parse_ts(ts: Optional[str]) -> Optional[datetime]:
     if not ts:
         return None
@@ -78,11 +94,15 @@ def _ingest_image(
     message_id: str,
     caption: Optional[str],
     config,
+    upload_date: date,
 ) -> tuple[str, bool]:
     """
     Create WorkCard + WorkCardFile + WorkCardExtraction(PENDING).
     Mirrors worker/telegram_poller.py::_ingest_image — one group per business,
     site assignment happens downstream via employee matching in run.py.
+
+    The processing month is derived from the image's own upload date and the
+    business's configured cutoff day (see processing_month_for_upload).
 
     Returns (work_card_id, is_duplicate).
     """
@@ -90,9 +110,13 @@ def _ingest_image(
     file_repo = WorkCardFileRepository()
     extraction_repo = WorkCardExtractionRepository()
 
+    processing_month = processing_month_for_upload(
+        upload_date, config.previous_month_cutoff_day
+    )
+
     file_hash = hashlib.sha256(image_bytes).hexdigest()
     existing = work_card_repo.find_by_hash(
-        config.business_id, config.current_processing_month, file_hash
+        config.business_id, processing_month, file_hash
     )
     if existing:
         logger.info('[WhatsApp] Skipping duplicate image (hash=%s, existing_card=%s)', file_hash[:8], existing.id)
@@ -105,7 +129,7 @@ def _ingest_image(
         business_id=config.business_id,
         site_id=None,
         employee_id=None,
-        processing_month=config.current_processing_month,
+        processing_month=processing_month,
         source='WHATSAPP',
         uploaded_by_user_id=None,
         original_filename=filename,
@@ -152,17 +176,6 @@ def _process_config(client: WhatsAppListenerClient, config) -> None:
     ingested = 0
     skipped = 0
     errors = 0
-
-    # Auto-advance the processing month if due (mirrors Telegram).
-    try:
-        if config_repo.advance_month_if_due(config):
-            config = config_repo.get_by_business(config.business_id)
-            logger.info(
-                f"[WhatsApp] auto-advanced processing month to {config.current_processing_month} "
-                f"for chat {config.chat_id}"
-            )
-    except Exception as e:
-        logger.warning(f"[WhatsApp] advance_month_if_due failed: {e}")
 
     for m in messages:
         message_id = m.get('messageId')
@@ -218,6 +231,7 @@ def _process_config(client: WhatsAppListenerClient, config) -> None:
             continue
 
         image_bytes, mime_type = decoded
+        upload_date = ts.date() if ts else date.today()
         try:
             work_card_id, is_duplicate = _ingest_image(
                 image_bytes=image_bytes,
@@ -225,6 +239,7 @@ def _process_config(client: WhatsAppListenerClient, config) -> None:
                 message_id=message_id,
                 caption=m.get('text'),
                 config=config,
+                upload_date=upload_date,
             )
             ingested_repo.create(
                 **record_kwargs,

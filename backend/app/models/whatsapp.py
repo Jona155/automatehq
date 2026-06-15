@@ -13,8 +13,10 @@ class WhatsAppGroupConfig(db.Model):
     business_id = db.Column(UUID(as_uuid=True), db.ForeignKey('businesses.id'), unique=True, nullable=False)
     chat_id = db.Column(db.Text, unique=True, nullable=False)
     chat_name = db.Column(db.Text, nullable=True)
-    current_processing_month = db.Column(db.Date, nullable=False)
-    auto_advance_day = db.Column(db.SmallInteger, nullable=True)
+    # Cutoff day (1-31): images uploaded on/before this day of the month are
+    # assigned to the PREVIOUS month; later uploads to the current month.
+    # Single source of truth for WhatsApp month assignment.
+    previous_month_cutoff_day = db.Column(db.SmallInteger, nullable=False, server_default='10')
     last_seen_timestamp = db.Column(db.DateTime(timezone=True), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
