@@ -17,4 +17,17 @@
   * {
     box-sizing: border-box;
   }
+
+  /* Hide the up/down spinner buttons on number inputs so values can't be
+     changed by accidentally clicking them (used in the work card review cells). */
+  .no-spinner::-webkit-outer-spin-button,
+  .no-spinner::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .no-spinner {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
 }
