@@ -70,6 +70,34 @@ def _entries_equal(a: Any, b: Any) -> bool:
     )
 
 
+def _resolve_conflict_day(current_entry, previous_entry, previous_status, day_in_override_days):
+    """Decide a single day's outcome when reconciling the latest card against a
+    previous sibling card during approval. Pure — performs no I/O.
+
+    Returns one of:
+      'noop'          — values identical; leave both entries untouched
+      'take_latest'   — latest value wins; delete the previous-card entry
+      'take_previous' — keep the approved previous value; replace the latest entry
+      'carry_forward' — latest card has no entry for this day; clone the previous value
+
+    The latest value wins when the previous card is not yet approved, when the
+    admin flagged this day as an override on the request, OR when the latest
+    entry is a persisted manual override (source=MANUAL_OVERRIDE). The last case
+    is what makes a deliberate edit survive approval even if the request carries
+    no override flag (e.g. approved after a reload that dropped the in-memory
+    unlock state).
+    """
+    if current_entry is None:
+        return 'carry_forward'
+    if _entries_equal(current_entry, previous_entry):
+        return 'noop'
+    if previous_status != 'APPROVED':
+        return 'take_latest'
+    if day_in_override_days or current_entry.source == 'MANUAL_OVERRIDE':
+        return 'take_latest'
+    return 'take_previous'
+
+
 def _get_previous_card_context(card: Any) -> Tuple[Optional[Any], Dict[int, Any]]:
     if not card.employee_id:
         return None, {}
@@ -520,34 +548,32 @@ def approve_work_card(card_id):
         if previous_card:
             for day, previous_entry in previous_entries_by_day.items():
                 current_entry = current_entries_by_day.get(day)
+                outcome = _resolve_conflict_day(
+                    current_entry,
+                    previous_entry,
+                    previous_card.review_status,
+                    day in override_days,
+                )
 
-                if current_entry:
-                    values_differ = not _entries_equal(current_entry, previous_entry)
-                    if not values_differ:
-                        continue
-
-                    if previous_card.review_status == 'APPROVED':
-                        if day in override_days:
-                            # Admin explicitly chose latest over approved previous value.
-                            day_entry_repo.delete(previous_entry.id)
-                        else:
-                            # Default behavior: keep approved previous value.
-                            day_entry_repo.delete(current_entry.id)
-                            current_entries_by_day.pop(day, None)
-                            cloned = day_entry_repo.create(
-                                work_card_id=card.id,
-                                day_of_month=day,
-                                from_time=previous_entry.from_time,
-                                to_time=previous_entry.to_time,
-                                total_hours=previous_entry.total_hours,
-                                source='CARRIED_FORWARD',
-                                is_valid=True
-                            )
-                            current_entries_by_day[day] = cloned
-                    else:
-                        # Nothing approved yet: default winner is latest value.
-                        day_entry_repo.delete(previous_entry.id)
-                else:
+                if outcome == 'noop':
+                    continue
+                if outcome == 'take_latest':
+                    day_entry_repo.delete(previous_entry.id)
+                elif outcome == 'take_previous':
+                    # Keep the approved previous value; replace the latest entry.
+                    day_entry_repo.delete(current_entry.id)
+                    current_entries_by_day.pop(day, None)
+                    cloned = day_entry_repo.create(
+                        work_card_id=card.id,
+                        day_of_month=day,
+                        from_time=previous_entry.from_time,
+                        to_time=previous_entry.to_time,
+                        total_hours=previous_entry.total_hours,
+                        source='CARRIED_FORWARD',
+                        is_valid=True
+                    )
+                    current_entries_by_day[day] = cloned
+                elif outcome == 'carry_forward':
                     # Carry forward previous values so approved latest card has full month snapshot.
                     cloned = day_entry_repo.create(
                         work_card_id=card.id,
