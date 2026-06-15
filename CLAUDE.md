@@ -114,6 +114,12 @@ worker/     Background extraction worker (Python)
 - Dev: Vite on port 5173, Flask on 5000, Vite proxies `/api` to backend
 - Env vars: `DATABASE_URL`, `SECRET_KEY`, `OPENAI_API_KEY`, `TWILIO_*`, `CORS_ORIGINS`, `JWT_*`
 
+## Local DB access (env gotcha)
+- The real `DATABASE_URL` lives in the **repo-root `.env`**. The Flask CLI auto-loads it, so `flask db upgrade` / `flask db current` etc. work as-is.
+- **Raw `python3 …` scripts and `psql` do NOT load `.env`.** They fall back to the hardcoded default in `backend/app/__init__.py` (`postgresql://…@localhost:5432/automatehq`), whose local credentials are wrong.
+- Symptom of the mistake: `FATAL: password authentication failed for user "postgres"`. This means **the env wasn't loaded** — it is *not* a real DB outage or a failed migration.
+- For any direct (non-`flask`) DB command, load the env first: `set -a && . ./.env && set +a && <command>`.
+
 ## Testing
 - Backend tests in `backend/tests/` — API CRUD, hours matrix, export, query efficiency
 - Worker tests in `worker/tests/`
