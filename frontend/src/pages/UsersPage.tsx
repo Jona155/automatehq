@@ -1,9 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import type { User } from '../types';
+import type { User, Site } from '../types';
 import { getUsers, createUser, updateUser, deleteUser } from '../api/users';
 import type { CreateUserPayload, UpdateUserPayload } from '../api/users';
+import { getSites } from '../api/sites';
+import SearchableMultiSelect from '../components/SearchableMultiSelect';
 import { useAuth } from '../context/AuthContext';
+
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: 'מנהל',
+  OPERATOR_MANAGER: 'מנהל תפעול',
+  FIELD_MANAGER: 'מנהל שטח',
+};
 
 export default function UsersPage() {
   const { businessCode } = useParams<{ businessCode: string }>();
@@ -32,10 +40,14 @@ export default function UsersPage() {
     email: '',
     password: '',
     phone_number: '',
-    role: 'ADMIN' as 'ADMIN' | 'OPERATOR_MANAGER',
+    role: 'ADMIN' as 'ADMIN' | 'OPERATOR_MANAGER' | 'FIELD_MANAGER',
   });
+  const [siteIds, setSiteIds] = useState<string[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const isFieldManager = formData.role === 'FIELD_MANAGER';
 
   const fetchUsers = async () => {
     setIsLoading(true);
@@ -51,26 +63,45 @@ export default function UsersPage() {
     }
   };
 
+  const fetchSites = async () => {
+    try {
+      const data = await getSites({ active: true });
+      setSites(data);
+    } catch (err) {
+      console.error('Failed to fetch sites:', err);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
+    fetchSites();
   }, []);
 
   const handleOpenCreate = () => {
     setEditingUser(null);
     setFormData({ full_name: '', email: '', password: '', phone_number: '', role: 'ADMIN' });
+    setSiteIds([]);
     setFormError(null);
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (user: User) => {
     setEditingUser(user);
+    const role: 'ADMIN' | 'OPERATOR_MANAGER' | 'FIELD_MANAGER' =
+      user.role === 'OPERATOR_MANAGER' || user.role === 'FIELD_MANAGER' ? user.role : 'ADMIN';
     setFormData({
       full_name: user.full_name,
-      email: user.email,
+      email: user.email ?? '',
       password: '', // Password not shown
       phone_number: user.phone_number ?? '',
-      role: (user.role === 'OPERATOR_MANAGER' ? 'OPERATOR_MANAGER' : 'ADMIN'),
+      role,
     });
+    // Prefill assigned sites for field managers from the loaded sites list
+    setSiteIds(
+      role === 'FIELD_MANAGER'
+        ? sites.filter((s) => s.field_manager_id === user.id).map((s) => s.id)
+        : []
+    );
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -82,6 +113,11 @@ export default function UsersPage() {
 
   const validateForm = () => {
     if (!formData.full_name.trim()) return 'שם מלא הוא שדה חובה';
+    if (isFieldManager) {
+      // Field managers don't log in: name + phone only.
+      if (!formData.phone_number.trim()) return 'מספר טלפון הוא שדה חובה';
+      return null;
+    }
     if (!formData.email.trim()) return 'אימייל הוא שדה חובה';
     if (!editingUser && !formData.password.trim()) return 'סיסמה היא שדה חובה';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) return 'כתובת אימייל לא תקינה';
@@ -103,23 +139,25 @@ export default function UsersPage() {
       if (editingUser) {
         const payload: UpdateUserPayload = {
           full_name: formData.full_name,
-          email: formData.email,
+          ...(isFieldManager ? {} : { email: formData.email }),
           ...(formData.phone_number ? { phone_number: formData.phone_number } : {}),
           ...(editingUser.id !== currentUser?.id ? { role: formData.role } : {}),
+          ...(isFieldManager ? { site_ids: siteIds } : {}),
         };
         await updateUser(editingUser.id, payload);
       } else {
         const payload: CreateUserPayload = {
           full_name: formData.full_name,
-          email: formData.email,
-          password: formData.password,
           role: formData.role,
+          ...(isFieldManager ? {} : { email: formData.email, password: formData.password }),
           ...(formData.phone_number ? { phone_number: formData.phone_number } : {}),
+          ...(isFieldManager ? { site_ids: siteIds } : {}),
         };
         await createUser(payload);
       }
       setIsModalOpen(false);
       fetchUsers();
+      fetchSites();
     } catch (err: any) {
       console.error('Failed to save user:', err);
       setFormError(err.response?.data?.message || 'שגיאה בשמירת המשתמש');
@@ -220,7 +258,7 @@ export default function UsersPage() {
                     </td>
                     <td className="px-6 py-5">
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary">
-                        {user.role === 'ADMIN' ? 'מנהל' : user.role === 'OPERATOR_MANAGER' ? 'מנהל תפעול' : user.role}
+                        {ROLE_LABELS[user.role] ?? user.role}
                       </span>
                     </td>
                     <td className="px-6 py-5 text-left">
@@ -285,18 +323,20 @@ export default function UsersPage() {
                   placeholder="ישראל ישראלי"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  אימייל (שם משתמש)
-                </label>
-                <input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
-                  placeholder="email@example.com"
-                />
-              </div>
+              {!isFieldManager && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    אימייל (שם משתמש)
+                  </label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
+                    placeholder="email@example.com"
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                   מספר טלפון
@@ -309,7 +349,7 @@ export default function UsersPage() {
                   placeholder="050-1234567"
                 />
               </div>
-              {!editingUser && (
+              {!editingUser && !isFieldManager && (
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     סיסמה
@@ -323,7 +363,7 @@ export default function UsersPage() {
                   />
                 </div>
               )}
-              {editingUser && (
+              {editingUser && !isFieldManager && (
                 <div className="p-3 bg-blue-50 text-blue-800 text-sm rounded-lg">
                   לא ניתן לשנות סיסמה כרגע.
                 </div>
@@ -334,17 +374,38 @@ export default function UsersPage() {
                 </label>
                 <select
                   value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as 'ADMIN' | 'OPERATOR_MANAGER' })}
+                  onChange={(e) => setFormData({ ...formData, role: e.target.value as 'ADMIN' | 'OPERATOR_MANAGER' | 'FIELD_MANAGER' })}
                   disabled={editingUser?.id === currentUser?.id}
                   className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
                 >
                   <option value="ADMIN">מנהל</option>
                   <option value="OPERATOR_MANAGER">מנהל תפעול</option>
+                  <option value="FIELD_MANAGER">מנהל שטח</option>
                 </select>
                 {editingUser?.id === currentUser?.id && (
                   <p className="text-xs text-slate-500 mt-1">לא ניתן לשנות את התפקיד של עצמך</p>
                 )}
               </div>
+              {isFieldManager && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    אתרים משויכים
+                  </label>
+                  <SearchableMultiSelect
+                    options={sites
+                      .filter((s) => s.is_active)
+                      .map((s) => ({ value: s.id, label: s.site_name }))}
+                    selected={siteIds}
+                    onChange={setSiteIds}
+                    searchPlaceholder="חיפוש אתרים..."
+                    allLabel="ללא אתרים"
+                    icon="apartment"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    כל אתר יכול להיות משויך למנהל שטח אחד בלבד.
+                  </p>
+                </div>
+              )}
               <div className="flex justify-end gap-3 pt-4">
                 <button
                   type="button"

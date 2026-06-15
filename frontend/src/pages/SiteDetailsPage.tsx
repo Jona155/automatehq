@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import type { Site, Employee } from '../types';
+import type { Site, Employee, User } from '../types';
 import { downloadMonthlySummary, downloadSalaryTemplate, getSite, getSites, updateSite, sendSummaryEmail, sendSummaryWhatsapp } from '../api/sites';
 import { getEmployees } from '../api/employees';
+import { getUsers } from '../api/users';
 import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
@@ -47,6 +48,8 @@ export default function SiteDetailsPage() {
   });
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [responsibleEmployeeId, setResponsibleEmployeeId] = useState<string>('');
+  const [fieldManagerId, setFieldManagerId] = useState<string>('');
+  const [fieldManagers, setFieldManagers] = useState<User[]>([]);
   const [hourlyTariff, setHourlyTariff] = useState<string>('');
   const [hourlyTariffError, setHourlyTariffError] = useState<string | null>(null);
   const [contractorEmails, setContractorEmails] = useState<string[]>([]);
@@ -171,6 +174,10 @@ export default function SiteDetailsPage() {
 
   const handleOpenSettings = () => {
     setResponsibleEmployeeId(site?.responsible_employee_id || '');
+    setFieldManagerId(site?.field_manager_id || '');
+    getUsers({ active: true, role: 'FIELD_MANAGER' })
+      .then(setFieldManagers)
+      .catch((err) => console.error('Failed to fetch field managers:', err));
     setHourlyTariff(site?.hourly_tariff != null ? String(site.hourly_tariff) : '');
     setHourlyTariffError(null);
     setContractorEmails(site?.contractor_emails || []);
@@ -192,6 +199,7 @@ export default function SiteDetailsPage() {
     try {
       const payload = {
         responsible_employee_id: responsibleEmployeeId || null,
+        field_manager_id: fieldManagerId || null,
         hourly_tariff: hourlyTariff !== '' ? parseFloat(hourlyTariff) : null,
         contractor_emails: contractorEmails.length > 0 ? contractorEmails : null,
         contractor_phone_number: contractorPhoneNumber.trim() ? contractorPhoneNumber.trim() : null,
@@ -898,6 +906,23 @@ export default function SiteDetailsPage() {
                 ))}
             </select>
             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">העובד האחראי יהיה ברירת המחדל ליצירת קישורי גישה להעלאת כרטיסים.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">מנהל שטח</label>
+            <select
+              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              value={fieldManagerId}
+              onChange={(event) => setFieldManagerId(event.target.value)}
+            >
+              <option value="">ללא מנהל שטח</option>
+              {fieldManagers.map((manager) => (
+                <option key={manager.id} value={manager.id}>
+                  {manager.full_name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">מנהל השטח האחראי על אתר זה.</p>
           </div>
 
           <div>

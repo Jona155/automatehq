@@ -15,6 +15,7 @@ const ROLE_LABEL: Record<string, string> = {
   APPLICATION_MANAGER: 'מנהל מערכת',
   EMPLOYEE: 'עובד',
   RESPONSIBLE_EMPLOYEE: 'עובד אחראי',
+  FIELD_MANAGER: 'מנהל שטח',
 };
 
 interface NavRowProps {

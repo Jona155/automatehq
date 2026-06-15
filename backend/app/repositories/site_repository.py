@@ -97,6 +97,36 @@ class SiteRepository(BaseRepository[Site]):
             Site.business_id == business_id
         ).all()
     
+    def set_field_manager_sites(self, user_id: UUID, site_ids: List[UUID], business_id: UUID) -> None:
+        """
+        Reconcile which sites are assigned to a field manager (one-to-many).
+
+        Sets field_manager_id = user_id on the given sites, and clears it on any
+        site previously assigned to this user but no longer selected. Scoped to the
+        business. Caller is responsible for the surrounding transaction/commit.
+
+        Args:
+            user_id: The field manager's user UUID
+            site_ids: The site UUIDs that should be assigned to this field manager
+            business_id: The business UUID to scope the operation
+        """
+        # Clear sites currently pointing at this manager that are no longer selected
+        currently_assigned = self.session.query(Site).filter(
+            Site.field_manager_id == user_id,
+            Site.business_id == business_id
+        ).all()
+        for site in currently_assigned:
+            if site.id not in site_ids:
+                site.field_manager_id = None
+
+        # Assign the selected sites (scoped to business)
+        if site_ids:
+            to_assign = self.get_by_ids_for_business(site_ids, business_id)
+            for site in to_assign:
+                site.field_manager_id = user_id
+
+        self.session.commit()
+
     def get_with_employee_count(self, business_id: Optional[UUID] = None) -> List[Dict[str, Any]]:
         """
         Get all sites with their employee counts, optionally scoped to a business.

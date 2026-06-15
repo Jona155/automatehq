@@ -12,7 +12,7 @@ export interface User {
   full_name: string;
   email: string;
   phone_number?: string;
-  role: 'ADMIN' | 'OPERATOR_MANAGER' | 'EMPLOYEE' | 'RESPONSIBLE_EMPLOYEE' | 'APPLICATION_MANAGER';
+  role: 'ADMIN' | 'OPERATOR_MANAGER' | 'EMPLOYEE' | 'RESPONSIBLE_EMPLOYEE' | 'APPLICATION_MANAGER' | 'FIELD_MANAGER';
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -29,6 +29,7 @@ export interface Site {
   updated_at: string;
   employee_count?: number;
   responsible_employee_id?: string | null;
+  field_manager_id?: string | null;
   hourly_tariff?: number | null;
   contractor_emails?: string[] | null;
   contractor_phone_number?: string | null;

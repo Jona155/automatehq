@@ -1,13 +1,27 @@
+import uuid
 from flask import Blueprint, request, g
 from werkzeug.security import generate_password_hash
 from ..repositories.user_repository import UserRepository
+from ..repositories.site_repository import SiteRepository
 from .utils import api_response, model_to_dict
 from ..auth_utils import token_required, role_required
 
 users_bp = Blueprint('users', __name__, url_prefix='/api/users')
 repo = UserRepository()
+site_repo = SiteRepository()
 
-VALID_ROLES = {'ADMIN', 'OPERATOR_MANAGER', 'APPLICATION_MANAGER'}
+VALID_ROLES = {'ADMIN', 'OPERATOR_MANAGER', 'APPLICATION_MANAGER', 'FIELD_MANAGER'}
+
+
+def _parse_site_ids(raw_site_ids):
+    """Parse a list of site id strings into UUIDs. Returns (uuids, error_message)."""
+    site_uuids = []
+    for raw in raw_site_ids:
+        try:
+            site_uuids.append(uuid.UUID(str(raw)))
+        except (ValueError, TypeError):
+            return None, f"Invalid site id format: {raw}"
+    return site_uuids, None
 
 @users_bp.route('', methods=['GET'])
 @token_required
@@ -53,18 +67,31 @@ def create_user():
             return api_response(status_code=400, message=f"Invalid role. Must be one of: {', '.join(sorted(VALID_ROLES))}", error="Bad Request")
         data['role'] = role
 
+        is_field_manager = role == 'FIELD_MANAGER'
+
+        # Extract site assignments (not a User column)
+        raw_site_ids = data.pop('site_ids', None)
+
         # Validation
         if not data.get('full_name'):
             return api_response(status_code=400, message="Full Name is required", error="Bad Request")
-        if not data.get('email'):
-            return api_response(status_code=400, message="Email is required", error="Bad Request")
-        if not data.get('password'):
-            return api_response(status_code=400, message="Password is required", error="Bad Request")
+
+        # Field managers don't log in: they require name + phone only.
+        # All other roles require email + password.
+        if is_field_manager:
+            if not data.get('phone_number'):
+                return api_response(status_code=400, message="Phone number is required for field managers", error="Bad Request")
+        else:
+            if not data.get('email'):
+                return api_response(status_code=400, message="Email is required", error="Bad Request")
+            if not data.get('password'):
+                return api_response(status_code=400, message="Password is required", error="Bad Request")
 
         # Check email uniqueness (globally unique)
-        existing = repo.get_by_email(data['email'])
-        if existing:
-            return api_response(status_code=409, message="User with this email already exists", error="Conflict")
+        if data.get('email'):
+            existing = repo.get_by_email(data['email'])
+            if existing:
+                return api_response(status_code=409, message="User with this email already exists", error="Conflict")
 
         # Check phone uniqueness if provided (globally unique)
         if data.get('phone_number'):
@@ -72,10 +99,24 @@ def create_user():
             if existing_phone:
                 return api_response(status_code=409, message="User with this phone number already exists", error="Conflict")
 
-        # Hash password
-        data['password_hash'] = generate_password_hash(data.pop('password'), method='pbkdf2:sha256')
+        # Parse site assignments up front so we fail before creating the user
+        site_uuids = None
+        if is_field_manager and raw_site_ids is not None:
+            site_uuids, err = _parse_site_ids(raw_site_ids)
+            if err:
+                return api_response(status_code=400, message=err, error="Bad Request")
+
+        # Hash password only if one was provided
+        if data.get('password'):
+            data['password_hash'] = generate_password_hash(data.pop('password'), method='pbkdf2:sha256')
+        else:
+            data.pop('password', None)
 
         user = repo.create(**data)
+
+        # Reconcile site assignments for field managers
+        if is_field_manager and site_uuids is not None:
+            site_repo.set_field_manager_sites(user.id, site_uuids, g.business_id)
 
         user_dict = model_to_dict(user)
         user_dict.pop('password_hash', None)
@@ -117,6 +158,9 @@ def update_user(user_id):
         data.pop('business_id', None)
         data.pop('id', None)
 
+        # Extract site assignments (not a User column)
+        raw_site_ids = data.pop('site_ids', None)
+
         # Handle role changes
         if 'role' in data:
             # Prevent users from changing their own role
@@ -136,7 +180,18 @@ def update_user(user_id):
             if existing and str(existing.id) != str(user_id):
                 return api_response(status_code=409, message="User with this phone number already exists", error="Conflict")
 
+        # Don't persist an empty password
+        if 'password' in data and not data.get('password'):
+            data.pop('password', None)
+
         updated_user = repo.update(user_id, **data)
+
+        # Reconcile site assignments for field managers
+        if raw_site_ids is not None and updated_user.role == 'FIELD_MANAGER':
+            site_uuids, err = _parse_site_ids(raw_site_ids)
+            if err:
+                return api_response(status_code=400, message=err, error="Bad Request")
+            site_repo.set_field_manager_sites(updated_user.id, site_uuids, g.business_id)
 
         user_dict = model_to_dict(updated_user)
         user_dict.pop('password_hash', None)
