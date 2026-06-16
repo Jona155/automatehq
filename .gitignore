@@ -47,3 +47,10 @@ worker\debug_app
 
 #sample files
 samples_work_cards/
+
+# eval harness local data (SQLite store, run outputs)
+eval/data/
+eval/
+
+# docs 
+docs/
