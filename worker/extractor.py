@@ -36,6 +36,31 @@ OPENAI_VISION_MAX_RETRIES = int(os.environ.get("OPENAI_VISION_MAX_RETRIES", "0")
 OPENAI_VISION_MAX_DIMENSION = max(1024, int(os.environ.get("OPENAI_VISION_MAX_DIMENSION", "2200")))
 OPENAI_VISION_JPEG_QUALITY = min(95, max(50, int(os.environ.get("OPENAI_VISION_JPEG_QUALITY", "85"))))
 
+# Vision request tuning. Validated via the eval harness on real work cards:
+# detail="high" (+~4pts) and temperature=0 (deterministic transcription) both improve
+# handwriting accuracy. Tunable via env; defaults are the validated values.
+#   OPENAI_VISION_IMAGE_DETAIL: "high" | "low" | "auto"  (auto = let OpenAI decide)
+#   OPENAI_VISION_TEMPERATURE:  float, or "none"/"auto" to omit (use model default)
+OPENAI_VISION_IMAGE_DETAIL = os.environ.get("OPENAI_VISION_IMAGE_DETAIL", "high").strip().lower()
+
+
+def _parse_vision_temperature(raw: str) -> Optional[float]:
+    value = (raw or "").strip().lower()
+    if value in ("", "none", "default", "auto"):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+OPENAI_VISION_TEMPERATURE = _parse_vision_temperature(os.environ.get("OPENAI_VISION_TEMPERATURE", "0"))
+
+# Extraction pipeline architecture:
+#   "two_phase"  — identity call + day-entries call (current default, PIPELINE_VERSION 2.0.0)
+#   "single_pass" — one combined call (the pre-2.0 approach; kept for A/B testing)
+OPENAI_VISION_PIPELINE = os.environ.get("OPENAI_VISION_PIPELINE", "two_phase").strip().lower()
+
 # Initialize OpenAI client (uses OPENAI_API_KEY from environment)
 _client: Optional[OpenAI] = None
 
@@ -77,6 +102,24 @@ def _model_attempt_chain(primary_model: str, fallback_model: Optional[str] = Non
             *OPENAI_VISION_MODEL_CHAIN,
         ]
     )
+
+
+def _model_supports_temperature(model: Optional[str]) -> bool:
+    """gpt-4 family accepts an explicit temperature; o-series / gpt-5 reject non-default."""
+    return bool(model) and model.startswith("gpt-4")
+
+
+def _apply_image_detail(messages: List[Dict[str, Any]], detail: str) -> None:
+    """Set the OpenAI vision 'detail' level on every image block (mutates in place)."""
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "image_url":
+                image_url = block.get("image_url")
+                if isinstance(image_url, dict):
+                    image_url["detail"] = detail
 
 
 # ===========================================
@@ -430,14 +473,20 @@ def _parse_with_model_attempts(
     model_attempts = _model_attempt_chain(primary_model, fallback_model)
     last_error: Optional[Exception] = None
 
+    if OPENAI_VISION_IMAGE_DETAIL in ("high", "low"):
+        _apply_image_detail(messages, OPENAI_VISION_IMAGE_DETAIL)
+
     for attempt_index, model_name in enumerate(model_attempts, start=1):
         started_at = time.perf_counter()
         try:
-            response = client.beta.chat.completions.parse(
-                model=model_name,
-                messages=messages,
-                response_format=response_format,
-            )
+            parse_kwargs: Dict[str, Any] = {
+                "model": model_name,
+                "messages": messages,
+                "response_format": response_format,
+            }
+            if OPENAI_VISION_TEMPERATURE is not None and _model_supports_temperature(model_name):
+                parse_kwargs["temperature"] = OPENAI_VISION_TEMPERATURE
+            response = client.beta.chat.completions.parse(**parse_kwargs)
             parsed = response.choices[0].message.parsed if response.choices else None
             if parsed is None:
                 logger.warning(
@@ -565,6 +614,32 @@ def _is_valid_time(value: Optional[str]) -> bool:
     return bool(TIME_PATTERN.match(value.strip()))
 
 
+def _normalize_time_string(value: Optional[str]) -> Optional[str]:
+    """Canonicalize a handwritten time to strict HH:MM.
+
+    Handles the separators these cards actually use (07·00, 07.00, 0700, 7:00, "7").
+    Returns canonical HH:MM when parseable, the original stripped string if not
+    (so a human can still see it), or None when empty.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    # unify common separators (colon, dot, middot, bullet, fullwidth dot, semicolon) and drop spaces
+    candidate = re.sub(r"[.·•．;]", ":", s).replace(" ", "")
+    match = re.match(r"^(\d{1,2}):?(\d{2})$", candidate)
+    if match:
+        hours, minutes = int(match.group(1)), int(match.group(2))
+    elif re.match(r"^\d{1,2}$", candidate):
+        hours, minutes = int(candidate), 0
+    else:
+        return s
+    if 0 <= hours <= 23 and 0 <= minutes <= 59:
+        return f"{hours:02d}:{minutes:02d}"
+    return s
+
+
 def _entry_quality_score(entry: Dict[str, Any]) -> float:
     """Score entry quality for conflict resolution when duplicate day rows exist."""
     score = 0.0
@@ -661,6 +736,8 @@ def _coalesce_row_confidence(entry: Dict[str, Any]) -> Optional[float]:
 
 def _normalize_entry_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(entry)
+    normalized["start_time"] = _normalize_time_string(normalized.get("start_time"))
+    normalized["end_time"] = _normalize_time_string(normalized.get("end_time"))
     normalized["row_state"] = _normalize_row_state(normalized.get("row_state"))
     normalized["mark_type"] = _normalize_mark_type(normalized.get("mark_type"))
     normalized["evidence"] = _normalize_evidence(normalized.get("evidence"))
@@ -736,9 +813,11 @@ def _apply_semantic_gating(entries: List[Dict[str, Any]]) -> Tuple[List[Dict[str
                     if abs(float(entry["total_hours"]) - float(derived)) > 1.0:
                         uncertain_reasons.append("time_total_conflict")
             elif has_total_only:
+                # Keep total-only rows: a worker may record only the total with no
+                # start/end. Flag low-confidence ones for review, but never discard
+                # the value (discarding was dropping valid total-only days).
                 if not isinstance(row_confidence, (int, float)) or float(row_confidence) < 0.85:
                     uncertain_reasons.append("low_conf_total_only")
-                    entry["total_hours"] = None
             else:
                 uncertain_reasons.append("worked_without_values")
 
@@ -964,6 +1043,87 @@ def extract_header_from_full_image(image_bytes: bytes) -> Optional[HeaderInfo]:
     return parsed
 
 
+# ===========================================
+# Vision prompts (module-level constants so they can be overridden — e.g. by the
+# eval harness for A/B testing).
+#
+# These improved prompts were validated against the production prompts on 18
+# hand-labeled sample cards: +3.5 pts hours accuracy (88.7% -> 92.2%), driven by
+# encoding the actual card layout, the RTL Hebrew column map, a start/end/total
+# consistency check, value-range priors, and name=letters-only guidance. See
+# eval/ and docs/extraction-quality-analysis.md.
+# ===========================================
+
+IDENTITY_SYSTEM_PROMPT = (
+    "You are a document identity extraction AI. "
+    "Your ONLY task is to find the employee name and passport/ID number(s). "
+    "Do NOT extract work hours, day entries, or any table data. "
+    "This is a Hebrew right-to-left work card for foreign workers (Sri Lanka, Thailand, "
+    "Moldova, and similar). The employee name (by the שם העובד label) and passport/ID "
+    "(by the דרכון label) are handwritten near the TOP of the card, above the hours table. "
+    "Employee names are handwritten in Latin or Hebrew script and contain ONLY letters and "
+    "spaces — NEVER digits. Do not substitute a digit for a letter (for example, a trailing "
+    "'a' is the letter a, not the digit 9). "
+    "Passport/ID numbers are one letter followed by 7-8 digits (e.g., N1134553, T1234567). "
+    "The card may be photographed rotated or flipped — scan the full image regardless of "
+    "orientation, including header, footer, margins, and near signature fields. "
+    "Return all passport/ID candidates you find, and select the best normalized value."
+)
+
+IDENTITY_USER_PROMPT = (
+    "Find the employee name and passport/ID number(s) from this work card. "
+    "They are handwritten near the top, by the שם העובד (name) and דרכון (passport) labels. "
+    "The employee name contains only letters — never digits. "
+    "The passport/ID is one letter followed by 7-8 digits. "
+    "Scan the full image including header, footer, and margins. "
+    "Return employee_name, passport_id_candidates (raw, normalized, source_region, confidence), "
+    "and selected_passport_id_normalized. If nothing is found, return null for each field."
+)
+
+DAY_ENTRIES_SYSTEM_PROMPT = (
+    "You are a work-hours extraction AI reading a Hebrew (right-to-left) work card for foreign workers. "
+    "Your ONLY task is to read the tabular day entries. Do NOT extract employee name or passport/ID. "
+    "\n\nCARD LAYOUT: the card has TWO tables side by side. The RIGHT table covers days 1-16; "
+    "the LEFT table covers days 17-31. Read BOTH tables. Within each table the printed day-number "
+    "column is on the right edge and day numbers increase top to bottom. "
+    "\n\nCOLUMNS in each table, right to left: יום = day number | משעה = start time | "
+    "עד שעה = end time | סה\"כ = total hours | מנהל האתר = site manager | חתימה = signature. "
+    "Extract ONLY day number, start time, end time, and total hours. "
+    "IGNORE the site-manager and signature columns entirely. "
+    "\n\nREADING RULES: "
+    "Use only days whose printed number label is visible; never infer a day from row position. "
+    "Times are 24-hour, often written with a dot/middot separator (e.g. 07·00 means 07:00). "
+    "Start times are usually in the morning (06:00-08:00) and end times in the afternoon/evening "
+    "(14:00-19:00). "
+    "Times almost always fall on the hour or half-hour — the minutes are :00 or :30 in about 99% of "
+    "rows (a worker may write 7, 7:00, 7.5 or 7:30). If you think you read other minutes "
+    "(e.g. :05, :13, :15, :45), you have almost certainly misread the digits; re-read and use the "
+    "nearest :00 or :30. "
+    "CONSISTENCY CHECK: total_hours should approximately equal (end_time minus start_time). "
+    "If your reading of start, end, and total do not agree, re-examine the digits before answering — "
+    "a common mistake is misreading the end hour by one (e.g. reading 16:00 as 15:00). "
+    "For example 06:00 to 16:00 is 10 hours, not 9. "
+    "Detect OFF_MARK rows: diagonal/horizontal pen lines or crosses indicating no work; for OFF_MARK "
+    "rows set start_time/end_time/total_hours to null unless clear time digits are present. "
+    "Never treat line-only marks as worked hours. "
+    "If the card is rotated or sideways, mentally rotate so day 1 is at the top of the right table, "
+    "and verify using the printed day numbers. "
+    "For each row set row_state (WORKED/OFF_MARK/EMPTY/ILLEGIBLE), mark_type (NONE/SINGLE_LINE/CROSS/HATCH), "
+    "row_confidence (0-1), and evidence tags (time_pair, total_only, off_mark_detected, unclear)."
+)
+
+DAY_ENTRIES_USER_PROMPT = (
+    "Extract every day entry from BOTH tables of this work card "
+    "(right table = days 1-16, left table = days 17-31). "
+    "Only include days whose printed number is visible. Ignore the site-manager and signature columns. "
+    "For each row, cross-check that total_hours is approximately end_time minus start_time; "
+    "if they disagree, re-read the digits. "
+    "If a row has only strike/line marks with no clear time digits, set OFF_MARK and null values. "
+    "Return day, start_time, end_time, total_hours, row_state, mark_type, row_confidence, "
+    "confidence, and evidence."
+)
+
+
 def _extract_identity_phase(image_bytes: bytes) -> Tuple[Optional[IdentityExtraction], Optional[str]]:
     """Phase 1 — extract employee name and passport/ID only (one API call, full image)."""
     try:
@@ -980,30 +1140,14 @@ def _extract_identity_phase(image_bytes: bytes) -> Tuple[Optional[IdentityExtrac
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are a document identity extraction AI. "
-                    "Your ONLY task is to find the employee name and passport/ID number(s). "
-                    "Do NOT extract work hours, day entries, or any table data. "
-                    "The card may be photographed rotated or flipped — scan the full image regardless of orientation. "
-                    "The card is a Hebrew RTL work card. Employee names may be in Hebrew or Latin script. "
-                    "Passport/ID numbers follow the format: one letter followed by digits (e.g., N11125604, T1234567). "
-                    "These are foreign workers from Sri Lanka, Thailand, Moldova, and similar countries. "
-                    "Scan every region: header, footer, margins, handwritten annotations, near signature fields. "
-                    "Return all passport/ID candidates you find, and select the best normalized value."
-                ),
+                "content": IDENTITY_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": (
-                            "Find the employee name and passport/ID number(s) from this work card image. "
-                            "Scan the full image including header, footer, margins, and handwritten notes. "
-                            "Return employee_name, passport_id_candidates (with raw, normalized, source_region, confidence), "
-                            "and selected_passport_id_normalized. "
-                            "If nothing is found, return null for each field."
-                        ),
+                        "text": IDENTITY_USER_PROMPT,
                     },
                     {
                         "type": "image_url",
@@ -1033,38 +1177,14 @@ def _extract_day_entries_phase(image_bytes: bytes) -> Tuple[Optional[DayEntriesE
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are a work-hours extraction AI. "
-                    "Your ONLY task is to read the tabular day entries from this work card. "
-                    "Do NOT extract employee name or passport/ID number. "
-                    "IGNORE the signature column and site manager column entirely — they are irrelevant. "
-                    "Extract only: day number, start time, end time, total hours. "
-                    "Day numbers increase from 1 at the top to 31 at the bottom of the table. "
-                    "If day numbers appear to increase bottom-to-top (31 near the top, 1 near the bottom), "
-                    "the card is upside down — mentally rotate 180° so that day 1 is at the top. "
-                    "If the table appears sideways, rotate 90° — but always verify day 1 ends up at the top after rotation. "
-                    "Day labels must be visibly printed in the table; never infer a day from row position alone. "
-                    "Detect OFF_MARK rows: diagonal/horizontal pen lines or crosses indicating no work. "
-                    "For OFF_MARK rows, set start_time/end_time/total_hours to null unless clear time digits are present. "
-                    "Never treat line-only marks as worked hours. "
-                    "Set row_state (WORKED/OFF_MARK/EMPTY/ILLEGIBLE), mark_type (NONE/SINGLE_LINE/CROSS/HATCH), "
-                    "row_confidence (0-1), and evidence tags for each row."
-                ),
+                "content": DAY_ENTRIES_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": (
-                            "Extract all day entries from this work card table. "
-                            "Only include days where a day number label is visibly printed. "
-                            "IGNORE signature and site manager columns. "
-                            "Orient by day number: day 1 must be at the top, day 31 at the bottom. "
-                            "If a row has only strike/line marks with no clear time digits, set OFF_MARK and null values. "
-                            "Return entries with day, start_time, end_time, total_hours, row_state, mark_type, "
-                            "row_confidence, confidence, and evidence."
-                        ),
+                        "text": DAY_ENTRIES_USER_PROMPT,
                     },
                     {
                         "type": "image_url",
@@ -1316,6 +1436,124 @@ def _phased_result_is_valid(result: Dict[str, Any]) -> bool:
     return _single_pass_result_is_valid(result)
 
 
+def _finalize_extraction_result(
+    *,
+    result: Dict[str, Any],
+    raw_result: Dict[str, Any],
+    semantic_quality: Dict[str, Any],
+    fallback_used: bool,
+    image_bytes: bytes,
+    model_name: Optional[str],
+) -> Dict[str, Any]:
+    """Shared tail for all pipelines: optional row re-read, template profile,
+    raw_result assembly, and the final return shape."""
+    # --- Optional: targeted re-read for uncertain rows ---
+    if ENABLE_ROW_REREAD and semantic_quality["review_required_days"]:
+        requested_days = list(semantic_quality["review_required_days"])
+        try:
+            reread_entries = _rerun_uncertain_days_full_image(
+                image_bytes=image_bytes,
+                uncertain_days=requested_days,
+            )
+            if reread_entries:
+                merged_by_day: Dict[int, Dict[str, Any]] = {
+                    int(entry["day"]): _normalize_entry_payload(entry)
+                    for entry in result.get("entries", [])
+                    if isinstance(entry.get("day"), int)
+                }
+                for reread_entry in reread_entries:
+                    day = reread_entry.get("day")
+                    if not isinstance(day, int):
+                        continue
+                    candidate = _normalize_entry_payload(reread_entry)
+                    existing = merged_by_day.get(day)
+                    if not existing or _compare_row_preference(existing, candidate):
+                        merged_by_day[day] = candidate
+                result["entries"] = [merged_by_day[day] for day in sorted(merged_by_day.keys())]
+                result["entries"], semantic_quality = _apply_semantic_gating(result.get("entries", []))
+                raw_result["targeted_reread"] = {
+                    "enabled": True,
+                    "requested_days": requested_days,
+                    "applied_days": sorted(
+                        day for day in (entry.get("day") for entry in reread_entries) if isinstance(day, int)
+                    ),
+                }
+        except Exception as reread_error:
+            logger.warning("Targeted row reread failed: %s", reread_error)
+            raw_result["targeted_reread"] = {"enabled": True, "error": str(reread_error)}
+
+    crops_for_profile = crop_tables_from_image_bytes(image_bytes)
+    template_profile = _analyze_template_profile(
+        image_bytes=image_bytes,
+        crop_count=len(crops_for_profile),
+    )
+    result["template_profile"] = template_profile
+    result["row_quality"] = semantic_quality
+
+    result['raw_result'] = raw_result
+    result['raw_result']['selected_passport_id_normalized'] = result.get('selected_passport_id_normalized')
+    result['raw_result']['passport_id_candidates'] = result.get('passport_id_candidates', [])
+    result['raw_result']['normalized_passport_candidates'] = result.get('normalized_passport_candidates', [])
+    result['raw_result']['row_quality'] = result.get('row_quality')
+    result['raw_result']['template_profile'] = result.get('template_profile')
+    result['model_name'] = model_name or PRIMARY_VISION_MODEL
+    result['fallback_used'] = fallback_used
+    return result
+
+
+def _extract_single_pass(image_bytes: bytes) -> Dict[str, Any]:
+    """Single-pass pipeline: one combined vision call (identity + day entries),
+    with OpenCV crop fallback. Mirrors the pre-2.0 architecture for A/B testing."""
+    fallback_used = False
+    semantic_quality = {"review_required_days": [], "off_mark_days": [], "row_quality_by_day": {}}
+
+    single_pass: Optional[SinglePassExtraction] = None
+    sp_model: Optional[str] = None
+    try:
+        single_pass, sp_model = extract_full_image_single_pass(image_bytes)
+        if single_pass is None:
+            raise ValueError("Single-pass extraction returned no result")
+    except Exception as sp_err:
+        logger.warning("Single-pass extraction failed: %s", sp_err)
+        single_pass = None
+
+    raw_result: Dict[str, Any] = {
+        "strategy": "single_pass_pipeline",
+        "single_pass": single_pass.model_dump() if single_pass else None,
+        "single_pass_model": sp_model,
+    }
+
+    if single_pass is not None:
+        result = _build_result_from_single_pass(single_pass)
+        result["entries"], semantic_quality = _apply_semantic_gating(result.get("entries", []))
+        if not _single_pass_result_is_valid(result):
+            logger.warning("Single-pass result failed validation; falling back to OpenCV crops")
+            single_pass = None
+
+    if single_pass is None:
+        fallback_used = True
+        crops = crop_tables_from_image_bytes(image_bytes)
+        fallback_result = extract_data_from_crops(crops)
+        fallback_result['selected_passport_id_normalized'] = normalize_passport(
+            fallback_result.get('extracted_passport_id')
+        )
+        fallback_result.setdefault('passport_id_candidates', [])
+        fallback_result.setdefault('normalized_passport_candidates', [])
+        fallback_result["entries"], semantic_quality = _apply_semantic_gating(fallback_result.get("entries", []))
+        result = fallback_result
+        raw_result["fallback"] = {"num_crops": len(crops), "entries": result.get("entries", [])}
+        raw_result["strategy"] = "opencv_fallback"
+
+    return _finalize_extraction_result(
+        result=result,
+        raw_result=raw_result,
+        semantic_quality=semantic_quality,
+        fallback_used=fallback_used,
+        image_bytes=image_bytes,
+        model_name=sp_model,
+    )
+
+
 # ===========================================
 # Main Entry Point
 # ===========================================
@@ -1345,6 +1583,9 @@ def extract_from_image_bytes(image_bytes: bytes) -> Optional[Dict[str, Any]]:
         Returns None on complete failure
     """
     try:
+        if OPENAI_VISION_PIPELINE == "single_pass":
+            return _extract_single_pass(image_bytes)
+
         fallback_used = False
         semantic_quality = {
             "review_required_days": [],
