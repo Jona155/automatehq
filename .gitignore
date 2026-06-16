@@ -44,3 +44,6 @@ worker\debug_app
 
 # Claude Code local config
 .claude/
+
+#sample files
+samples_work_cards/
