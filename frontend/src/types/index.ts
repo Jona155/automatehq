@@ -159,6 +159,9 @@ export interface DayEntry {
   to_time: string | null;
   total_hours: number | null;
   day_status: DayStatus | null;
+  // Per-day site override: when set, this day is attributed to this site instead
+  // of the work card's own site (employee transferred mid-month). null = inherit.
+  attributed_site_id?: string | null;
   source?: string | null;
   is_valid?: boolean;
   has_conflict?: boolean;

@@ -34,7 +34,6 @@ from ..utils import normalize_phone
 from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
 from ..models.sites import Employee
 from ..extensions import db
-from ..services.hours_matrix_service import load_hours_matrix_rows, build_matrix_and_status_map
 from ..observability import QueryCounter, sites_metrics
 from ..services.email_service import send_email_with_attachment
 from ..services.whatsapp_listener_client import (
@@ -607,21 +606,64 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}}
         for site_id in unique_site_ids
     }
+    target_site_ids = set(unique_site_ids)
 
+    # Baseline columns: employees whose home site is one of the target sites.
+    # They appear as a column even with zero hours (preserves prior behavior).
     employee_query = db.session.query(Employee).filter(
         Employee.business_id == business_id,
         Employee.site_id.in_(unique_site_ids),
     )
     if not include_inactive:
         employee_query = employee_query.filter(Employee.is_active.is_(True))
+    home_employees = employee_query.all()
 
-    employees = employee_query.all()
-    for employee in employees:
-        site_results[employee.site_id]['employees'].append(employee)
+    # Visiting employees: managed elsewhere (their card belongs to another site)
+    # but with day entries attributed to a target site this month. Their hours
+    # must surface here even though no card of theirs belongs to this site.
+    visiting_employee_ids = {
+        row[0]
+        for row in db.session.query(WorkCard.employee_id)
+        .join(WorkCardDayEntry, WorkCardDayEntry.work_card_id == WorkCard.id)
+        .filter(
+            WorkCard.business_id == business_id,
+            WorkCard.processing_month == month,
+            WorkCard.employee_id.isnot(None),
+            WorkCardDayEntry.attributed_site_id.in_(unique_site_ids),
+        )
+        .distinct()
+    }
 
-    for site_id, site_data in site_results.items():
-        site_data['employees'] = _sort_employees_for_export(site_data['employees'])
+    employees_by_id = {emp.id: emp for emp in home_employees}
+    missing_ids = [eid for eid in visiting_employee_ids if eid not in employees_by_id]
+    if missing_ids:
+        visiting_query = db.session.query(Employee).filter(
+            Employee.business_id == business_id,
+            Employee.id.in_(missing_ids),
+        )
+        if not include_inactive:
+            visiting_query = visiting_query.filter(Employee.is_active.is_(True))
+        for emp in visiting_query.all():
+            employees_by_id[emp.id] = emp
 
+    # Seed home-employee columns; we add visiting employees as their entries land.
+    added_columns = {site_id: set() for site_id in unique_site_ids}
+    for emp in home_employees:
+        site_results[emp.site_id]['employees'].append(emp)
+        added_columns[emp.site_id].add(emp.id)
+
+    def _finalize():
+        for site_data in site_results.values():
+            site_data['employees'] = _sort_employees_for_export(site_data['employees'])
+        return site_results
+
+    relevant_employee_ids = list({emp.id for emp in home_employees} | visiting_employee_ids)
+    if not relevant_employee_ids:
+        return _finalize()
+
+    # Best (managing) card per relevant employee for the month, ranked across ALL
+    # their cards regardless of site: a transferred employee's card lives at their
+    # final/home site yet contributes days to the sites they moved through.
     ranked_cards = db.session.query(
         WorkCard.id.label('work_card_id'),
         WorkCard.site_id,
@@ -640,9 +682,8 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         ).label('rank')
     ).filter(
         WorkCard.business_id == business_id,
-        WorkCard.site_id.in_(unique_site_ids),
         WorkCard.processing_month == month,
-        WorkCard.employee_id.isnot(None)
+        WorkCard.employee_id.in_(relevant_employee_ids),
     )
 
     if approved_only:
@@ -661,39 +702,75 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
     ).all()
 
     if not best_cards_rows:
-        return site_results
+        return _finalize()
 
-    work_card_ids = [row.work_card_id for row in best_cards_rows]
-    work_card_to_site_employee = {}
-
+    # card_id -> (card_site_id, employee_id, review_status)
+    work_card_meta = {}
+    work_card_ids = []
     for row in best_cards_rows:
-        employee_id_str = str(row.employee_id)
-        work_card_to_site_employee[str(row.work_card_id)] = (row.site_id, employee_id_str)
-        site_results[row.site_id]['status_map'][employee_id_str] = row.review_status
-        if row.monthly_total_hours is not None:
-            site_results[row.site_id]['monthly_totals'][employee_id_str] = float(row.monthly_total_hours)
+        work_card_ids.append(row.work_card_id)
+        work_card_meta[str(row.work_card_id)] = (row.site_id, row.employee_id, row.review_status)
+        # The managing card's site records the employee's overall status (for the
+        # summary view), if that site is in scope.
+        if row.site_id in target_site_ids:
+            site_results[row.site_id]['status_map'][str(row.employee_id)] = row.review_status
 
     day_entries = db.session.query(
         WorkCardDayEntry.work_card_id,
         WorkCardDayEntry.day_of_month,
         WorkCardDayEntry.total_hours,
         WorkCardDayEntry.day_status,
+        WorkCardDayEntry.attributed_site_id,
     ).filter(
         WorkCardDayEntry.work_card_id.in_(work_card_ids)
     ).all()
 
+    # Employees with any cross-site attribution: their hours are spread per-day,
+    # so a single card-level monthly_total can't be applied (see below).
+    split_employee_ids = set()
+
     for entry in day_entries:
-        match = work_card_to_site_employee.get(str(entry.work_card_id))
-        if not match:
+        meta = work_card_meta.get(str(entry.work_card_id))
+        if not meta:
             continue
-        site_id, employee_id_str = match
+        card_site_id, employee_id, review_status = meta
+        employee_id_str = str(employee_id)
+
+        effective_site = entry.attributed_site_id or card_site_id
+        if entry.attributed_site_id is not None and entry.attributed_site_id != card_site_id:
+            split_employee_ids.add(employee_id_str)
+
+        if effective_site not in target_site_ids:
+            continue
+
+        site_data = site_results[effective_site]
+        # Surface a visiting employee as a column the first time a day lands here.
+        if employee_id not in added_columns[effective_site] and employee_id in employees_by_id:
+            site_data['employees'].append(employees_by_id[employee_id])
+            added_columns[effective_site].add(employee_id)
+        site_data['status_map'][employee_id_str] = review_status
 
         if entry.day_status:
-            site_results[site_id]['status_matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = entry.day_status
+            site_data['status_matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = entry.day_status
         elif entry.total_hours is not None:
-            site_results[site_id]['matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = float(entry.total_hours)
+            site_data['matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = float(entry.total_hours)
 
-    return site_results
+    # monthly_total_hours is a single card-level figure used when per-day hours
+    # aren't recorded. It cannot be divided across sites, so it only applies to a
+    # non-split employee, attributed to their managing card's site.
+    for row in best_cards_rows:
+        if row.monthly_total_hours is None:
+            continue
+        employee_id_str = str(row.employee_id)
+        if employee_id_str in split_employee_ids:
+            continue
+        if row.site_id in target_site_ids:
+            site_results[row.site_id]['monthly_totals'][employee_id_str] = float(row.monthly_total_hours)
+            if row.employee_id not in added_columns[row.site_id] and row.employee_id in employees_by_id:
+                site_results[row.site_id]['employees'].append(employees_by_id[row.employee_id])
+                added_columns[row.site_id].add(row.employee_id)
+
+    return _finalize()
 
 @sites_bp.route('', methods=['GET'])
 @token_required

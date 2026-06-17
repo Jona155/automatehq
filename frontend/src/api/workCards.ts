@@ -35,6 +35,9 @@ export interface UpdateDayEntriesRequest {
     from_time: string | null;
     to_time: string | null;
     total_hours: number | null;
+    day_status?: string | null;
+    is_override?: boolean;
+    attributed_site_id?: string | null;
   }>;
   monthly_total_hours?: number | null;
 }
