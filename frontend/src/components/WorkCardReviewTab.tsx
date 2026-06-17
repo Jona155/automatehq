@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup, WorkCardMonthlyBreakdown } from '../types';
+import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup, WorkCardMonthlyBreakdown, Site } from '../types';
 import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard, getMissingWorkCardEmployees, createManualWorkCard, getWorkCardMonthlyBreakdown } from '../api/workCards';
 import { getEmployees } from '../api/employees';
+import { getSites } from '../api/sites';
 import { getFirstName } from '../utils/nameUtils';
 import MonthPicker from './MonthPicker';
 import { useToast } from '../hooks/useToast';
@@ -125,6 +126,7 @@ interface DayEntryRow {
   latest_day_status: DayStatus | null;
   previousEntry: DayEntry['previous_entry'];
   previous_work_card_id: string | null;
+  attributed_site_id: string | null;
   isDirty: boolean;
   isLocked: boolean;
   hasConflict: boolean;
@@ -209,6 +211,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [selectedCard, setSelectedCard] = useState<WorkCard | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [dayEntries, setDayEntries] = useState<DayEntryRow[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [isLoadingCards, setIsLoadingCards] = useState(false);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
@@ -253,6 +256,16 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const { user } = useAuth();
   const { businessCode, siteId: siteIdParam } = useParams<{ businessCode: string; siteId: string }>();
   const navigate = useNavigate();
+
+  // Sites of this business, used to attribute individual days to a site other
+  // than the card's own (employee transferred between sites mid-month).
+  useEffect(() => {
+    let cancelled = false;
+    getSites({ active: true })
+      .then(list => { if (!cancelled) setSites(list); })
+      .catch(() => { /* attribution UI is optional; ignore load failure */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const initialCardIdRef = useRef(initialCardId);
   useEffect(() => {
@@ -727,6 +740,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
           : (existing?.day_status || null),
         previousEntry: existing?.previous_entry || null,
         previous_work_card_id: existing?.previous_work_card_id || null,
+        attributed_site_id: existing?.attributed_site_id ?? null,
         isDirty: false,
         isLocked: !!existing?.is_locked,
         hasConflict: !!existing?.has_conflict,
@@ -1067,12 +1081,37 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     });
   };
 
+  // Re-attribute a single day to a different site. An empty value (or the card's
+  // own site) means "inherit the card's site" and is stored as null.
+  const handleSiteChange = (dayIndex: number, siteValue: string) => {
+    setDayEntries(prev => {
+      const updated = [...prev];
+      const entry = updated[dayIndex];
+      if (isEntryEffectivelyLocked(entry) && !manuallyUnlockedDays.has(entry.day_of_month)) {
+        return prev;
+      }
+      const normalized = !siteValue || siteValue === siteId ? null : siteValue;
+      if (normalized === entry.attributed_site_id) return prev;
+      updated[dayIndex] = { ...entry, attributed_site_id: normalized, isDirty: true };
+      return updated;
+    });
+  };
+
   const handleBulkApply = (selectedDays: number[], values: {
     from_time?: string;
     to_time?: string;
     total_hours?: string;
     day_status?: DayStatus | null;
+    attributed_site_id?: string | null;
   }) => {
+    // Locked days are silently skipped below; surface that to the user instead
+    // of always reporting success for every selected day.
+    const selectedSet = new Set(selectedDays);
+    const lockedSkipped = dayEntries.filter(
+      e => selectedSet.has(e.day_of_month) && isEntryEffectivelyLocked(e) && !manuallyUnlockedDays.has(e.day_of_month)
+    ).length;
+    const appliedCount = selectedDays.length - lockedSkipped;
+
     setDayEntries(prev => {
       const selected = new Set(selectedDays);
       const updated = [...prev];
@@ -1081,6 +1120,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         if (isEntryEffectivelyLocked(updated[i]) && !manuallyUnlockedDays.has(updated[i].day_of_month)) continue;
 
         const entry = { ...updated[i], isDirty: true };
+
+        // Site re-attribution applies independently of hours/status edits.
+        if (values.attributed_site_id !== undefined) {
+          const site = values.attributed_site_id;
+          entry.attributed_site_id = !site || site === siteId ? null : site;
+        }
 
         if (values.day_status) {
           entry.day_status = values.day_status;
@@ -1105,7 +1150,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       }
       return updated;
     });
-    showToast(`עודכנו ${selectedDays.length} ימים`, 'success');
+
+    if (appliedCount === 0) {
+      showToast('לא בוצע עדכון — כל הימים שנבחרו נעולים', 'info');
+    } else if (lockedSkipped > 0) {
+      showToast(`עודכנו ${appliedCount} ימים — ${lockedSkipped} ימים נעולים דולגו`, 'info');
+    } else {
+      showToast(`עודכנו ${appliedCount} ימים`, 'success');
+    }
   };
 
   // An entry is "effectively locked" when either the backend marked it
@@ -1123,6 +1175,19 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     if (isEntryEffectivelyLocked(entry) && !manuallyUnlockedDays.has(entry.day_of_month)) return false;
     return true;
   };
+
+  // The bulk panel only knows the backend's per-day is_locked flag, so it would
+  // let the admin select days that are locked merely because the whole card is
+  // approved. Surface the *effective* lock state so those days are disabled in
+  // the calendar, matching the table and avoiding "applied" toasts that no-op.
+  const bulkPanelEntries = useMemo(
+    () => dayEntries.map(e => ({
+      ...e,
+      isLocked: isEntryEffectivelyLocked(e) && !manuallyUnlockedDays.has(e.day_of_month),
+    })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dayEntries, manuallyUnlockedDays, selectedCard?.review_status]
+  );
 
   const handleToggleCellLock = (dayOfMonth: number) => {
     if (manuallyUnlockedDays.has(dayOfMonth)) {
@@ -1314,6 +1379,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         to_time: normalizeTimeToHourMinute(e.to_time) || null,
         total_hours: e.total_hours ? parseFloat(e.total_hours) : null,
         day_status: e.day_status || null,
+        attributed_site_id: e.attributed_site_id ?? null,
         // Any day the admin explicitly unlocked and edited is a deliberate
         // override. Persist that intent (source=MANUAL_OVERRIDE) so it survives
         // a reload — do NOT key this off e.isLocked, which is only true when the
@@ -2304,10 +2370,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                   {showBulkPanel && selectedCard && (
                     <BulkDayUpdatePanel
                       month={selectedMonth}
-                      dayEntries={dayEntries}
+                      dayEntries={bulkPanelEntries}
                       onApply={handleBulkApply}
                       onClose={() => setShowBulkPanel(false)}
                       disabled={!isAdmin}
+                      sites={sites}
+                      cardSiteId={siteId}
                     />
                   )}
 
@@ -2330,6 +2398,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">יציאה</th>
                             <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">סה"כ</th>
                             <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">סטטוס</th>
+                            {sites.length > 1 && (
+                              <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">אתר</th>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
@@ -2471,6 +2542,23 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     <option value="HOLIDAY">חג</option>
                                   </select>
                                 </td>
+                                {sites.length > 1 && (
+                                  <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
+                                    <select
+                                      value={entry.attributed_site_id || ''}
+                                      onChange={(e) => handleSiteChange(index, e.target.value)}
+                                      onFocus={() => activateDay(entry.day_of_month)}
+                                      disabled={!cellEditable}
+                                      className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary text-sm ${entry.attributed_site_id ? 'border-indigo-400 ring-1 ring-indigo-300 text-indigo-700 dark:text-indigo-300' : isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
+                                      aria-label={`אתר יום ${entry.day_of_month}`}
+                                    >
+                                      <option value="">ברירת מחדל — אתר זה</option>
+                                      {sites.filter(s => s.id !== siteId).map(s => (
+                                        <option key={s.id} value={s.id}>{s.site_name}</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                )}
                               </tr>
                             );
                           })}

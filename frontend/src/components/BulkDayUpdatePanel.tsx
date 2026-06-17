@@ -1,6 +1,10 @@
 import { useState, useMemo } from 'react';
-import type { DayStatus } from '../types';
+import type { DayStatus, Site } from '../types';
 import { DAY_STATUS_LABELS } from '../constants/dayStatus';
+
+// Sentinel for the site selector meaning "reset attribution to the card's own
+// site" (stored as null), distinct from "" which means "leave attribution as-is".
+const SITE_DEFAULT = '__DEFAULT__';
 
 interface DayEntryRow {
   day_of_month: number;
@@ -8,6 +12,7 @@ interface DayEntryRow {
   to_time: string;
   total_hours: string;
   day_status: DayStatus | null;
+  attributed_site_id?: string | null;
   isDirty: boolean;
   isLocked: boolean;
 }
@@ -20,9 +25,12 @@ interface BulkDayUpdatePanelProps {
     to_time?: string;
     total_hours?: string;
     day_status?: DayStatus | null;
+    attributed_site_id?: string | null;
   }) => void;
   onClose: () => void;
   disabled?: boolean;
+  sites?: Site[];
+  cardSiteId?: string | null;
 }
 
 const HEBREW_WEEKDAYS = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
@@ -31,14 +39,18 @@ const INPUT_BASE_CLASS = 'w-full px-2 py-1.5 rounded-lg border text-sm border-sl
 const inputClass = (dimmed: boolean) =>
   `${INPUT_BASE_CLASS} ${dimmed ? 'bg-slate-100 dark:bg-slate-700 opacity-50' : 'bg-white dark:bg-slate-800'}`;
 
-export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose, disabled }: BulkDayUpdatePanelProps) {
+export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose, disabled, sites = [], cardSiteId = null }: BulkDayUpdatePanelProps) {
   const [selectedDays, setSelectedDays] = useState<Set<number>>(new Set());
   const [fromTime, setFromTime] = useState('');
   const [toTime, setToTime] = useState('');
   const [totalHours, setTotalHours] = useState('');
   const [dayStatus, setDayStatus] = useState<DayStatus | ''>('');
+  const [siteId, setSiteId] = useState('');
 
-  const { daysInMonth, lockedDays, daysWithData, dirtyDays, calendarCells } = useMemo(() => {
+  const otherSites = useMemo(() => sites.filter(s => s.id !== cardSiteId), [sites, cardSiteId]);
+  const showSiteSelector = otherSites.length > 0;
+
+  const { daysInMonth, lockedDays, daysWithData, dirtyDays, attributedDays, calendarCells } = useMemo(() => {
     const [year, mon] = month.split('-').map(Number);
     const daysInMonth = new Date(year, mon, 0).getDate();
     // Sunday = 0 in JS, which is also the first day of the Hebrew week
@@ -47,6 +59,7 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose
     const lockedDays = new Set<number>();
     const daysWithData = new Set<number>();
     const dirtyDays = new Set<number>();
+    const attributedDays = new Set<number>();
 
     for (const entry of dayEntries) {
       if (entry.isLocked) lockedDays.add(entry.day_of_month);
@@ -54,13 +67,14 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose
         daysWithData.add(entry.day_of_month);
       }
       if (entry.isDirty) dirtyDays.add(entry.day_of_month);
+      if (entry.attributed_site_id) attributedDays.add(entry.day_of_month);
     }
 
     const calendarCells: (number | null)[] = [];
     for (let i = 0; i < firstDayOffset; i++) calendarCells.push(null);
     for (let d = 1; d <= daysInMonth; d++) calendarCells.push(d);
 
-    return { daysInMonth, firstDayOffset, lockedDays, daysWithData, dirtyDays, calendarCells };
+    return { daysInMonth, firstDayOffset, lockedDays, daysWithData, dirtyDays, attributedDays, calendarCells };
   }, [month, dayEntries]);
 
   const toggleDay = (day: number) => {
@@ -94,16 +108,24 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose
       if (totalHours) values.total_hours = totalHours;
       values.day_status = null;
     }
+    // Site attribution applies independently of hours/status. "" = leave as-is,
+    // SITE_DEFAULT = reset to the card's site (null), otherwise the chosen site.
+    if (siteId === SITE_DEFAULT) {
+      values.attributed_site_id = null;
+    } else if (siteId) {
+      values.attributed_site_id = siteId;
+    }
     onApply(Array.from(selectedDays), values);
     setFromTime('');
     setToTime('');
     setTotalHours('');
     setDayStatus('');
+    setSiteId('');
     setSelectedDays(new Set());
   };
 
   const hasStatusSelected = dayStatus !== '';
-  const hasAnyInput = fromTime || toTime || totalHours || dayStatus;
+  const hasAnyInput = fromTime || toTime || totalHours || dayStatus || siteId;
 
   return (
     <div className="mx-4 mb-3 p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl space-y-4">
@@ -141,6 +163,7 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose
             const isLocked = lockedDays.has(day);
             const hasData = daysWithData.has(day);
             const isDirty = dirtyDays.has(day);
+            const isAttributed = attributedDays.has(day);
 
             return (
               <button
@@ -148,7 +171,7 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose
                 type="button"
                 onClick={() => toggleDay(day)}
                 disabled={disabled || isLocked}
-                title={isLocked ? 'יום נעול' : `יום ${day}`}
+                title={isLocked ? 'יום נעול' : isAttributed ? `יום ${day} — משויך לאתר אחר` : `יום ${day}`}
                 className={`
                   relative flex flex-col items-center justify-center rounded-lg py-1.5 text-sm font-medium transition-colors
                   ${isLocked
@@ -162,6 +185,9 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose
                 {day}
                 {(hasData || isDirty) && (
                   <span className={`absolute bottom-0.5 w-1.5 h-1.5 rounded-full ${isDirty ? 'bg-amber-400' : 'bg-slate-400 dark:bg-slate-500'}`} />
+                )}
+                {isAttributed && (
+                  <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-indigo-500" title="משויך לאתר אחר" />
                 )}
               </button>
             );
@@ -226,6 +252,25 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose
           </select>
         </div>
       </div>
+
+      {/* Site attribution (only when other sites exist) */}
+      {showSiteSelector && (
+        <div>
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">שייך לאתר</label>
+          <select
+            value={siteId}
+            onChange={e => setSiteId(e.target.value)}
+            disabled={disabled}
+            className={inputClass(false)}
+          >
+            <option value="">— ללא שינוי —</option>
+            <option value={SITE_DEFAULT}>ברירת מחדל — אתר זה</option>
+            {otherSites.map(s => (
+              <option key={s.id} value={s.id}>{s.site_name}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Apply button */}
       <div className="flex items-center gap-3">

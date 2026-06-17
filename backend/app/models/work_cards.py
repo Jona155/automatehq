@@ -104,6 +104,10 @@ class WorkCardDayEntry(db.Model):
     to_time = db.Column(db.Time, nullable=True)
     total_hours = db.Column(db.Numeric(5, 2), nullable=True)
     day_status = db.Column(db.Text, nullable=True)
+    # Per-day site override: when set, this day's hours are attributed to this
+    # site instead of the parent work_card.site_id. NULL => inherit the card's
+    # site. Lets one (managed) card split hours across sites by date.
+    attributed_site_id = db.Column(UUID(as_uuid=True), db.ForeignKey('sites.id'), nullable=True)
     source = db.Column(db.Text, nullable=False, default='EXTRACTED')
     is_valid = db.Column(db.Boolean, nullable=False, default=True)
     validation_errors = db.Column(JSONB, nullable=True)
@@ -115,4 +119,5 @@ class WorkCardDayEntry(db.Model):
         db.UniqueConstraint('work_card_id', 'day_of_month', name='uq_work_card_day_entries_day'),
         db.CheckConstraint('day_of_month >= 1 AND day_of_month <= 31', name='check_day_of_month_range'),
         Index('ix_work_card_day_entries_work_card_id', 'work_card_id'),
+        Index('ix_work_card_day_entries_attributed_site_id', 'attributed_site_id'),
     )

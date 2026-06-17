@@ -569,6 +569,8 @@ def approve_work_card(card_id):
                         from_time=previous_entry.from_time,
                         to_time=previous_entry.to_time,
                         total_hours=previous_entry.total_hours,
+                        day_status=previous_entry.day_status,
+                        attributed_site_id=previous_entry.attributed_site_id,
                         source='CARRIED_FORWARD',
                         is_valid=True
                     )
@@ -581,6 +583,8 @@ def approve_work_card(card_id):
                         from_time=previous_entry.from_time,
                         to_time=previous_entry.to_time,
                         total_hours=previous_entry.total_hours,
+                        day_status=previous_entry.day_status,
+                        attributed_site_id=previous_entry.attributed_site_id,
                         source='CARRIED_FORWARD',
                         is_valid=True
                     )
@@ -792,6 +796,7 @@ def get_day_entries(card_id):
                     row['to_time'] = _normalize_time_value(previous_entry.to_time)
                     row['total_hours'] = float(previous_entry.total_hours) if previous_entry.total_hours is not None else None
                     row['day_status'] = previous_entry.day_status
+                    row['attributed_site_id'] = str(previous_entry.attributed_site_id) if previous_entry.attributed_site_id else None
 
             data.append(row)
 
@@ -926,7 +931,37 @@ def update_day_entries(card_id):
             error="Bad Request",
             data={'validation_errors': validation_errors}
         )
-    
+
+    # Resolve & validate per-day site attribution. A day may be attributed to a
+    # site other than the card's own (employee transferred mid-month); the value
+    # must be a real site of this business.
+    card_site_id_str = str(card.site_id) if card.site_id else None
+    requested_site_ids = set()
+    for entry in entries_data:
+        raw_site = entry.get('attributed_site_id')
+        if raw_site in (None, ''):
+            continue
+        try:
+            requested_site_ids.add(str(UUID(str(raw_site))))
+        except (ValueError, AttributeError, TypeError):
+            return api_response(
+                status_code=400,
+                message=f"Invalid attributed_site_id: {raw_site}",
+                error="Bad Request",
+            )
+    if requested_site_ids:
+        from ..repositories.site_repository import SiteRepository
+        known_sites = SiteRepository().get_by_ids_for_business(
+            [UUID(sid) for sid in requested_site_ids], g.business_id
+        )
+        unknown = requested_site_ids - {str(s.id) for s in known_sites}
+        if unknown:
+            return api_response(
+                status_code=400,
+                message=f"attributed_site_id not found for this business: {', '.join(sorted(unknown))}",
+                error="Bad Request",
+            )
+
     try:
         # Update or create entries
         updated_entries = []
@@ -973,6 +1008,16 @@ def update_day_entries(card_id):
 
             if entry.get('is_override'):
                 entry_data['source'] = 'MANUAL_OVERRIDE'
+
+            # Store NULL when the attribution equals the card's own site (the
+            # default) or is unset, so the column only ever holds genuine
+            # cross-site overrides. Always set it so reverting to default clears
+            # a previously-stored override.
+            raw_site = entry.get('attributed_site_id')
+            if raw_site not in (None, '') and str(raw_site) != card_site_id_str:
+                entry_data['attributed_site_id'] = UUID(str(raw_site))
+            else:
+                entry_data['attributed_site_id'] = None
 
             if existing:
                 # Update existing entry
