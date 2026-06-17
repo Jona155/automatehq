@@ -45,6 +45,7 @@ FULL_NAME_COLUMNS = ['שם מלא', 'full_name', 'full name']
 SITE_COLUMNS = ['שם הפרויקט הנוכחי', 'אתר', 'site', 'site_name', 'project']
 STATUS_COLUMNS = ['סטטוס נוכחי בעברית', 'status', 'employee_status']
 PHONE_COLUMNS = ['מספר טלפון', 'מספר טלפון ישראלי', 'טלפון', 'phone', 'phone_number', 'מספר פלאפון']
+SERIAL_COLUMNS = ['מספר סידורי', 'serial', 'serial_number', 'external_employee_id']
 
 
 def _normalize_cell(value: Any) -> Optional[str]:
@@ -81,6 +82,26 @@ def _build_full_name(row: pd.Series, full_name_col: Optional[str], first_name_co
     return ' '.join([part for part in [first, last] if part])
 
 
+def _normalize_employee_phone(raw: Any) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Normalize a phone to the system's stored format (0XXXXXXXXX) and flag it
+    if the result is not a usable Israeli number.
+
+    Returns (normalized_or_none, warning_or_none). An unusable phone yields
+    (None, warning) so the broken value is never stored — the rest of the row
+    still imports, with the bad phone surfaced for manual correction. This keeps
+    stored phones consumable by the WhatsApp/Twilio path, which strips the
+    leading 0 and prepends +972 at send time.
+    """
+    cell = _normalize_cell(raw)
+    if not cell:
+        return None, None
+    normalized = normalize_phone(cell)
+    # Usable = leading-0 Israeli number: 9 digits (landline) or 10 (mobile).
+    if normalized and normalized.isdigit() and normalized.startswith('0') and len(normalized) in (9, 10):
+        return normalized, None
+    return None, {'code': 'invalid_phone', 'details': cell}
+
+
 def _parse_report(file_bytes: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     df = pd.read_excel(BytesIO(file_bytes), sheet_name=0)
 
@@ -94,6 +115,7 @@ def _parse_report(file_bytes: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, An
     site_col = _find_column(df, SITE_COLUMNS)
     status_col = _find_column(df, STATUS_COLUMNS)
     phone_col = _find_column(df, PHONE_COLUMNS)
+    serial_col = _find_column(df, SERIAL_COLUMNS)
 
     rows_by_passport: Dict[str, Dict[str, Any]] = {}
     error_rows: List[Dict[str, Any]] = []
@@ -110,6 +132,7 @@ def _parse_report(file_bytes: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, An
                 'phone_number': None,
                 'site_name': _normalize_cell(row.get(site_col)) if site_col else None,
                 'status_raw': _normalize_cell(row.get(status_col)) if status_col else None,
+                'external_employee_id': _normalize_cell(row.get(serial_col)) if serial_col else None,
                 'errors': ['missing_passport'],
                 'warnings': [],
             })
@@ -125,6 +148,7 @@ def _parse_report(file_bytes: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, An
             'phone_number': _normalize_cell(row.get(phone_col)) if phone_col else None,
             'site_name': _normalize_cell(row.get(site_col)) if site_col else None,
             'status_raw': _normalize_cell(row.get(status_col)) if status_col else None,
+            'external_employee_id': _normalize_cell(row.get(serial_col)) if serial_col else None,
             'errors': [],
             'warnings': [],
         }
@@ -148,7 +172,8 @@ def _parse_report(file_bytes: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, An
             'last_name': last_name_col,
             'site': site_col,
             'status': status_col,
-            'phone': phone_col
+            'phone': phone_col,
+            'serial': serial_col
         }
     }
     logger.info("employee_imports.parse_report rows=%s deduped=%s errors=%s", len(df.index), len(deduped_rows), len(error_rows))
@@ -183,7 +208,10 @@ def _build_diff(
         site_id = str(site.id) if site else None
         if site_name and not site and allow_site_create:
             site_id = f"{NEW_SITE_PREFIX}{site_name}"
-        phone_number = normalize_phone(row.get('phone_number') or '') if row.get('phone_number') else None
+        phone_number, phone_warning = _normalize_employee_phone(row.get('phone_number'))
+        if phone_warning:
+            warnings.append(phone_warning)
+        external_employee_id = row.get('external_employee_id')
 
         existing = employees_by_passport.get(passport_id) if passport_id else None
         changes = []
@@ -201,7 +229,8 @@ def _build_diff(
                 'phone_number': existing.phone_number,
                 'site_id': str(existing.site_id) if existing.site_id else None,
                 'site_name': current_site_name,
-                'status': existing.status
+                'status': existing.status,
+                'external_employee_id': existing.external_employee_id
             }
 
             if row.get('full_name') and row['full_name'] != existing.full_name:
@@ -209,6 +238,9 @@ def _build_diff(
 
             if phone_number and phone_number != existing.phone_number:
                 changes.append({'field': 'phone_number', 'from': existing.phone_number, 'to': phone_number})
+
+            if external_employee_id and external_employee_id != existing.external_employee_id:
+                changes.append({'field': 'external_employee_id', 'from': existing.external_employee_id, 'to': external_employee_id})
 
             if status and status != existing.status:
                 changes.append({'field': 'status', 'from': existing.status, 'to': status})
@@ -233,6 +265,8 @@ def _build_diff(
                     {'field': 'phone_number', 'from': None, 'to': phone_number},
                     {'field': 'site_id', 'from': None, 'to': site_id},
                 ]
+                if external_employee_id:
+                    changes.append({'field': 'external_employee_id', 'from': None, 'to': external_employee_id})
                 if status:
                     changes.append({'field': 'status', 'from': None, 'to': status})
 
@@ -248,6 +282,7 @@ def _build_diff(
             'site_id': site_id,
             'status_raw': status_raw,
             'status': status,
+            'external_employee_id': external_employee_id,
             'action': action,
             'changes': changes,
             'errors': errors,
@@ -330,6 +365,7 @@ def apply_import():
             'phone_number': _normalize_cell(row.get('phone_number')),
             'site_name': _normalize_cell(row.get('site_name')),
             'status_raw': _normalize_cell(row.get('status_raw')),
+            'external_employee_id': _normalize_cell(row.get('external_employee_id')),
             'errors': [],
             'warnings': []
         }
@@ -388,7 +424,8 @@ def apply_import():
                     full_name=row['full_name'],
                     passport_id=row['passport_id'],
                     phone_number=row['phone_number'],
-                    status=row['status']
+                    status=row['status'],
+                    external_employee_id=row['external_employee_id']
                 )
                 applied.append({'action': 'create', 'employee': model_to_dict(employee), 'row_number': row['row_number']})
                 created_count += 1
@@ -424,6 +461,8 @@ def apply_import():
                         update_payload['full_name'] = row['full_name']
                     elif field == 'phone_number':
                         update_payload['phone_number'] = row['phone_number']
+                    elif field == 'external_employee_id':
+                        update_payload['external_employee_id'] = row['external_employee_id']
                     elif field == 'status':
                         update_payload['status'] = row['status']
 

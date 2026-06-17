@@ -14,6 +14,7 @@ const fieldLabels: Record<string, string> = {
   phone_number: 'טלפון',
   site_id: 'אתר',
   status: 'סטטוס',
+  external_employee_id: 'מספר סידורי',
 };
 
 export default function EmployeeImportPage() {

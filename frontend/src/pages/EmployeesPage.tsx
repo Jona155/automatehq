@@ -41,6 +41,7 @@ export default function EmployeesPage() {
     passport_id: '',
     phone_number: '',
     site_id: '',
+    external_employee_id: '',
   });
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -159,7 +160,7 @@ export default function EmployeesPage() {
 
   const handleOpenCreate = () => {
     setEditingEmployee(null);
-    setFormData({ full_name: '', passport_id: '', phone_number: '', site_id: '' });
+    setFormData({ full_name: '', passport_id: '', phone_number: '', site_id: '', external_employee_id: '' });
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -171,6 +172,7 @@ export default function EmployeesPage() {
       passport_id: employee.passport_id,
       phone_number: employee.phone_number,
       site_id: employee.site_id,
+      external_employee_id: employee.external_employee_id ?? '',
     });
     setFormError(null);
     setIsModalOpen(true);
@@ -207,6 +209,7 @@ export default function EmployeesPage() {
           passport_id: formData.passport_id,
           phone_number: formData.phone_number,
           site_id: formData.site_id,
+          external_employee_id: formData.external_employee_id.trim() || undefined,
         };
         await updateEmployee(editingEmployee.id, payload);
       } else {
@@ -215,6 +218,7 @@ export default function EmployeesPage() {
           passport_id: formData.passport_id,
           phone_number: formData.phone_number,
           site_id: formData.site_id,
+          external_employee_id: formData.external_employee_id.trim() || undefined,
         };
         await createEmployee(payload);
       }
@@ -365,6 +369,9 @@ export default function EmployeesPage() {
                       <SortIcon field="passport_id" />
                     </div>
                   </th>
+                  <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">
+                    מספר סידורי
+                  </th>
                   <th
                     className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
                     onClick={() => handleSort('phone_number')}
@@ -405,6 +412,9 @@ export default function EmployeesPage() {
                       <span className="text-[#111518] dark:text-white font-medium">{employee.passport_id}</span>
                     </td>
                     <td className="px-6 py-5">
+                      <span className="text-[#617989] dark:text-slate-400">{employee.external_employee_id || '—'}</span>
+                    </td>
+                    <td className="px-6 py-5">
                       <span className="text-[#617989] dark:text-slate-400">{employee.phone_number}</span>
                     </td>
                     <td className="px-6 py-5">
@@ -434,7 +444,7 @@ export default function EmployeesPage() {
                 ))}
                 {sortedEmployees.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="p-8 text-center text-slate-500">
+                    <td colSpan={6} className="p-8 text-center text-slate-500">
                       {filterName || filterPassport || filterPhone || filterSiteId
                         ? 'לא נמצאו עובדים התואמים את הסינון'
                         : 'לא נמצאו עובדים'}
@@ -533,6 +543,18 @@ export default function EmployeesPage() {
                   onChange={(e) => setFormData({ ...formData, phone_number: e.target.value })}
                   className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
                   placeholder="050-1234567"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  מספר סידורי
+                </label>
+                <input
+                  type="text"
+                  value={formData.external_employee_id}
+                  onChange={(e) => setFormData({ ...formData, external_employee_id: e.target.value })}
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
+                  placeholder="לדוגמה: 61"
                 />
               </div>
               <div>
