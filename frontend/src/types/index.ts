@@ -61,6 +61,7 @@ export interface EmployeeImportRow {
   site_id: string | null;
   status_raw: string | null;
   status: EmployeeStatus | null;
+  external_employee_id: string | null;
   action: 'create' | 'update' | 'no_change' | 'error';
   changes: Array<{ field: string; from: string | null; to: string | null }>;
   errors: Array<string | { code: string; details?: any }>;
@@ -71,6 +72,7 @@ export interface EmployeeImportRow {
     site_id: string | null;
     site_name: string | null;
     status: EmployeeStatus | null;
+    external_employee_id: string | null;
   } | null;
 }
 
