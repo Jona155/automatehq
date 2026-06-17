@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import Modal from './Modal';
 import BulkDayUpdatePanel from './BulkDayUpdatePanel';
 import MonthlyHoursPanel from './MonthlyHoursPanel';
+import SearchableSelect from './SearchableSelect';
 
 interface WorkCardReviewTabProps {
   siteId: string;
@@ -1187,6 +1188,16 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dayEntries, manuallyUnlockedDays, selectedCard?.review_status]
+  );
+
+  // Options for the per-day site-attribution dropdown: the card's own site
+  // (default) plus every other site, searchable by name.
+  const siteAttributionOptions = useMemo(
+    () => [
+      { value: '', label: 'ברירת מחדל — אתר זה' },
+      ...sites.filter(s => s.id !== siteId).map(s => ({ value: s.id, label: s.site_name })),
+    ],
+    [sites, siteId]
   );
 
   const handleToggleCellLock = (dayOfMonth: number) => {
@@ -2544,19 +2555,15 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                 </td>
                                 {sites.length > 1 && (
                                   <td className="px-2 py-1 border-b border-slate-100 dark:border-slate-700">
-                                    <select
+                                    <SearchableSelect
+                                      options={siteAttributionOptions}
                                       value={entry.attributed_site_id || ''}
-                                      onChange={(e) => handleSiteChange(index, e.target.value)}
-                                      onFocus={() => activateDay(entry.day_of_month)}
+                                      onChange={(val) => handleSiteChange(index, val)}
                                       disabled={!cellEditable}
-                                      className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary text-sm ${entry.attributed_site_id ? 'border-indigo-400 ring-1 ring-indigo-300 text-indigo-700 dark:text-indigo-300' : isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
-                                      aria-label={`אתר יום ${entry.day_of_month}`}
-                                    >
-                                      <option value="">ברירת מחדל — אתר זה</option>
-                                      {sites.filter(s => s.id !== siteId).map(s => (
-                                        <option key={s.id} value={s.id}>{s.site_name}</option>
-                                      ))}
-                                    </select>
+                                      ariaLabel={`אתר יום ${entry.day_of_month}`}
+                                      searchPlaceholder="חיפוש אתר..."
+                                      className={`w-full px-2 py-1 bg-white dark:bg-slate-800 border rounded text-sm text-right disabled:opacity-40 ${entry.attributed_site_id ? 'border-indigo-400 ring-1 ring-indigo-300 text-indigo-700 dark:text-indigo-300' : isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
+                                    />
                                   </td>
                                 )}
                               </tr>

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { DayStatus, Site } from '../types';
 import { DAY_STATUS_LABELS } from '../constants/dayStatus';
+import SearchableSelect from './SearchableSelect';
 
 // Sentinel for the site selector meaning "reset attribution to the card's own
 // site" (stored as null), distinct from "" which means "leave attribution as-is".
@@ -49,6 +50,11 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose
 
   const otherSites = useMemo(() => sites.filter(s => s.id !== cardSiteId), [sites, cardSiteId]);
   const showSiteSelector = otherSites.length > 0;
+  const siteOptions = useMemo(() => [
+    { value: '', label: '— ללא שינוי —' },
+    { value: SITE_DEFAULT, label: 'ברירת מחדל — אתר זה' },
+    ...otherSites.map(s => ({ value: s.id, label: s.site_name })),
+  ], [otherSites]);
 
   const { daysInMonth, lockedDays, daysWithData, dirtyDays, attributedDays, calendarCells } = useMemo(() => {
     const [year, mon] = month.split('-').map(Number);
@@ -257,18 +263,15 @@ export default function BulkDayUpdatePanel({ month, dayEntries, onApply, onClose
       {showSiteSelector && (
         <div>
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">שייך לאתר</label>
-          <select
+          <SearchableSelect
+            options={siteOptions}
             value={siteId}
-            onChange={e => setSiteId(e.target.value)}
+            onChange={setSiteId}
             disabled={disabled}
+            searchPlaceholder="חיפוש אתר..."
+            ariaLabel="שייך לאתר"
             className={inputClass(false)}
-          >
-            <option value="">— ללא שינוי —</option>
-            <option value={SITE_DEFAULT}>ברירת מחדל — אתר זה</option>
-            {otherSites.map(s => (
-              <option key={s.id} value={s.id}>{s.site_name}</option>
-            ))}
-          </select>
+          />
         </div>
       )}
 
