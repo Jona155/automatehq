@@ -52,6 +52,7 @@ export default function SiteDetailsPage() {
   const [fieldManagers, setFieldManagers] = useState<User[]>([]);
   const [hourlyTariff, setHourlyTariff] = useState<string>('');
   const [hourlyTariffError, setHourlyTariffError] = useState<string | null>(null);
+  const [expectedCards, setExpectedCards] = useState<string>('');
   const [contractorEmails, setContractorEmails] = useState<string[]>([]);
   const [contractorEmailInput, setContractorEmailInput] = useState<string>('');
   const [contractorEmailError, setContractorEmailError] = useState<string | null>(null);
@@ -180,6 +181,7 @@ export default function SiteDetailsPage() {
       .catch((err) => console.error('Failed to fetch field managers:', err));
     setHourlyTariff(site?.hourly_tariff != null ? String(site.hourly_tariff) : '');
     setHourlyTariffError(null);
+    setExpectedCards(site?.expected_work_cards_per_month != null ? String(site.expected_work_cards_per_month) : '');
     setContractorEmails(site?.contractor_emails || []);
     setContractorEmailInput('');
     setContractorEmailError(null);
@@ -201,6 +203,7 @@ export default function SiteDetailsPage() {
         responsible_employee_id: responsibleEmployeeId || null,
         field_manager_id: fieldManagerId || null,
         hourly_tariff: hourlyTariff !== '' ? parseFloat(hourlyTariff) : null,
+        expected_work_cards_per_month: expectedCards !== '' ? parseInt(expectedCards, 10) : null,
         contractor_emails: contractorEmails.length > 0 ? contractorEmails : null,
         contractor_phone_number: contractorPhoneNumber.trim() ? contractorPhoneNumber.trim() : null,
         is_active: isActive,
@@ -943,6 +946,26 @@ export default function SiteDetailsPage() {
             {hourlyTariffError && (
               <p className="mt-1 text-xs text-red-500">{hourlyTariffError}</p>
             )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              כרטיסי עבודה צפויים לעובד בחודש
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              step="1"
+              value={expectedCards}
+              onChange={(e) => setExpectedCards(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              placeholder="ברירת מחדל של העסק"
+              dir="ltr"
+            />
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              השאירו ריק כדי להשתמש בברירת המחדל של העסק. משפיע על חישוב כרטיסים חסרים.
+            </p>
           </div>
 
           <div>

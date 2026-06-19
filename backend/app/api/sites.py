@@ -807,6 +807,24 @@ def get_sites():
         traceback.print_exc()
         return api_response(status_code=500, message="Failed to get sites", error=str(e))
 
+def _coerce_expected_cards(data):
+    """Validate/normalize expected_work_cards_per_month in-place. Returns error msg or None."""
+    if 'expected_work_cards_per_month' not in data:
+        return None
+    val = data.get('expected_work_cards_per_month')
+    if val in (None, ''):
+        data['expected_work_cards_per_month'] = None
+        return None
+    try:
+        ival = int(val)
+    except (TypeError, ValueError):
+        return "מספר כרטיסים צפוי חייב להיות מספר שלם"
+    if not (1 <= ival <= 10):
+        return "מספר כרטיסים צפוי חייב להיות בין 1 ל-10"
+    data['expected_work_cards_per_month'] = ival
+    return None
+
+
 @sites_bp.route('', methods=['POST'])
 @token_required
 @role_required('ADMIN')
@@ -840,6 +858,10 @@ def create_site():
             if err:
                 return api_response(status_code=400, message=err, error="Bad Request")
             data['contractor_phone_number'] = phone
+
+        err = _coerce_expected_cards(data)
+        if err:
+            return api_response(status_code=400, message=err, error="Bad Request")
 
         site = repo.create(**data)
         invalidate_business_cache(g.business_id)
@@ -932,6 +954,10 @@ def update_site(site_id):
                     return api_response(status_code=404, message="Field manager not found for this business", error="Not Found")
 
                 data['field_manager_id'] = field_manager_uuid
+
+        err = _coerce_expected_cards(data)
+        if err:
+            return api_response(status_code=400, message=err, error="Bad Request")
 
         updated_site = repo.update(site_id, **data)
         if not updated_site:

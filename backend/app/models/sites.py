@@ -23,6 +23,9 @@ class Site(db.Model):
         nullable=True
     )
     hourly_tariff = db.Column(db.Numeric(10, 2), nullable=True)
+    # Per-site override for the expected work cards per employee per month.
+    # NULL => fall back to the business-level default.
+    expected_work_cards_per_month = db.Column(db.SmallInteger, nullable=True)
     contractor_emails = db.Column(JSONB, nullable=True, default=list)
     contractor_phone_number = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, default=True)

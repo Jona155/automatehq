@@ -34,6 +34,7 @@ def get_user_with_business(user):
             'code': business.code,
             'is_active': business.is_active,
             'default_month_cutoff_day': business.default_month_cutoff_day,
+            'expected_work_cards_per_month': business.expected_work_cards_per_month,
         }
 
     return user_data
