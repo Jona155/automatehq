@@ -16,6 +16,11 @@ class Business(db.Model):
         nullable=True,
         info={'check': 'default_month_cutoff_day >= 1 AND default_month_cutoff_day <= 28'}
     )
+    # Expected number of work cards each employee should submit per month
+    # (typically 2 — mid/end-of-month + start of the following month).
+    expected_work_cards_per_month = db.Column(
+        db.SmallInteger, nullable=False, server_default='2'
+    )
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

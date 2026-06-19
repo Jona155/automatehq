@@ -299,7 +299,7 @@ export default function UsersPage() {
       {/* Create/Edit Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md">
             <div className="p-6 border-b border-slate-100 dark:border-slate-700">
               <h3 className="text-xl font-bold text-slate-900 dark:text-white">
                 {editingUser ? 'עריכת משתמש' : 'יצירת משתמש חדש'}

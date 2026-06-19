@@ -33,6 +33,7 @@ export interface Site {
   hourly_tariff?: number | null;
   contractor_emails?: string[] | null;
   contractor_phone_number?: string | null;
+  expected_work_cards_per_month?: number | null;
 }
 
 export type EmployeeStatus = 'ACTIVE' | 'REPORTED_IN_SPARK' | 'REPORTED_RETURNED_FROM_ESCAPE';

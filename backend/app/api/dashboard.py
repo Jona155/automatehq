@@ -302,7 +302,9 @@ def get_dashboard_summary():
                 func.coalesce(export_sub.c.export_count, 0).label("export_count"),
                 export_sub.c.last_exported_at.label("last_exported_at"),
             )
-            .join(wc_sub, wc_sub.c.site_id == Site.id)
+            # LEFT JOIN so active sites with ZERO uploaded cards still appear
+            # (they show employees_with_cards=0 => missing = full headcount).
+            .outerjoin(wc_sub, wc_sub.c.site_id == Site.id)
             .outerjoin(emp_sub, emp_sub.c.site_id == Site.id)
             .outerjoin(export_sub, export_sub.c.site_id == Site.id)
             .filter(Site.business_id == g.business_id, Site.is_active.is_(True))
