@@ -1,13 +1,13 @@
 import { useState, useRef } from 'react';
 import Modal from './Modal';
-import { importHoursFromExcel } from '../api/siteHoursImport';
-import type { HoursImportSuccess, HoursImportValidationError } from '../api/siteHoursImport';
+import MonthPicker from './MonthPicker';
+import { importHoursBatchFromExcel } from '../api/siteHoursImport';
+import type { BatchHoursImportSuccess, HoursImportValidationError } from '../api/siteHoursImport';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  siteId: string;
-  selectedMonth: string; // "YYYY-MM"
+  defaultMonth: string; // "YYYY-MM"
   onSuccess: () => void;
 }
 
@@ -19,12 +19,15 @@ const ERROR_TYPE_LABELS: Record<string, string> = {
   invalid_day: 'יום לא קיים בחודש',
   unrecognized_value: 'ערך לא מוכר',
   structure: 'מבנה קובץ שגוי',
+  unmatched_sheet: 'גיליון ללא אתר תואם',
+  hours_conflict: 'התנגשות שעות בין אתרים',
 };
 
-export default function SiteHoursImportModal({ isOpen, onClose, siteId, selectedMonth, onSuccess }: Props) {
+export default function AllSitesHoursImportModal({ isOpen, onClose, defaultMonth, onSuccess }: Props) {
+  const [month, setMonth] = useState(defaultMonth);
   const [state, setState] = useState<State>('idle');
   const [file, setFile] = useState<File | null>(null);
-  const [successData, setSuccessData] = useState<HoursImportSuccess | null>(null);
+  const [successData, setSuccessData] = useState<BatchHoursImportSuccess | null>(null);
   const [validationErrors, setValidationErrors] = useState<HoursImportValidationError[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -69,7 +72,7 @@ export default function SiteHoursImportModal({ isOpen, onClose, siteId, selected
     setValidationErrors([]);
     setErrorMessage('');
     try {
-      const result = await importHoursFromExcel(siteId, selectedMonth, file);
+      const result = await importHoursBatchFromExcel(month, file);
       setSuccessData(result);
       setState('success');
       onSuccess();
@@ -85,19 +88,29 @@ export default function SiteHoursImportModal({ isOpen, onClose, siteId, selected
     }
   };
 
-  const formatMonth = (m: string) => {
-    const [y, mo] = m.split('-');
-    return `${mo}/${y}`;
-  };
-
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="ייבוא שעות מ-Excel" maxWidth="md">
+    <Modal isOpen={isOpen} onClose={handleClose} title="ייבוא סיכום אתרים מ-Excel" maxWidth="md">
       <div className="flex flex-col gap-5 p-1" dir="rtl">
-        {/* Month indicator */}
-        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-          <span className="material-symbols-outlined text-base">calendar_month</span>
-          <span>חודש: <strong>{formatMonth(selectedMonth)}</strong></span>
-        </div>
+        {/* Month picker */}
+        {state !== 'success' && (
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">חודש לייבוא</label>
+            <div className="inline-flex">
+              <MonthPicker
+                value={month}
+                onChange={setMonth}
+                storageKey="sites_summary_import_month"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Explanation */}
+        {state !== 'success' && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            יש להעלות קובץ סיכום רב-גיליוני (גיליון לכל אתר). שם כל גיליון חייב להתאים בדיוק לשם האתר.
+          </p>
+        )}
 
         {/* File drop zone */}
         {state !== 'success' && (
@@ -130,7 +143,7 @@ export default function SiteHoursImportModal({ isOpen, onClose, siteId, selected
                   גרור קובץ XLSX לכאן או לחץ לבחירה
                 </p>
                 <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                  יש להעלות את קובץ הסיכום החודשי בפורמט XLSX
+                  קובץ סיכום כל-האתרים בפורמט XLSX
                 </p>
               </>
             )}
@@ -145,16 +158,24 @@ export default function SiteHoursImportModal({ isOpen, onClose, siteId, selected
               <span className="font-semibold text-green-800 dark:text-green-300 text-sm">הייבוא הושלם בהצלחה</span>
             </div>
             <div className="text-sm text-green-700 dark:text-green-300 space-y-1">
+              <div>עודכנו <strong>{successData.sites.length}</strong> אתרים</div>
               <div>עודכנו <strong>{successData.updated_cards}</strong> כרטיסי עבודה</div>
               <div>עודכנו <strong>{successData.updated_entries}</strong> רשומות יום</div>
             </div>
-            {successData.employees.length > 0 && (
-              <div className="mt-3 space-y-1">
-                {successData.employees.map((emp) => (
-                  <div key={emp.passport} className="text-xs text-green-700 dark:text-green-400">
-                    {emp.name} — {emp.entries_changed} רשומות
+            {successData.sites.length > 0 && (
+              <div className="mt-3 space-y-1.5 max-h-56 overflow-y-auto">
+                {successData.sites.map((site) => (
+                  <div key={site.site_name} className="text-xs text-green-700 dark:text-green-400">
+                    <span className="font-semibold">{site.site_name}</span>
+                    {' — '}
+                    {site.employees.length} עובדים, {site.updated_entries} רשומות
                   </div>
                 ))}
+              </div>
+            )}
+            {successData.skipped_sites.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-800 text-xs text-slate-500 dark:text-slate-400">
+                לא עודכנו (לא נכללו בקובץ): {successData.skipped_sites.map((s) => s.site_name).join(', ')}
               </div>
             )}
           </div>
@@ -175,6 +196,9 @@ export default function SiteHoursImportModal({ isOpen, onClose, siteId, selected
                   <span className="inline-block bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 rounded px-1.5 py-0.5 font-medium ml-1.5">
                     {ERROR_TYPE_LABELS[err.type] ?? err.type}
                   </span>
+                  {(err.site || err.sheet) && (
+                    <span className="font-semibold ml-1">[{err.site || err.sheet}]</span>
+                  )}
                   {err.message}
                 </li>
               ))}
@@ -193,7 +217,7 @@ export default function SiteHoursImportModal({ isOpen, onClose, siteId, selected
         {/* Actions */}
         <div className="flex gap-3 justify-end pt-1">
           <button
-            onClick={state === 'success' ? handleClose : handleClose}
+            onClick={handleClose}
             className="px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
           >
             {state === 'success' ? 'סגור' : 'ביטול'}
