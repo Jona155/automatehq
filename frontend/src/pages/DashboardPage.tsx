@@ -59,13 +59,10 @@ export default function DashboardPage() {
   const REVIEW_PAGE_SIZE = 5;
   const [reviewPage, setReviewPage] = useState(0);
   const [missingModal, setMissingModal] = useState<{ siteId: string; siteName: string } | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>(
-    () => (localStorage.getItem('dashboard_view_mode') as ViewMode) || 'kanban'
-  );
+  const [viewMode, setViewMode] = useState<ViewMode>('analytics');
 
   const toggleView = useCallback((mode: ViewMode) => {
     setViewMode(mode);
-    localStorage.setItem('dashboard_view_mode', mode);
   }, []);
 
   useEffect(() => {
@@ -176,42 +173,43 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-col gap-2 md:items-end">
-          <div className="flex items-center gap-3">
-            {/* View toggle */}
-            <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
-              <button
-                onClick={() => toggleView('kanban')}
-                className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-colors ${
-                  viewMode === 'kanban'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm font-medium'
-                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">view_kanban</span>
-                סקירה
-              </button>
-              <button
-                onClick={() => toggleView('analytics')}
-                className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-colors ${
-                  viewMode === 'analytics'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm font-medium'
-                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                }`}
-              >
-                <span className="material-symbols-outlined text-sm">bar_chart</span>
-                ניתוח
-              </button>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500">בחר חודש</label>
-              <MonthPicker value={selectedMonth} onChange={setSelectedMonth} storageKey="dashboard_month" />
-            </div>
+          <div>
+            <label className="text-xs text-slate-500">בחר חודש</label>
+            <MonthPicker value={selectedMonth} onChange={setSelectedMonth} storageKey="dashboard_month" />
           </div>
           {lastUpdated && (
             <span className="text-[11px] text-slate-400">עודכן לאחרונה: {lastUpdated}</span>
           )}
         </div>
       </header>
+
+      {/* View tabs */}
+      <div className="border-b border-slate-200 dark:border-slate-700">
+        <nav className="flex gap-1">
+          <button
+            onClick={() => toggleView('analytics')}
+            className={`flex items-center gap-1.5 -mb-px px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              viewMode === 'analytics'
+                ? 'text-primary border-primary'
+                : 'text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-200'
+            }`}
+          >
+            <span className="material-symbols-outlined text-base">bar_chart</span>
+            ניתוח
+          </button>
+          <button
+            onClick={() => toggleView('kanban')}
+            className={`flex items-center gap-1.5 -mb-px px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              viewMode === 'kanban'
+                ? 'text-primary border-primary'
+                : 'text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-200'
+            }`}
+          >
+            <span className="material-symbols-outlined text-base">view_kanban</span>
+            סקירה
+          </button>
+        </nav>
+      </div>
 
       {/* Loading skeleton */}
       {isLoading && (
