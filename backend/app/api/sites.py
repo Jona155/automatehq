@@ -174,7 +174,10 @@ def _safe_sheet_name(value: str, existing: set) -> str:
     base = ' '.join(base.split()).strip()
     if not base:
         base = 'Site'
-    base = base[:31]
+    # Trailing spaces are stripped by Excel when a workbook is saved, so a sheet
+    # title that ends mid-word at the 31-char limit must be rstripped here to
+    # stay round-trippable on re-import.
+    base = base[:31].rstrip()
     candidate = base
     counter = 2
     while candidate in existing:

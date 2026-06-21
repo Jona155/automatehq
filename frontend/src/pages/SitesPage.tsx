@@ -16,6 +16,7 @@ import LoadingIndicator from '../components/LoadingIndicator';
 import { downloadBlobFile } from '../utils/fileDownload';
 import BatchUploadModal from '../components/BatchUploadModal';
 import SiteTariffImportModal from '../components/SiteTariffImportModal';
+import AllSitesHoursImportModal from '../components/AllSitesHoursImportModal';
 import { downloadSiteTariffsExport } from '../api/siteTariffImport';
 import { getDefaultMonth } from '../utils/monthUtils';
 
@@ -131,6 +132,7 @@ export default function SitesPage() {
   const [salaryExportError, setSalaryExportError] = useState<string | null>(null);
   const [globalUploadOpen, setGlobalUploadOpen] = useState(false);
   const [tariffImportOpen, setTariffImportOpen] = useState(false);
+  const [hoursImportOpen, setHoursImportOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [isTariffExporting, setIsTariffExporting] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
@@ -467,6 +469,13 @@ export default function SitesPage() {
             >
               <span className="material-symbols-outlined text-base">upload_file</span>
               ייבוא פרטי אתר
+            </button>
+            <button
+              onClick={() => setHoursImportOpen(true)}
+              className="h-9 px-3.5 inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+            >
+              <span className="material-symbols-outlined text-base">upload_file</span>
+              ייבוא סיכום שעות
             </button>
             <button
               onClick={() => setGlobalUploadOpen(true)}
@@ -917,6 +926,15 @@ export default function SitesPage() {
         onApplied={() => {
           fetchSites();
           showToast('פרטי האתרים עודכנו בהצלחה', 'success');
+        }}
+      />
+      <AllSitesHoursImportModal
+        isOpen={hoursImportOpen}
+        onClose={() => setHoursImportOpen(false)}
+        defaultMonth={summaryExportMonth}
+        onSuccess={() => {
+          fetchSites();
+          showToast('השעות עודכנו בהצלחה', 'success');
         }}
       />
     </div>
