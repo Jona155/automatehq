@@ -30,6 +30,7 @@ export interface Site {
   employee_count?: number;
   responsible_employee_id?: string | null;
   field_manager_id?: string | null;
+  field_manager_name?: string | null;
   hourly_tariff?: number | null;
   contractor_emails?: string[] | null;
   contractor_phone_number?: string | null;
@@ -96,6 +97,15 @@ export interface SiteTariffImportRow {
   new_phone: string | null;
   current_emails: string[] | null;
   new_emails: string[] | null;
+  field_manager_present: boolean;
+  current_field_manager_id: string | null;
+  current_field_manager_name: string | null;
+  current_field_manager_phone: string | null;
+  new_field_manager_id: string | null;
+  new_field_manager_name: string | null;
+  new_field_manager_phone: string | null;
+  field_manager_phone_input: string | null;
+  field_manager_unresolved: boolean;
   action: 'update' | 'no_change' | 'error';
   errors: string[];
   warnings: string[];

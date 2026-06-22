@@ -786,24 +786,33 @@ def get_sites():
         # Always scope to current business
         business_id = g.business_id
         
+        # Resolve assigned field-manager names so the sites table can show them
+        # without an extra round-trip per row.
+        managers_by_id = {str(u.id): u.full_name for u in user_repo.get_all_for_business(business_id)}
+
+        def _with_field_manager_name(site_dict):
+            fm_id = site_dict.get('field_manager_id')
+            site_dict['field_manager_name'] = managers_by_id.get(str(fm_id)) if fm_id else None
+            return site_dict
+
         if include_counts:
             if only_active:
                 results = repo.get_active_with_employee_count(business_id)
             else:
                 results = repo.get_with_employee_count(business_id)
-                
+
             data = []
             for item in results:
                 site_dict = model_to_dict(item['site'])
                 site_dict['employee_count'] = item['employee_count']
-                data.append(site_dict)
+                data.append(_with_field_manager_name(site_dict))
         else:
             if only_active:
                 sites = repo.get_active_sites(business_id)
             else:
                 sites = repo.get_all(filters={'business_id': business_id})
-            data = models_to_list(sites)
-            
+            data = [_with_field_manager_name(d) for d in models_to_list(sites)]
+
         return api_response(data=data)
     except Exception as e:
         logger.exception("Failed to get sites")

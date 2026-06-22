@@ -620,6 +620,12 @@ export default function SitesPage() {
                       </span>
                     </th>
                     <th
+                      style={{ width: 180 }}
+                      className="px-4 py-3 text-[11.5px] font-medium tracking-wide select-none border-b border-slate-200 dark:border-slate-700/60 text-slate-500 dark:text-slate-400"
+                    >
+                      מנהל שדה
+                    </th>
+                    <th
                       onClick={() => handleSort('employee_count')}
                       style={{ width: 130 }}
                       className={`px-4 py-3 text-[11.5px] font-medium tracking-wide cursor-pointer select-none border-b border-slate-200 dark:border-slate-700/60 hover:bg-slate-100/60 dark:hover:bg-slate-800/80 transition-colors ${
@@ -668,6 +674,18 @@ export default function SitesPage() {
                         <td className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/40">
                           <CodeCell code={site.site_code} />
                         </td>
+                        <td className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/40 text-[13.5px]">
+                          {site.field_manager_name ? (
+                            <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                              <span className="material-symbols-outlined text-base text-slate-400 dark:text-slate-500">
+                                person
+                              </span>
+                              {site.field_manager_name}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 dark:text-slate-500 italic text-[12.5px]">לא הוגדר</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/40 tabular-nums">
                           <span className="inline-flex items-baseline gap-1">
                             <span
@@ -702,7 +720,7 @@ export default function SitesPage() {
                   })}
                   {sortedSites.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="p-12 text-center text-slate-500">
+                      <td colSpan={6} className="p-12 text-center text-slate-500">
                         {hasActiveFilter ? 'לא נמצאו אתרים התואמים את הסינון' : 'לא נמצאו אתרים'}
                       </td>
                     </tr>
