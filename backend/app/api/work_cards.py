@@ -809,7 +809,9 @@ def export_work_cards():
 
             if card.employee:
                 id_number = card.employee.passport_id or str(card.employee.id)
-                safe_employee = safe_label(card.employee.full_name) or str(card.employee.id)
+                # Use only the first name in the filename.
+                first_name = (card.employee.full_name or '').split()[0] if card.employee.full_name else ''
+                safe_employee = safe_label(first_name) or str(card.employee.id)
                 safe_id_number = safe_label(id_number) or str(card.employee.id)
                 base_name = f"{safe_employee}_{safe_id_number}"
             else:

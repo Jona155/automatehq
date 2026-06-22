@@ -790,19 +790,30 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     setMonthlyTotalInput(savedMonthlyTotalString);
   }, [selectedCard?.id, savedMonthlyTotalString]);
 
-  // Re-seed the per-card comment only when the selected card itself changes.
-  const savedNote = selectedCard?.notes ?? '';
+  // The comment belongs to the specific card image currently being viewed (a
+  // group can hold several cards for one employee — each has its own note),
+  // falling back to the selected card when there's no image strip.
+  const activeCard = useMemo(() => {
+    if (activeImage && selectedGroup) {
+      const found = selectedGroup.cards.find((c) => c.id === activeImage.cardId);
+      if (found) return found;
+    }
+    return selectedCard;
+  }, [activeImage, selectedGroup, selectedCard]);
+
+  // Re-seed the per-card comment only when the viewed card changes.
+  const savedNote = activeCard?.notes ?? '';
   useEffect(() => {
     setNoteInput(savedNote);
-  }, [selectedCard?.id, savedNote]);
+  }, [activeCard?.id, savedNote]);
 
   const noteDirty = noteInput.trim() !== savedNote.trim();
 
   // Persist the comment. The card's `notes` field already exists end-to-end;
   // this just exposes it for editing during review.
   const saveNote = useCallback(async () => {
-    if (!selectedCard || !noteDirty || isSavingNote) return;
-    const cardId = selectedCard.id;
+    if (!activeCard || !noteDirty || isSavingNote) return;
+    const cardId = activeCard.id;
     const value = noteInput.trim() ? noteInput.trim() : null;
     setIsSavingNote(true);
     try {
@@ -816,7 +827,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     } finally {
       setIsSavingNote(false);
     }
-  }, [selectedCard, noteDirty, isSavingNote, noteInput, showToast]);
+  }, [activeCard, noteDirty, isSavingNote, noteInput, showToast]);
 
   // Derive dirtiness directly from input vs saved so it can never desync.
   const monthlyTotalDirty = useMemo(() => {
@@ -2135,40 +2146,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                   </>
                 )}
               </div>
-              {/* Card comment — free-text note for this work card, shown in the
-                  exported image filename. Full-width band so it's easy to find. */}
-              <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-amber-50/60 dark:bg-amber-900/10">
-                <label
-                  htmlFor="work-card-note-input"
-                  className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-base text-amber-600 dark:text-amber-400">comment</span>
-                    הערה לכרטיס
-                    <span className="text-slate-400 font-normal">(תופיע בשם הקובץ בעת הורדת התמונות)</span>
-                  </span>
-                  {noteDirty && (
-                    <button
-                      type="button"
-                      onClick={saveNote}
-                      disabled={isSavingNote}
-                      className="px-2.5 py-1 rounded-lg bg-primary text-white text-[11px] font-semibold hover:bg-primary/90 disabled:opacity-50"
-                    >
-                      {isSavingNote ? 'שומר...' : 'שמור הערה'}
-                    </button>
-                  )}
-                </label>
-                <textarea
-                  id="work-card-note-input"
-                  value={noteInput}
-                  onChange={(e) => setNoteInput(e.target.value)}
-                  onBlur={saveNote}
-                  rows={2}
-                  placeholder="הוסף הערה לכרטיס זה..."
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
-                />
-              </div>
-
               <div className="flex flex-col lg:flex-row lg:h-[640px]">
                 {/* Image Panel */}
                 <div className={`${imagePanelWidth} relative group`}>
@@ -2330,6 +2307,45 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         </div>
                       )}
                     </div>
+                  </div>
+
+                  {/* Per-card comment — note for THIS card image (a group can hold
+                      several cards; the note follows the active thumbnail) and is
+                      embedded in the exported image filename. */}
+                  <div className="shrink-0 border-t border-slate-200 dark:border-slate-700 bg-amber-50/60 dark:bg-amber-900/10 px-3 py-2">
+                    <label
+                      htmlFor="work-card-note-input"
+                      className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5"
+                    >
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <span className="material-symbols-outlined text-base text-amber-600 dark:text-amber-400">comment</span>
+                        <span className="truncate">
+                          הערה לכרטיס
+                          {groupImages.length > 1 && (
+                            <span className="text-slate-400 font-normal"> (כרטיס {activeImageIndex + 1} מתוך {groupImages.length})</span>
+                          )}
+                        </span>
+                      </span>
+                      {noteDirty && (
+                        <button
+                          type="button"
+                          onClick={saveNote}
+                          disabled={isSavingNote}
+                          className="shrink-0 px-2.5 py-1 rounded-lg bg-primary text-white text-[11px] font-semibold hover:bg-primary/90 disabled:opacity-50"
+                        >
+                          {isSavingNote ? 'שומר...' : 'שמור הערה'}
+                        </button>
+                      )}
+                    </label>
+                    <textarea
+                      id="work-card-note-input"
+                      value={noteInput}
+                      onChange={(e) => setNoteInput(e.target.value)}
+                      onBlur={saveNote}
+                      rows={2}
+                      placeholder="הוסף הערה לכרטיס זה (תופיע בשם הקובץ בהורדה)..."
+                      className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+                    />
                   </div>
                 </div>
                 </div>
