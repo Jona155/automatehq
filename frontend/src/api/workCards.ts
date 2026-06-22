@@ -1,5 +1,5 @@
 import client from './client';
-import type { WorkCard, DayEntry, EmployeeUploadStatus, MatrixData, WorkCardExtraction, Employee, WorkCardMonthlyBreakdown } from '../types';
+import type { WorkCard, DayEntry, EmployeeUploadStatus, MatrixData, WorkCardExtraction, Employee, WorkCardMonthlyBreakdown, EmployeeMonthGroupResponse } from '../types';
 
 // Helper to normalize month format: converts YYYY-MM to YYYY-MM-01 if needed
 const normalizeMonthFormat = (month: string): string => {
@@ -92,6 +92,9 @@ export interface ApproveWorkCardOptions {
   override_conflict_days?: number[];
   confirm_override_approved?: boolean;
   auto_keep_approved?: boolean;
+  // When approving from the employee-month view, mark the remaining sibling
+  // cards for this employee/month as superseded so they no longer read pending.
+  supersede_siblings?: boolean;
 }
 
 export const approveWorkCard = async (cardId: string, userId: string, options?: ApproveWorkCardOptions) => {
@@ -172,6 +175,25 @@ export const downloadWorkCardsExport = async (params: WorkCardExportParams): Pro
 // Get per-card monthly hours breakdown for the card's employee/site/month
 export const getWorkCardMonthlyBreakdown = async (cardId: string) => {
   const response = await client.get<{ data: WorkCardMonthlyBreakdown }>(`/work_cards/${cardId}/monthly-breakdown`);
+  return response.data.data;
+};
+
+// Get the merged employee-month review payload: one editable table (the primary
+// card's merged day entries) plus the list of every card in the group so the UI
+// can show all their images as reference.
+export const getEmployeeMonthGroup = async (params: {
+  employee_id: string;
+  month: string;
+  site_id?: string;
+}): Promise<EmployeeMonthGroupResponse> => {
+  const queryParams: Record<string, string> = {
+    employee_id: params.employee_id,
+    month: normalizeMonthFormat(params.month),
+  };
+  if (params.site_id) queryParams.site_id = params.site_id;
+  const response = await client.get<{ data: EmployeeMonthGroupResponse }>('/work_cards/employee-month', {
+    params: queryParams,
+  });
   return response.data.data;
 };
 

@@ -98,21 +98,55 @@ def _resolve_conflict_day(current_entry, previous_entry, previous_status, day_in
     return 'take_previous'
 
 
-def _get_previous_card_context(card: Any) -> Tuple[Optional[Any], Dict[int, Any]]:
+def _sibling_entry_outranks(candidate: Dict[str, Any], existing: Dict[str, Any]) -> bool:
+    """Whether `candidate` should win a day over `existing` when consolidating
+    sibling cards: an APPROVED card's value (the locked source of truth) beats a
+    non-approved one; within the same approval tier the latest card wins."""
+    if candidate['is_approved'] != existing['is_approved']:
+        return candidate['is_approved']
+    ca, ea = candidate.get('created_at'), existing.get('created_at')
+    if ca is None or ea is None:
+        return False
+    return ca > ea
+
+
+def _get_sibling_day_context(card: Any) -> Dict[int, Dict[str, Any]]:
+    """Consolidate EVERY other work card for this employee/month/site into a
+    per-day "previous" view. For each day the authoritative entry comes from an
+    APPROVED sibling when one exists (locked source of truth), otherwise from the
+    latest sibling to record that day. This single source backs both the merged
+    review table and the approval carry-forward, so what the admin sees is what
+    gets approved — and all sibling cards (not just the immediate previous one)
+    fold into the approved month snapshot.
+
+    Returns {day_of_month: {entry, is_approved, card_id, card_status, created_at}}.
+    """
     if not card.employee_id:
-        return None, {}
-    previous_card = repo.get_previous_card_for_employee_month(
-        employee_id=card.employee_id,
-        month=card.processing_month,
-        business_id=card.business_id,
-        current_card_id=card.id,
-        site_id=card.site_id,
-        include_day_entries=True,
-    )
-    if not previous_card:
-        return None, {}
-    previous_entries_by_day = {entry.day_of_month: entry for entry in previous_card.day_entries}
-    return previous_card, previous_entries_by_day
+        return {}
+    sibling_cards = [
+        c for c in repo.get_for_monthly_breakdown(
+            employee_id=card.employee_id,
+            month=card.processing_month,
+            business_id=card.business_id,
+            site_id=card.site_id,
+        )
+        if c.id != card.id
+    ]
+    by_day: Dict[int, Dict[str, Any]] = {}
+    for sibling in sibling_cards:
+        is_approved = sibling.review_status == 'APPROVED'
+        for entry in sibling.day_entries:
+            candidate = {
+                'entry': entry,
+                'is_approved': is_approved,
+                'card_id': sibling.id,
+                'card_status': sibling.review_status,
+                'created_at': sibling.created_at,
+            }
+            existing = by_day.get(entry.day_of_month)
+            if existing is None or _sibling_entry_outranks(candidate, existing):
+                by_day[entry.day_of_month] = candidate
+    return by_day
 
 @work_cards_bp.route('/manual', methods=['POST'])
 @token_required
@@ -500,6 +534,10 @@ def approve_work_card(card_id):
     override_conflict_days = data.get('override_conflict_days') or []
     confirm_override_approved = bool(data.get('confirm_override_approved', False))
     auto_keep_approved = bool(data.get('auto_keep_approved', False))
+    # Employee-month review approves the whole group at once: once the primary
+    # card's merged table is approved, the leftover sibling cards are superseded
+    # so the employee no longer reads as pending anywhere.
+    supersede_siblings = bool(data.get('supersede_siblings', False))
     
     if not user_id:
         return api_response(status_code=400, message="User ID is required for approval", error="Bad Request")
@@ -518,17 +556,17 @@ def approve_work_card(card_id):
         override_days.add(item)
 
     try:
-        previous_card, previous_entries_by_day = _get_previous_card_context(card)
+        # Consolidate EVERY sibling card (not just the immediate previous one) so
+        # all of them fold into this card's approved month snapshot.
+        prev_by_day = _get_sibling_day_context(card)
         current_entries = day_entry_repo.get_by_work_card(card.id)
         current_entries_by_day = {entry.day_of_month: entry for entry in current_entries}
 
         approved_conflict_days = set()
-        if previous_card:
-            for day, previous_entry in previous_entries_by_day.items():
-                current_entry = current_entries_by_day.get(day)
-                if current_entry and not _entries_equal(current_entry, previous_entry):
-                    if previous_card.review_status == 'APPROVED':
-                        approved_conflict_days.add(day)
+        for day, prev in prev_by_day.items():
+            current_entry = current_entries_by_day.get(day)
+            if current_entry and prev['is_approved'] and not _entries_equal(current_entry, prev['entry']):
+                approved_conflict_days.add(day)
 
         requested_approved_overrides = override_days.intersection(approved_conflict_days)
         if approved_conflict_days and not confirm_override_approved and not auto_keep_approved:
@@ -544,56 +582,68 @@ def approve_work_card(card_id):
                 }
             )
 
-        # Resolve previous-vs-latest day slot outcomes before approving this card.
-        if previous_card:
-            for day, previous_entry in previous_entries_by_day.items():
-                current_entry = current_entries_by_day.get(day)
-                outcome = _resolve_conflict_day(
-                    current_entry,
-                    previous_entry,
-                    previous_card.review_status,
-                    day in override_days,
-                )
+        # Resolve each sibling day against this card before approving it.
+        for day, prev in prev_by_day.items():
+            previous_entry = prev['entry']
+            current_entry = current_entries_by_day.get(day)
+            outcome = _resolve_conflict_day(
+                current_entry,
+                previous_entry,
+                'APPROVED' if prev['is_approved'] else prev['card_status'],
+                day in override_days,
+            )
 
-                if outcome == 'noop':
-                    continue
-                if outcome == 'take_latest':
-                    day_entry_repo.delete(previous_entry.id)
-                elif outcome == 'take_previous':
-                    # Keep the approved previous value; replace the latest entry.
+            if outcome == 'noop':
+                continue
+            if outcome == 'take_latest':
+                # This card's value wins — drop the sibling's entry for this day.
+                day_entry_repo.delete(previous_entry.id)
+            elif outcome == 'take_previous':
+                # Keep the approved sibling value; replace this card's entry.
+                if current_entry is not None:
                     day_entry_repo.delete(current_entry.id)
-                    current_entries_by_day.pop(day, None)
-                    cloned = day_entry_repo.create(
-                        work_card_id=card.id,
-                        day_of_month=day,
-                        from_time=previous_entry.from_time,
-                        to_time=previous_entry.to_time,
-                        total_hours=previous_entry.total_hours,
-                        day_status=previous_entry.day_status,
-                        attributed_site_id=previous_entry.attributed_site_id,
-                        source='CARRIED_FORWARD',
-                        is_valid=True
-                    )
-                    current_entries_by_day[day] = cloned
-                elif outcome == 'carry_forward':
-                    # Carry forward previous values so approved latest card has full month snapshot.
-                    cloned = day_entry_repo.create(
-                        work_card_id=card.id,
-                        day_of_month=day,
-                        from_time=previous_entry.from_time,
-                        to_time=previous_entry.to_time,
-                        total_hours=previous_entry.total_hours,
-                        day_status=previous_entry.day_status,
-                        attributed_site_id=previous_entry.attributed_site_id,
-                        source='CARRIED_FORWARD',
-                        is_valid=True
-                    )
-                    current_entries_by_day[day] = cloned
+                current_entries_by_day.pop(day, None)
+                cloned = day_entry_repo.create(
+                    work_card_id=card.id,
+                    day_of_month=day,
+                    from_time=previous_entry.from_time,
+                    to_time=previous_entry.to_time,
+                    total_hours=previous_entry.total_hours,
+                    day_status=previous_entry.day_status,
+                    attributed_site_id=previous_entry.attributed_site_id,
+                    source='CARRIED_FORWARD',
+                    is_valid=True
+                )
+                current_entries_by_day[day] = cloned
+            elif outcome == 'carry_forward':
+                # Sibling-only day — clone it in so the approved card holds the full month.
+                cloned = day_entry_repo.create(
+                    work_card_id=card.id,
+                    day_of_month=day,
+                    from_time=previous_entry.from_time,
+                    to_time=previous_entry.to_time,
+                    total_hours=previous_entry.total_hours,
+                    day_status=previous_entry.day_status,
+                    attributed_site_id=previous_entry.attributed_site_id,
+                    source='CARRIED_FORWARD',
+                    is_valid=True
+                )
+                current_entries_by_day[day] = cloned
 
         approved_card = repo.approve_card(card_id, user_id, g.business_id)
         if not approved_card:
             return api_response(status_code=404, message="Work card not found", error="Not Found")
-            
+
+        if supersede_siblings and approved_card.employee_id:
+            repo.supersede_sibling_cards(
+                primary_card_id=approved_card.id,
+                employee_id=approved_card.employee_id,
+                month=approved_card.processing_month,
+                business_id=g.business_id,
+                user_id=user_id,
+                site_id=approved_card.site_id,
+            )
+
         return api_response(data=model_to_dict(approved_card), message="Work card approved successfully")
     except Exception as e:
         return api_response(status_code=500, message="Failed to approve work card", error=str(e))
@@ -664,40 +714,66 @@ def get_work_card_file(card_id):
 @token_required
 @role_required('ADMIN')
 def export_work_cards():
-    """Export one work card image per employee for a site and month as a ZIP file."""
+    """Export work card images for a site and month as a ZIP file.
+
+    Two selection modes:
+      - card_ids:     export exactly these cards (lets the user pick specific
+                      cards, including multiple per employee).
+      - employee_ids: legacy mode — one latest (or latest-approved) card per
+                      employee. Used when card_ids is not provided.
+    """
     site_id = request.args.get('site_id')
     month_str = request.args.get('month')  # YYYY-MM-DD
+    card_ids_str = request.args.get('card_ids')
     employee_ids_str = request.args.get('employee_ids')
     approved_only = request.args.get('approved_only', 'true').lower() == 'true'
 
     if not site_id or not month_str:
         return api_response(status_code=400, message="site_id and month are required", error="Bad Request")
 
-    if not employee_ids_str:
-        return api_response(status_code=400, message="employee_ids is required", error="Bad Request")
+    if not card_ids_str and not employee_ids_str:
+        return api_response(status_code=400, message="card_ids or employee_ids is required", error="Bad Request")
 
     try:
         month = datetime.strptime(month_str, '%Y-%m-%d').date()
     except ValueError:
         return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
 
-    parsed_employee_ids = []
-    for emp_id in [item.strip() for item in employee_ids_str.split(',') if item.strip()]:
-        try:
-            parsed_employee_ids.append(UUID(emp_id))
-        except ValueError:
-            return api_response(status_code=400, message="Invalid employee_id format", error="Bad Request")
+    if card_ids_str:
+        parsed_card_ids = []
+        for raw_id in [item.strip() for item in card_ids_str.split(',') if item.strip()]:
+            try:
+                parsed_card_ids.append(UUID(raw_id))
+            except ValueError:
+                return api_response(status_code=400, message="Invalid card_id format", error="Bad Request")
 
-    if not parsed_employee_ids:
-        return api_response(status_code=400, message="employee_ids is required", error="Bad Request")
+        if not parsed_card_ids:
+            return api_response(status_code=400, message="card_ids is required", error="Bad Request")
 
-    cards = repo.get_latest_per_employee_for_export(
-        site_id=site_id,
-        month=month,
-        business_id=g.business_id,
-        employee_ids=parsed_employee_ids,
-        approved_only=approved_only,
-    )
+        cards = repo.get_by_ids_for_export(
+            card_ids=parsed_card_ids,
+            site_id=site_id,
+            month=month,
+            business_id=g.business_id,
+        )
+    else:
+        parsed_employee_ids = []
+        for emp_id in [item.strip() for item in employee_ids_str.split(',') if item.strip()]:
+            try:
+                parsed_employee_ids.append(UUID(emp_id))
+            except ValueError:
+                return api_response(status_code=400, message="Invalid employee_id format", error="Bad Request")
+
+        if not parsed_employee_ids:
+            return api_response(status_code=400, message="employee_ids is required", error="Bad Request")
+
+        cards = repo.get_latest_per_employee_for_export(
+            site_id=site_id,
+            month=month,
+            business_id=g.business_id,
+            employee_ids=parsed_employee_ids,
+            approved_only=approved_only,
+        )
 
     def safe_label(value: str) -> str:
         if not value:
@@ -719,6 +795,7 @@ def export_work_cards():
     folder_name = f"{site_label}_{month.strftime('%Y-%m')}_work_cards"
 
     zip_buffer = BytesIO()
+    used_names: Set[str] = set()
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for card in cards:
             if not (card.files and card.files.image_bytes):
@@ -734,9 +811,26 @@ def export_work_cards():
                 id_number = card.employee.passport_id or str(card.employee.id)
                 safe_employee = safe_label(card.employee.full_name) or str(card.employee.id)
                 safe_id_number = safe_label(id_number) or str(card.employee.id)
-                file_name = f"{safe_employee}_{safe_id_number}{extension}"
+                base_name = f"{safe_employee}_{safe_id_number}"
             else:
-                file_name = f"unassigned_{card.id}{extension}"
+                base_name = f"unassigned_{card.id}"
+
+            # Embed the review comment in the filename so it travels with the
+            # image. Hebrew letters survive safe_label (Unicode category L).
+            comment_label = safe_label(card.notes or '')[:60].strip('_')
+            if comment_label:
+                base_name = f"{base_name}__{comment_label}"
+
+            # Multiple cards can now share a base name (same employee, several
+            # cards). Disambiguate so zip entries never overwrite each other.
+            file_name = f"{base_name}{extension}"
+            if file_name in used_names:
+                file_name = f"{base_name}_{card.created_at.strftime('%Y-%m-%d')}{extension}"
+                suffix = 2
+                while file_name in used_names:
+                    file_name = f"{base_name}_{card.created_at.strftime('%Y-%m-%d')}_{suffix}{extension}"
+                    suffix += 1
+            used_names.add(file_name)
 
             file_path = f"{folder_name}/{file_name}"
             zipf.writestr(file_path, card.files.image_bytes)
@@ -750,82 +844,166 @@ def export_work_cards():
         download_name=download_name
     )
 
+def _serialize_day_entries_for_card(card: Any) -> list:
+    """Build the merged month view of day entries for a single work card.
+
+    Returns the card's own day entries with conflict/lock metadata relative to
+    its immediate-previous sibling card, plus previous-only days appended for
+    full-month context. Days that conflict with an APPROVED prior card are
+    returned locked and with the approved value substituted in (source of
+    truth); every other day shows the latest card's value. Pure of HTTP — the
+    same logic backs both the per-card and employee-month endpoints.
+    """
+    entries = day_entry_repo.get_by_work_card(card.id)
+    prev_by_day = _get_sibling_day_context(card)
+    current_entries_by_day = {entry.day_of_month: entry for entry in entries}
+    data = []
+
+    for entry in entries:
+        row = model_to_dict(entry)
+        row['has_conflict'] = False
+        row['conflict_type'] = None
+        row['is_locked'] = False
+        row['previous_work_card_id'] = None
+        row['previous_work_card_status'] = None
+        row['previous_entry'] = None
+        row['locked_from_previous'] = False
+        row['suggested_entry'] = None
+
+        prev = prev_by_day.get(entry.day_of_month)
+        if prev and not _entries_equal(entry, prev['entry']):
+            previous_entry = prev['entry']
+            row['has_conflict'] = True
+            row['conflict_type'] = 'WITH_APPROVED' if prev['is_approved'] else 'WITH_PENDING'
+            row['is_locked'] = prev['is_approved']
+            row['previous_work_card_id'] = str(prev['card_id'])
+            row['previous_work_card_status'] = prev['card_status']
+            row['previous_entry'] = model_to_dict(previous_entry)
+
+            if prev['is_approved']:
+                row['suggested_entry'] = {
+                    'from_time': _normalize_time_value(entry.from_time),
+                    'to_time': _normalize_time_value(entry.to_time),
+                    'total_hours': float(entry.total_hours) if entry.total_hours is not None else None,
+                    'day_status': entry.day_status,
+                }
+                row['from_time'] = _normalize_time_value(previous_entry.from_time)
+                row['to_time'] = _normalize_time_value(previous_entry.to_time)
+                row['total_hours'] = float(previous_entry.total_hours) if previous_entry.total_hours is not None else None
+                row['day_status'] = previous_entry.day_status
+                row['attributed_site_id'] = str(previous_entry.attributed_site_id) if previous_entry.attributed_site_id else None
+
+        data.append(row)
+
+    # Show sibling-only days even when absent from this card so review has full-month context.
+    for day, prev in prev_by_day.items():
+        if day in current_entries_by_day:
+            continue
+        previous_entry = prev['entry']
+        row = model_to_dict(previous_entry)
+        row['work_card_id'] = str(card.id)
+        row['source'] = (
+            'LOCKED_PREVIOUS_APPROVED'
+            if prev['is_approved']
+            else 'PREVIOUS_CARRIED_CONTEXT'
+        )
+        row['has_conflict'] = False
+        row['conflict_type'] = None
+        row['is_locked'] = prev['is_approved']
+        row['locked_from_previous'] = prev['is_approved']
+        row['previous_work_card_id'] = str(prev['card_id'])
+        row['previous_work_card_status'] = prev['card_status']
+        row['previous_entry'] = model_to_dict(previous_entry)
+        row['suggested_entry'] = None
+        data.append(row)
+
+    data.sort(key=lambda item: item.get('day_of_month') or 0)
+    return data
+
+
 @work_cards_bp.route('/<uuid:card_id>/day-entries', methods=['GET'])
 @token_required
 def get_day_entries(card_id):
-    """Get all day entries for a work card."""
+    """Get all day entries for a work card (merged month view)."""
     # Verify ownership
     card = repo.get_by_id(card_id)
     if not card or card.business_id != g.business_id:
         return api_response(status_code=404, message="Work card not found", error="Not Found")
-    
+
     try:
-        entries = day_entry_repo.get_by_work_card(card_id)
-        previous_card, previous_entries_by_day = _get_previous_card_context(card)
-        current_entries_by_day = {entry.day_of_month: entry for entry in entries}
-        data = []
-
-        for entry in entries:
-            row = model_to_dict(entry)
-            row['has_conflict'] = False
-            row['conflict_type'] = None
-            row['is_locked'] = False
-            row['previous_work_card_id'] = None
-            row['previous_work_card_status'] = None
-            row['previous_entry'] = None
-            row['locked_from_previous'] = False
-            row['suggested_entry'] = None
-
-            previous_entry = previous_entries_by_day.get(entry.day_of_month)
-            if previous_card and previous_entry and not _entries_equal(entry, previous_entry):
-                row['has_conflict'] = True
-                row['conflict_type'] = 'WITH_APPROVED' if previous_card.review_status == 'APPROVED' else 'WITH_PENDING'
-                row['is_locked'] = previous_card.review_status == 'APPROVED'
-                row['previous_work_card_id'] = str(previous_card.id)
-                row['previous_work_card_status'] = previous_card.review_status
-                row['previous_entry'] = model_to_dict(previous_entry)
-
-                if previous_card.review_status == 'APPROVED':
-                    row['suggested_entry'] = {
-                        'from_time': _normalize_time_value(entry.from_time),
-                        'to_time': _normalize_time_value(entry.to_time),
-                        'total_hours': float(entry.total_hours) if entry.total_hours is not None else None,
-                        'day_status': entry.day_status,
-                    }
-                    row['from_time'] = _normalize_time_value(previous_entry.from_time)
-                    row['to_time'] = _normalize_time_value(previous_entry.to_time)
-                    row['total_hours'] = float(previous_entry.total_hours) if previous_entry.total_hours is not None else None
-                    row['day_status'] = previous_entry.day_status
-                    row['attributed_site_id'] = str(previous_entry.attributed_site_id) if previous_entry.attributed_site_id else None
-
-            data.append(row)
-
-        # Show previous slots even if not present in latest card so review has full-month context.
-        if previous_card:
-            for day, previous_entry in previous_entries_by_day.items():
-                if day in current_entries_by_day:
-                    continue
-                row = model_to_dict(previous_entry)
-                row['work_card_id'] = str(card.id)
-                row['source'] = (
-                    'LOCKED_PREVIOUS_APPROVED'
-                    if previous_card.review_status == 'APPROVED'
-                    else 'PREVIOUS_CARRIED_CONTEXT'
-                )
-                row['has_conflict'] = False
-                row['conflict_type'] = None
-                row['is_locked'] = previous_card.review_status == 'APPROVED'
-                row['locked_from_previous'] = previous_card.review_status == 'APPROVED'
-                row['previous_work_card_id'] = str(previous_card.id)
-                row['previous_work_card_status'] = previous_card.review_status
-                row['previous_entry'] = model_to_dict(previous_entry)
-                row['suggested_entry'] = None
-                data.append(row)
-
-        data.sort(key=lambda item: item.get('day_of_month') or 0)
-        return api_response(data=data)
+        return api_response(data=_serialize_day_entries_for_card(card))
     except Exception as e:
         return api_response(status_code=500, message="Failed to retrieve day entries", error=str(e))
+
+
+def _pick_primary_card(cards: list):
+    """Choose the card that owns the editable employee-month table.
+
+    The latest non-APPROVED card wins (that's the one still being reviewed);
+    if every card is approved, the latest overall. `cards` is assumed sorted
+    newest-first (as get_group_cards returns).
+    """
+    if not cards:
+        return None
+    for card in cards:
+        if card.review_status != 'APPROVED':
+            return card
+    return cards[0]
+
+
+@work_cards_bp.route('/employee-month', methods=['GET'])
+@token_required
+def get_employee_month_group():
+    """Return the merged employee-month review payload: one editable table
+    (the primary card's merged day entries) plus the list of every card in the
+    group so the UI can show all their images as reference."""
+    employee_id_str = request.args.get('employee_id')
+    month_str = request.args.get('month')
+    site_id_str = request.args.get('site_id')
+
+    if not employee_id_str or not month_str:
+        return api_response(status_code=400, message="employee_id and month are required", error="Bad Request")
+
+    try:
+        employee_id = UUID(employee_id_str)
+        site_id = UUID(site_id_str) if site_id_str else None
+    except ValueError:
+        return api_response(status_code=400, message="Invalid UUID format", error="Bad Request")
+
+    try:
+        month = datetime.strptime(month_str, '%Y-%m-%d').date()
+    except ValueError:
+        return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
+
+    cards = repo.get_group_cards(
+        employee_id=employee_id,
+        month=month,
+        business_id=g.business_id,
+        site_id=site_id,
+    )
+    if not cards:
+        return api_response(status_code=404, message="No work cards found for this employee/month", error="Not Found")
+
+    primary = _pick_primary_card(cards)
+
+    def _card_summary(card):
+        return {
+            'id': str(card.id),
+            'review_status': card.review_status,
+            'source': card.source,
+            'original_filename': card.original_filename,
+            'created_at': card.created_at.isoformat() if card.created_at else None,
+            'has_file': card.files is not None,
+        }
+
+    payload = {
+        'primary_card_id': str(primary.id),
+        'cards': [_card_summary(c) for c in cards],
+        'day_entries': _serialize_day_entries_for_card(primary),
+        'monthly_breakdown': compute_monthly_breakdown_payload(primary, cards),
+    }
+    return api_response(data=payload)
+
 
 @work_cards_bp.route('/<uuid:card_id>/day-entries', methods=['PUT'])
 @token_required
