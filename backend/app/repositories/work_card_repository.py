@@ -2,10 +2,10 @@ from collections import defaultdict
 from typing import Optional, List
 from uuid import UUID
 from datetime import date
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, defer
 from sqlalchemy import or_
 from .base import BaseRepository
-from ..models.work_cards import WorkCard, WorkCardExtraction
+from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardFile
 from ..models.sites import Employee
 from ..utils import utc_now
 
@@ -113,6 +113,36 @@ class WorkCardRepository(BaseRepository[WorkCard]):
         if site_id is not None:
             query = query.filter(WorkCard.site_id == site_id)
         return query.all()
+
+    def get_group_cards(
+        self,
+        employee_id: UUID,
+        month: date,
+        business_id: UUID,
+        site_id: Optional[UUID] = None,
+    ) -> List[WorkCard]:
+        """
+        Get all work cards for an employee/month/(site) with everything the
+        employee-month review view needs eagerly loaded in one query:
+        day entries, extraction (identity), employee, and file metadata.
+
+        The file's BYTEA `image_bytes` is deferred — the group view only needs
+        to know whether an image exists and its filename; the bytes are fetched
+        lazily per card through the dedicated file download endpoint.
+        """
+        query = self.session.query(WorkCard).options(
+            joinedload(WorkCard.day_entries),
+            joinedload(WorkCard.extraction),
+            joinedload(WorkCard.employee),
+            joinedload(WorkCard.files).defer(WorkCardFile.image_bytes),
+        ).filter(
+            WorkCard.employee_id == employee_id,
+            WorkCard.processing_month == month,
+            WorkCard.business_id == business_id,
+        )
+        if site_id is not None:
+            query = query.filter(WorkCard.site_id == site_id)
+        return query.order_by(WorkCard.created_at.desc()).all()
 
     def get_previous_card_for_employee_month(
         self,
@@ -289,8 +319,47 @@ class WorkCardRepository(BaseRepository[WorkCard]):
         card.approved_by_user_id = user_id
         card.approved_at = utc_now()
         self.session.commit()
-        
+
         return card
+
+    def supersede_sibling_cards(
+        self,
+        primary_card_id: UUID,
+        employee_id: UUID,
+        month: date,
+        business_id: UUID,
+        user_id: UUID,
+        site_id: Optional[UUID] = None,
+    ) -> int:
+        """Mark every other still-pending card for this employee/month/(site) as
+        APPROVED (superseded) once the primary card is approved.
+
+        The employee-month review merges all sibling cards into the primary
+        card's table; after approving that table, leftover NEEDS_REVIEW /
+        NEEDS_ASSIGNMENT siblings would otherwise keep the employee showing as
+        pending in queues and dashboards. The hours matrix already consumes only
+        the rank-1 (newest approved) card, so marking siblings approved does not
+        affect payroll totals. Returns the number of cards updated.
+        """
+        siblings = self.session.query(WorkCard).filter(
+            WorkCard.employee_id == employee_id,
+            WorkCard.processing_month == month,
+            WorkCard.business_id == business_id,
+            WorkCard.id != primary_card_id,
+            WorkCard.review_status.in_(['NEEDS_REVIEW', 'NEEDS_ASSIGNMENT']),
+        )
+        if site_id is not None:
+            siblings = siblings.filter(WorkCard.site_id == site_id)
+
+        now = utc_now()
+        count = 0
+        for sibling in siblings.all():
+            sibling.review_status = 'APPROVED'
+            sibling.approved_by_user_id = user_id
+            sibling.approved_at = now
+            count += 1
+        self.session.commit()
+        return count
     
     def bulk_approve(self, card_ids: List[UUID], user_id: UUID, business_id: UUID) -> int:
         """
@@ -458,6 +527,32 @@ class WorkCardRepository(BaseRepository[WorkCard]):
                     )
                     selected.append(approved_card if approved_card else latest)
         return selected
+
+    def get_by_ids_for_export(
+        self,
+        card_ids: List[UUID],
+        site_id: UUID,
+        month: date,
+        business_id: UUID,
+    ) -> List[WorkCard]:
+        """
+        Get the specific work cards requested for image export, scoped to the
+        given site/month/business for safety. Eager-loads files and employee and
+        preserves the order of the requested card_ids.
+        """
+        cards = (
+            self.session.query(WorkCard)
+            .options(joinedload(WorkCard.files), joinedload(WorkCard.employee))
+            .filter(
+                WorkCard.id.in_(card_ids),
+                WorkCard.site_id == site_id,
+                WorkCard.processing_month == month,
+                WorkCard.business_id == business_id,
+            )
+            .all()
+        )
+        cards_by_id = {card.id: card for card in cards}
+        return [cards_by_id[cid] for cid in card_ids if cid in cards_by_id]
 
     def find_by_hash(self, business_id: UUID, processing_month: date, sha256_hash: str) -> Optional[WorkCard]:
         return (

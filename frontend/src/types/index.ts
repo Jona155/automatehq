@@ -226,6 +226,26 @@ export interface WorkCardMonthlyBreakdown {
   projected_total_hours: number;
 }
 
+// One card in an employee-month group — lightweight summary used to render the
+// reference image strip. Bytes are fetched lazily via getWorkCardFile(id).
+export interface EmployeeMonthGroupCard {
+  id: string;
+  review_status: WorkCard['review_status'];
+  source: string | null;
+  original_filename: string | null;
+  created_at: string | null;
+  has_file: boolean;
+}
+
+// Payload for the employee-month-centric review: one editable table (the
+// primary card's merged day entries) plus every card in the group for images.
+export interface EmployeeMonthGroupResponse {
+  primary_card_id: string;
+  cards: EmployeeMonthGroupCard[];
+  day_entries: DayEntry[];
+  monthly_breakdown: WorkCardMonthlyBreakdown;
+}
+
 export interface MatrixData {
   employees: Employee[];
   matrix: Record<string, Record<number, number>>; // employee_id -> day -> hours

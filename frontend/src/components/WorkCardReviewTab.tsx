@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup, WorkCardMonthlyBreakdown, Site } from '../types';
-import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard, getMissingWorkCardEmployees, createManualWorkCard, getWorkCardMonthlyBreakdown } from '../api/workCards';
+import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard, getMissingWorkCardEmployees, createManualWorkCard, getWorkCardMonthlyBreakdown, getEmployeeMonthGroup } from '../api/workCards';
 import { getEmployees } from '../api/employees';
 import { getSites } from '../api/sites';
 import { getFirstName } from '../utils/nameUtils';
@@ -96,11 +96,6 @@ const formatDate = (iso: string) => {
   return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
 };
 
-const formatDateTime = (iso: string) => {
-  const d = new Date(iso);
-  return `${formatDate(iso)} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-};
-
 const sourceLabel = (source: string) => (({
   ADMIN_SINGLE: 'העלאה ידנית', ADMIN_BATCH: 'העלאה קבוצתית',
   PUBLIC_PORTAL: 'פורטל ציבורי', WHATSAPP: 'וואטסאפ', TELEGRAM: 'טלגרם',
@@ -134,6 +129,16 @@ interface DayEntryRow {
   conflictType: 'WITH_APPROVED' | 'WITH_PENDING' | null;
   lockedFromPrevious: boolean;
   resolvedApprovedConflict: 'KEEP_PREVIOUS' | 'USE_LATEST' | null;
+}
+
+// One reference image in the employee-month strip. Manual ghost cards carry no
+// image (url stays null → placeholder tile); image cards get a blob object URL.
+interface GroupImage {
+  cardId: string;
+  url: string | null;
+  filename: string | null;
+  source: string | null;
+  hasFile: boolean;
 }
 
 interface DayImageZone {
@@ -209,8 +214,16 @@ const useDayImageZoneMapping = (extraction: WorkCardExtraction | null) => {
 
 function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageKey, isAdmin = true, isEmbedded = false, initialCardId }: WorkCardReviewTabProps) {
   const [workCards, setWorkCards] = useState<WorkCard[]>([]);
+  // The review unit is the employee-month group; selectedCard is the group's
+  // primary card (it owns the editable merged table). selectedGroupKey is the
+  // source of truth for what's selected — selectedCard is derived after fetch.
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<WorkCard | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  // All of the group's card images, shown as a reference strip; activeImageIndex
+  // is the one currently in the viewer.
+  const [groupImages, setGroupImages] = useState<GroupImage[]>([]);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [dayEntries, setDayEntries] = useState<DayEntryRow[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [isLoadingCards, setIsLoadingCards] = useState(false);
@@ -230,13 +243,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [missingEmployees, setMissingEmployees] = useState<Employee[]>([]);
   const [isCreatingManualCard, setIsCreatingManualCard] = useState(false);
   const [monthlyTotalInput, setMonthlyTotalInput] = useState<string>('');
+  const [noteInput, setNoteInput] = useState<string>('');
+  const [isSavingNote, setIsSavingNote] = useState(false);
   const [monthlyBreakdown, setMonthlyBreakdown] = useState<WorkCardMonthlyBreakdown | null>(null);
   const [isAssigning, setIsAssigning] = useState(false);
   const [cardSearch, setCardSearch] = useState('');
   const [listFilter, setListFilter] = useState<'all' | 'unassigned' | 'assigned'>('all');
   const [reviewMode, setReviewMode] = useState<ReviewMode>('queue');
   const [showDirtyOnly, setShowDirtyOnly] = useState(false);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [jumpToDay, setJumpToDay] = useState('');
   const [showBulkPanel, setShowBulkPanel] = useState(false);
   const [activeDay, setActiveDay] = useState<number | null>(null);
@@ -268,60 +282,32 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     return () => { cancelled = true; };
   }, []);
 
+  // Resolve a deep-linked card to its employee-month group and select the group
+  // (the group key mirrors the keys built in groupedCards below).
+  const groupKeyForCard = useCallback((card: WorkCard): string => {
+    if (card.employee_id) return `emp:${card.employee_id}`;
+    const passportId = extractionsByCardId[card.id]?.extracted_passport_id;
+    return passportId ? `passport:${passportId}` : `unknown:${card.id}`;
+  }, [extractionsByCardId]);
+
   const initialCardIdRef = useRef(initialCardId);
   useEffect(() => {
     if (!initialCardIdRef.current || !workCards.length) return;
     const match = workCards.find(c => c.id === initialCardIdRef.current);
     if (match) {
-      setSelectedCard(match);
+      setSelectedGroupKey(groupKeyForCard(match));
       initialCardIdRef.current = undefined;
     }
-  }, [workCards]);
+  }, [workCards, groupKeyForCard]);
 
   const handleOpenInReviewMode = () => {
     const cardParam = selectedCard ? `&cardId=${selectedCard.id}` : '';
     navigate(`/${businessCode}/sites/${siteIdParam}/review?selectedMonth=${encodeURIComponent(selectedMonth)}${cardParam}`);
   };
 
-  const filterCards = useCallback((cards: WorkCard[]) => {
-    const search = cardSearch.trim().toLowerCase();
-
-    const matchesCard = (card: WorkCard, extractionData?: WorkCardExtraction | null) => {
-      if (!search) return true;
-      const name = card.employee?.full_name?.toLowerCase() || '';
-      const passport = card.employee?.passport_id?.toLowerCase() || '';
-      const extractedName = extractionData?.extracted_employee_name?.toLowerCase() || '';
-      const extractedPassport = extractionData?.extracted_passport_id?.toLowerCase() || '';
-      return (
-        name.includes(search) ||
-        passport.includes(search) ||
-        extractedName.includes(search) ||
-        extractedPassport.includes(search) ||
-        String(card.id).toLowerCase().includes(search)
-      );
-    };
-
-    const filteredAssigned = cards.filter(card => card.employee_id !== null).filter(card => matchesCard(card));
-    const filteredUnassigned = cards.filter(card => card.employee_id === null).filter(card =>
-      matchesCard(card, extractionsByCardId[card.id] ?? null)
-    );
-
-    return {
-      assigned: listFilter === 'unassigned' ? [] : filteredAssigned,
-      unassigned: listFilter === 'assigned' ? [] : filteredUnassigned,
-    };
-  }, [extractionsByCardId, cardSearch, listFilter]);
-
   const unassignedCards = useMemo(
     () => workCards.filter(card => card.employee_id === null),
     [workCards]
-  );
-
-  const filteredCards = useMemo(() => filterCards(workCards), [filterCards, workCards]);
-
-  const visibleCards = useMemo(
-    () => [...filteredCards.unassigned, ...filteredCards.assigned],
-    [filteredCards.unassigned, filteredCards.assigned]
   );
 
   const groupedCards = useMemo((): CardGroup[] => {
@@ -417,10 +403,38 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     return groups;
   }, [workCards, extractionsByCardId, cardSearch, listFilter]);
 
-  const selectedVisibleIndex = useMemo(
-    () => (selectedCard ? visibleCards.findIndex((card) => card.id === selectedCard.id) : -1),
-    [selectedCard, visibleCards]
+  // Re-resolve the selected group from the freshly computed groupedCards so it
+  // never goes stale when workCards/extractions change underneath it.
+  const selectedGroup = useMemo(
+    () => groupedCards.find((group) => group.groupKey === selectedGroupKey) ?? null,
+    [groupedCards, selectedGroupKey]
   );
+
+  const selectedGroupIndex = useMemo(
+    () => groupedCards.findIndex((group) => group.groupKey === selectedGroupKey),
+    [groupedCards, selectedGroupKey]
+  );
+
+  // Signature for the editable table: changes when the card set OR any card's
+  // status changes (a status flip alters which days lock), so the merged table
+  // refetches — but incidental extraction-poll updates leave it untouched.
+  const groupEntriesSignature = useMemo(() => {
+    if (!selectedGroup) return null;
+    const cardsSig = selectedGroup.cards
+      .map((c) => `${c.id}:${c.review_status}`)
+      .sort()
+      .join(',');
+    return `${selectedGroup.groupKey}|${selectedGroup.employee?.id ?? ''}|${cardsSig}`;
+  }, [selectedGroup]);
+
+  // Signature for the image strip: only the set of cards (statuses don't change
+  // images), so approving never re-downloads the images.
+  const groupImagesSignature = useMemo(() => {
+    if (!selectedGroup) return null;
+    return selectedGroup.cards.map((c) => c.id).sort().join(',');
+  }, [selectedGroup]);
+
+  const activeImage = groupImages[activeImageIndex] ?? null;
 
   const isFocusMode = reviewMode === 'focus';
 
@@ -492,34 +506,37 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     setShowDirtyOnly(false);
   }, [selectedCard?.id]);
 
+  // If the selected group is filtered/searched away, fall back to the first
+  // visible group (or clear).
   useEffect(() => {
-    if (!selectedCard) return;
-    if (visibleCards.some((card) => card.id === selectedCard.id)) return;
-    setSelectedCard(visibleCards[0] ?? null);
-  }, [selectedCard, visibleCards]);
+    if (!selectedGroupKey) return;
+    if (groupedCards.some((group) => group.groupKey === selectedGroupKey)) return;
+    setSelectedGroupKey(groupedCards[0]?.groupKey ?? null);
+  }, [selectedGroupKey, groupedCards]);
 
+  // Navigation now moves between employee groups, not individual cards.
   const navigateToCard = useCallback((offset: -1 | 1) => {
-    if (!visibleCards.length) return;
-    const baseIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex : 0;
+    if (!groupedCards.length) return;
+    const baseIndex = selectedGroupIndex >= 0 ? selectedGroupIndex : 0;
     const nextIndex = baseIndex + offset;
-    if (nextIndex < 0 || nextIndex >= visibleCards.length) return;
-    setSelectedCard(visibleCards[nextIndex]);
-  }, [selectedVisibleIndex, visibleCards]);
+    if (nextIndex < 0 || nextIndex >= groupedCards.length) return;
+    setSelectedGroupKey(groupedCards[nextIndex].groupKey);
+  }, [selectedGroupIndex, groupedCards]);
 
   const navigateToNextPending = useCallback(() => {
-    if (!visibleCards.length) return;
-    const startIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0;
-    const nextPending = visibleCards.find((card, index) => index >= startIndex && card.review_status !== 'APPROVED');
+    if (!groupedCards.length) return;
+    const startIndex = selectedGroupIndex >= 0 ? selectedGroupIndex + 1 : 0;
+    const nextPending = groupedCards.find((group, index) => index >= startIndex && group.aggregateStatus !== 'APPROVED');
     if (nextPending) {
-      setSelectedCard(nextPending);
+      setSelectedGroupKey(nextPending.groupKey);
     }
-  }, [selectedVisibleIndex, visibleCards]);
+  }, [selectedGroupIndex, groupedCards]);
 
   const hasNextPending = useMemo(() => {
-    if (!visibleCards.length) return false;
-    const startIndex = selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0;
-    return visibleCards.some((card, index) => index >= startIndex && card.review_status !== 'APPROVED');
-  }, [selectedVisibleIndex, visibleCards]);
+    if (!groupedCards.length) return false;
+    const startIndex = selectedGroupIndex >= 0 ? selectedGroupIndex + 1 : 0;
+    return groupedCards.some((group, index) => index >= startIndex && group.aggregateStatus !== 'APPROVED');
+  }, [selectedGroupIndex, groupedCards]);
 
   useEffect(() => {
     if (!isFocusMode || !selectedCard) return;
@@ -557,8 +574,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       });
       setWorkCards(cards);
       // Clear selection when month changes
+      setSelectedGroupKey(null);
       setSelectedCard(null);
       setImageUrl(null);
+      setGroupImages([]);
       setDayEntries([]);
       setExtraction(null);
       setExtractionsByCardId({});
@@ -629,7 +648,8 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         if (prev.some(c => c.id === cardWithEmployee.id)) return prev;
         return [cardWithEmployee, ...prev];
       });
-      setSelectedCard(cardWithEmployee);
+      // Select the new card's employee group (it now owns the editable table).
+      setSelectedGroupKey(`emp:${employee.id}`);
       setMissingEmployees(prev => prev.filter(e => e.id !== employee.id));
       showToast('נוצר כרטיס ידני לעובד', 'success');
     } catch (err) {
@@ -754,14 +774,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     setManuallyUnlockedDays(autoUnlockedDays);
   }, [selectedMonth]);
 
-  // Revoke object URLs to avoid leaking memory when switching cards
-  useEffect(() => {
-    return () => {
-      if (imageUrl) {
-        URL.revokeObjectURL(imageUrl);
-      }
-    };
-  }, [imageUrl]);
 
   // Backend serializes Numeric as a string; normalize to a canonical form so
   // input <-> saved comparison ("192" vs "192.00") doesn't show false-positive dirty.
@@ -778,6 +790,34 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     setMonthlyTotalInput(savedMonthlyTotalString);
   }, [selectedCard?.id, savedMonthlyTotalString]);
 
+  // Re-seed the per-card comment only when the selected card itself changes.
+  const savedNote = selectedCard?.notes ?? '';
+  useEffect(() => {
+    setNoteInput(savedNote);
+  }, [selectedCard?.id, savedNote]);
+
+  const noteDirty = noteInput.trim() !== savedNote.trim();
+
+  // Persist the comment. The card's `notes` field already exists end-to-end;
+  // this just exposes it for editing during review.
+  const saveNote = useCallback(async () => {
+    if (!selectedCard || !noteDirty || isSavingNote) return;
+    const cardId = selectedCard.id;
+    const value = noteInput.trim() ? noteInput.trim() : null;
+    setIsSavingNote(true);
+    try {
+      const updated = await updateWorkCard(cardId, { notes: value ?? '' });
+      const savedValue = updated.notes ?? null;
+      setSelectedCard(prev => (prev && prev.id === cardId ? { ...prev, notes: savedValue } : prev));
+      setWorkCards(prev => prev.map(c => (c.id === cardId ? { ...c, notes: savedValue } : c)));
+      showToast('ההערה נשמרה', 'success');
+    } catch (err) {
+      showToast('שגיאה בשמירת ההערה', 'error');
+    } finally {
+      setIsSavingNote(false);
+    }
+  }, [selectedCard, noteDirty, isSavingNote, noteInput, showToast]);
+
   // Derive dirtiness directly from input vs saved so it can never desync.
   const monthlyTotalDirty = useMemo(() => {
     const trimmed = monthlyTotalInput.trim();
@@ -790,59 +830,111 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     return true;
   }, [monthlyTotalInput, savedMonthlyTotalString]);
 
-  // Fetch image and day entries when card is selected
+  // Load the merged employee-month table when the selected group changes (or any
+  // of its cards' statuses change — a status flip alters which days lock). The
+  // primary card (which owns the editable table) becomes selectedCard.
   useEffect(() => {
-    if (!selectedCard) return;
+    const group = selectedGroup;
+    if (!group) {
+      setSelectedCard(null);
+      setDayEntries([]);
+      return;
+    }
     let cancelled = false;
-    const cardId = selectedCard.id;
-    selectedCardIdRef.current = cardId;
-
-    // Clear previous UI while loading the next card
-    setImageUrl(null);
     setShowBulkPanel(false);
+    setIsLoadingEntries(true);
 
-    const isManualCard = selectedCard.source === 'MANUAL';
-
-    const fetchCardDetails = async () => {
-      setIsLoadingImage(true);
-      setIsLoadingEntries(true);
-
+    const run = async () => {
       try {
-        // Manual ghost cards have no associated file; fetch only day entries.
-        if (isManualCard) {
-          const entries = await getDayEntries(cardId);
-          if (cancelled || selectedCardIdRef.current !== cardId) return;
-          initializeDayEntries(entries);
+        let primaryCard: WorkCard;
+        let entries: DayEntry[];
+        if (group.employee?.id) {
+          const payload = await getEmployeeMonthGroup({
+            employee_id: group.employee.id,
+            month: selectedMonth,
+            site_id: siteId,
+          });
+          if (cancelled) return;
+          primaryCard = group.cards.find(c => c.id === payload.primary_card_id) ?? group.cards[0];
+          entries = payload.day_entries;
         } else {
-          const [blob, entries] = await Promise.all([
-            getWorkCardFile(cardId),
-            getDayEntries(cardId),
-          ]);
-
-          if (cancelled || selectedCardIdRef.current !== cardId) return;
-
-          const url = URL.createObjectURL(blob);
-          setImageUrl(url);
-
-          initializeDayEntries(entries);
+          // Unassigned/passport group: no employee_id to merge by — use the
+          // latest card and its own entries (existing single-card behavior).
+          primaryCard = group.cards[0];
+          entries = await getDayEntries(primaryCard.id);
+          if (cancelled) return;
         }
+        selectedCardIdRef.current = primaryCard.id;
+        setSelectedCard(primaryCard);
+        initializeDayEntries(entries);
       } catch (err) {
-        console.error('Failed to fetch card details:', err);
-        showToast('שגיאה בטעינת פרטי הכרטיס', 'error');
+        console.error('Failed to load employee-month group:', err);
+        showToast('שגיאה בטעינת נתוני העובד', 'error');
       } finally {
-        if (!cancelled && selectedCardIdRef.current === cardId) {
-          setIsLoadingImage(false);
-          setIsLoadingEntries(false);
-        }
+        if (!cancelled) setIsLoadingEntries(false);
       }
     };
 
-    fetchCardDetails();
+    run();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupEntriesSignature]);
 
+  // Load every card image in the group for the reference strip. Keyed only on
+  // the set of cards, so approving (a status change) never re-downloads images.
+  useEffect(() => {
+    const group = selectedGroup;
+    if (!group) {
+      setGroupImages([]);
+      setActiveImageIndex(0);
+      return;
+    }
+    let cancelled = false;
+    const createdUrls: string[] = [];
+    setIsLoadingImage(true);
+    setActiveImageIndex(0);
+
+    const run = async () => {
+      const images = await Promise.all(group.cards.map(async (c): Promise<GroupImage> => {
+        const base = { cardId: c.id, filename: c.original_filename ?? null, source: c.source ?? null };
+        // Manual ghost cards carry no image — render a placeholder tile.
+        if (c.source === 'MANUAL') {
+          return { ...base, url: null, hasFile: false };
+        }
+        try {
+          const blob = await getWorkCardFile(c.id);
+          const url = URL.createObjectURL(blob);
+          createdUrls.push(url);
+          return { ...base, url, hasFile: true };
+        } catch {
+          return { ...base, url: null, hasFile: true };
+        }
+      }));
+      if (cancelled) {
+        createdUrls.forEach(u => URL.revokeObjectURL(u));
+        return;
+      }
+      setGroupImages(images);
+      setIsLoadingImage(false);
+    };
+
+    run();
     return () => {
       cancelled = true;
+      createdUrls.forEach(u => URL.revokeObjectURL(u));
     };
-  }, [selectedCard?.id, initializeDayEntries, showToast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupImagesSignature]);
+
+  // Mirror the active strip image into the single viewer source, resetting the
+  // zoom/rotate/pan transform whenever the displayed image changes.
+  useEffect(() => {
+    const active = groupImages[activeImageIndex];
+    setImageUrl(active?.url ?? null);
+    setImageScale(1);
+    setImageRotation(0);
+    setImageOffset({ x: 0, y: 0 });
+  }, [groupImages, activeImageIndex]);
 
   // Fetch monthly hours breakdown so the admin sees the running employee total
   // (already-approved + this card pending = projected after approval).
@@ -1474,19 +1566,20 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         // Always defer to the approved previous card for days it already
         // covers. The second card is just filling in the remaining days.
         auto_keep_approved: true,
+        // Approving the merged table approves the whole employee-month group:
+        // the sibling cards are superseded so the employee no longer reads pending.
+        supersede_siblings: true,
       });
-      showToast('הכרטיס אושר בהצלחה', 'success');
+      showToast('שעות העובד אושרו בהצלחה', 'success');
 
-      // Update local state — use functional update so a stale workCards closure
-      // (e.g. when called from handleApproveWithSave) can't overwrite monthly_total_hours.
-      const approvedCardId = selectedCard.id;
+      // Mark every card in the group APPROVED locally (mirrors the backend
+      // supersede). The status change flips groupEntriesSignature, so the
+      // entries effect refetches the merged table with refreshed locks and the
+      // monthly breakdown re-runs — no manual refetch needed here.
+      const groupCardIds = new Set(selectedGroup?.cards.map(c => c.id) ?? [selectedCard.id]);
       setWorkCards(prev => prev.map(c =>
-        c.id === approvedCardId ? { ...c, review_status: 'APPROVED' as const } : c
+        groupCardIds.has(c.id) ? { ...c, review_status: 'APPROVED' as const } : c
       ));
-      setSelectedCard(prev => prev ? { ...prev, review_status: 'APPROVED' } : null);
-      const refreshedEntries = await getDayEntries(approvedCardId);
-      initializeDayEntries(refreshedEntries);
-      refreshMonthlyBreakdown();
     } catch (err) {
       console.error('Failed to approve card:', err);
       showToast('שגיאה באישור הכרטיס', 'error');
@@ -1512,8 +1605,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       // Remove from list
       const nextCards = workCards.filter(c => c.id !== rejectedCardId);
       setWorkCards(nextCards);
+      setSelectedGroupKey(null);
       setSelectedCard(null);
       setImageUrl(null);
+      setGroupImages([]);
       setDayEntries([]);
       setShowRejectModal(false);
     } catch (err) {
@@ -1538,10 +1633,11 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         review_status: updatedCard.review_status === 'NEEDS_ASSIGNMENT' ? 'NEEDS_REVIEW' : updatedCard.review_status,
         employee,
       };
-      setWorkCards(prev => prev.map(c => 
+      setWorkCards(prev => prev.map(c =>
         c.id === selectedCard.id ? cardWithEmployee : c
       ));
-      setSelectedCard(cardWithEmployee);
+      // The card now belongs to an employee group — select it.
+      setSelectedGroupKey(`emp:${employeeId}`);
       setShowAssignModal(false);
       showToast('העובד שויך בהצלחה', 'success');
     } catch (err) {
@@ -1690,15 +1786,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                 </div>
               ) : (
                 groupedCards.map((group) => {
-                  const isExpanded = expandedGroups.has(group.groupKey) || group.cards.some(c => c.id === selectedCard?.id);
-                  const isActive = group.cards.some(c => c.id === selectedCard?.id);
+                  const isActive = group.groupKey === selectedGroupKey;
                   const isUnassigned = !group.employee;
 
                   const avatarContent = group.employee
                     ? group.employee.full_name.split(' ').map(w => w[0]).join('').slice(0, 2)
                     : null;
 
-                  const statusBadge = (status: WorkCard['review_status'], small?: boolean) => {
+                  const statusBadge = (status: WorkCard['review_status']) => {
                     const label = status === 'APPROVED' ? 'מאושר' :
                       status === 'NEEDS_REVIEW' ? 'ממתין לסקירה' :
                       status === 'NEEDS_ASSIGNMENT' ? 'ממתין לשיוך' : status;
@@ -1708,7 +1803,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400'
                       : 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-400';
                     return (
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls} ${small ? 'text-[10px]' : ''}`}>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
                         {label}
                       </span>
                     );
@@ -1716,20 +1811,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
                   return (
                     <div key={group.groupKey} className="border-b border-slate-200 dark:border-slate-700">
-                      {/* Group header row */}
+                      {/* Group row — selecting it loads the merged table + all card images */}
                       <button
-                        onClick={() => {
-                          if (group.cardCount === 1) {
-                            setSelectedCard(group.cards[0]);
-                          } else {
-                            setExpandedGroups(prev => {
-                              const next = new Set(prev);
-                              if (next.has(group.groupKey)) next.delete(group.groupKey);
-                              else next.add(group.groupKey);
-                              return next;
-                            });
-                          }
-                        }}
+                        onClick={() => setSelectedGroupKey(group.groupKey)}
                         className={`w-full px-4 py-3 text-right flex items-center gap-3 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
                           isActive ? 'bg-primary/10 border-r-4 border-r-primary' : ''
                         } ${isUnassigned ? 'bg-orange-50/50 dark:bg-orange-900/10' : ''}`}
@@ -1750,8 +1834,12 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                               {getFirstName(group.employee?.full_name || group.extractedName) || 'עובד לא מזוהה'}
                             </span>
                             {group.cardCount > 1 && (
-                              <span className="shrink-0 text-xs font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-full px-1.5">
-                                ×{group.cardCount}
+                              <span
+                                className="shrink-0 inline-flex items-center gap-0.5 text-xs font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-full px-1.5"
+                                title={`${group.cardCount} כרטיסים`}
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>photo_library</span>
+                                {group.cardCount}
                               </span>
                             )}
                           </div>
@@ -1769,43 +1857,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             )}
                           </div>
                         </div>
-
-                        {/* Expand chevron (only for multi-card groups) */}
-                        {group.cardCount > 1 && (
-                          <span className="material-symbols-outlined text-slate-400 shrink-0">
-                            {isExpanded ? 'expand_less' : 'expand_more'}
-                          </span>
-                        )}
                       </button>
-
-                      {/* Expanded individual card rows */}
-                      {isExpanded && group.cardCount > 1 && group.cards.map(card => (
-                        <button
-                          key={card.id}
-                          onClick={() => setSelectedCard(card)}
-                          className={`w-full pl-4 pr-12 py-2.5 text-right border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 transition-colors bg-slate-50 dark:bg-slate-900/30 hover:bg-slate-100 dark:hover:bg-slate-800 ${
-                            selectedCard?.id === card.id ? 'bg-primary/10 border-r-4 border-r-primary' : ''
-                          }`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs text-slate-500 dark:text-slate-400">{formatDateTime(card.created_at)}</span>
-                              {statusBadge(card.review_status, true)}
-                            </div>
-                            {card.original_filename && (
-                              <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{card.original_filename}</div>
-                            )}
-                            {card.source && (
-                              <div className="text-xs text-slate-400 dark:text-slate-500">{sourceLabel(card.source)}</div>
-                            )}
-                            {card.telegram_caption && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
-                                {card.telegram_caption}
-                              </span>
-                            )}
-                          </div>
-                        </button>
-                      ))}
                     </div>
                   );
                 })
@@ -1936,22 +1988,22 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => navigateToCard(-1)}
-                        disabled={selectedVisibleIndex <= 0}
+                        disabled={selectedGroupIndex <= 0}
                         className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center justify-center text-slate-500 dark:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                        title="כרטיס קודם"
-                        aria-label="כרטיס קודם"
+                        title="עובד קודם"
+                        aria-label="עובד קודם"
                       >
                         <span className="material-symbols-outlined text-base">chevron_right</span>
                       </button>
                       <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 w-12 text-center tabular-nums">
-                        {selectedVisibleIndex >= 0 ? selectedVisibleIndex + 1 : 0} / {visibleCards.length}
+                        {selectedGroupIndex >= 0 ? selectedGroupIndex + 1 : 0} / {groupedCards.length}
                       </span>
                       <button
                         onClick={() => navigateToCard(1)}
-                        disabled={selectedVisibleIndex === -1 || selectedVisibleIndex >= visibleCards.length - 1}
+                        disabled={selectedGroupIndex === -1 || selectedGroupIndex >= groupedCards.length - 1}
                         className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center justify-center text-slate-500 dark:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                        title="כרטיס הבא"
-                        aria-label="כרטיס הבא"
+                        title="עובד הבא"
+                        aria-label="עובד הבא"
                       >
                         <span className="material-symbols-outlined text-base">chevron_left</span>
                       </button>
@@ -2083,17 +2135,94 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                   </>
                 )}
               </div>
+              {/* Card comment — free-text note for this work card, shown in the
+                  exported image filename. Full-width band so it's easy to find. */}
+              <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-amber-50/60 dark:bg-amber-900/10">
+                <label
+                  htmlFor="work-card-note-input"
+                  className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-base text-amber-600 dark:text-amber-400">comment</span>
+                    הערה לכרטיס
+                    <span className="text-slate-400 font-normal">(תופיע בשם הקובץ בעת הורדת התמונות)</span>
+                  </span>
+                  {noteDirty && (
+                    <button
+                      type="button"
+                      onClick={saveNote}
+                      disabled={isSavingNote}
+                      className="px-2.5 py-1 rounded-lg bg-primary text-white text-[11px] font-semibold hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      {isSavingNote ? 'שומר...' : 'שמור הערה'}
+                    </button>
+                  )}
+                </label>
+                <textarea
+                  id="work-card-note-input"
+                  value={noteInput}
+                  onChange={(e) => setNoteInput(e.target.value)}
+                  onBlur={saveNote}
+                  rows={2}
+                  placeholder="הוסף הערה לכרטיס זה..."
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+                />
+              </div>
+
               <div className="flex flex-col lg:flex-row lg:h-[640px]">
                 {/* Image Panel */}
                 <div className={`${imagePanelWidth} relative group`}>
                 {isEmbedded && <ReviewOverlay onClick={handleOpenInReviewMode} />}
                 <div className="flex flex-col lg:border-l border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 h-[400px] lg:h-full">
-                  <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                  <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between gap-2">
                     <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
                       <span className="material-symbols-outlined text-lg">image</span>
-                      תמונת כרטיס
+                      {groupImages.length > 1 ? 'תמונות כרטיסים' : 'תמונת כרטיס'}
                     </h4>
+                    {groupImages.length > 1 && (
+                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 rounded-full px-2 py-0.5 tabular-nums">
+                        {activeImageIndex + 1} / {groupImages.length}
+                      </span>
+                    )}
                   </div>
+
+                  {/* Thumbnail strip — every card image for this employee, in one
+                      context. Sits above the viewer for quick switching; clicking
+                      a thumbnail swaps the viewer without reloading the hours table. */}
+                  {groupImages.length > 1 && (
+                    <div className="shrink-0 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-2 overflow-x-auto">
+                      <div className="flex items-center gap-2">
+                        {groupImages.map((img, index) => {
+                          const isActiveThumb = index === activeImageIndex;
+                          return (
+                            <button
+                              key={img.cardId}
+                              type="button"
+                              onClick={() => setActiveImageIndex(index)}
+                              title={img.filename || (img.source ? sourceLabel(img.source) : `כרטיס ${index + 1}`)}
+                              className={`relative shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-colors ${
+                                isActiveThumb
+                                  ? 'border-primary ring-2 ring-primary/30'
+                                  : 'border-slate-200 dark:border-slate-600 hover:border-slate-400'
+                              }`}
+                            >
+                              {img.url ? (
+                                <img src={img.url} alt={`כרטיס ${index + 1}`} className="w-full h-full object-cover" draggable={false} />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center bg-slate-100 dark:bg-slate-700 text-slate-400">
+                                  <span className="material-symbols-outlined text-lg">edit_note</span>
+                                </div>
+                              )}
+                              <span className="absolute bottom-0 left-0 right-0 bg-slate-900/70 text-white text-[10px] leading-tight text-center tabular-nums">
+                                {index + 1}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="relative flex-1">
                     <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-20">
                       <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-slate-900/80 text-white shadow-lg px-2 py-1 backdrop-blur-sm">
@@ -2175,7 +2304,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                               transition: isPanningImage ? 'none' : 'transform 120ms ease-out',
                             }}
                           />
-                          {highlightedImageDay !== null && getZoneForDay(highlightedImageDay)?.bbox && (
+                          {highlightedImageDay !== null && activeImage?.cardId === selectedCard?.id && getZoneForDay(highlightedImageDay)?.bbox && (
                             <div
                               className="absolute border-2 border-primary bg-primary/15 rounded-md pointer-events-none"
                               style={{
@@ -2188,7 +2317,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             />
                           )}
                         </div>
-                      ) : selectedCard?.source === 'MANUAL' ? (
+                      ) : (activeImage ? !activeImage.hasFile : selectedCard?.source === 'MANUAL') ? (
                         <div className="flex flex-col items-center justify-center h-full text-slate-400 text-center px-6">
                           <span className="material-symbols-outlined text-4xl mb-2">edit_note</span>
                           <span className="text-sm font-medium text-slate-600 dark:text-slate-300">כרטיס ידני — אין תמונה מצורפת</span>
