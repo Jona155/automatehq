@@ -25,7 +25,8 @@ export interface GetWorkCardsParams {
 export interface WorkCardExportParams {
   site_id: string;
   processing_month: string;
-  employee_ids: string[];
+  employee_ids?: string[];
+  card_ids?: string[];
   approved_only?: boolean;
 }
 
@@ -156,14 +157,19 @@ export const getWorkCardFile = async (cardId: string): Promise<Blob> => {
   return response.data;
 };
 
-// Export work cards as a ZIP (one image per employee)
+// Export work cards as a ZIP. Pass card_ids to export specific cards, or
+// employee_ids for the legacy one-image-per-employee behavior.
 export const downloadWorkCardsExport = async (params: WorkCardExportParams): Promise<Blob> => {
   const queryParams: Record<string, string> = {
     site_id: params.site_id,
     month: normalizeMonthFormat(params.processing_month),
-    employee_ids: params.employee_ids.join(','),
     approved_only: params.approved_only ? 'true' : 'false',
   };
+  if (params.card_ids && params.card_ids.length > 0) {
+    queryParams.card_ids = params.card_ids.join(',');
+  } else if (params.employee_ids && params.employee_ids.length > 0) {
+    queryParams.employee_ids = params.employee_ids.join(',');
+  }
 
   const response = await client.get('/work_cards/export', {
     params: queryParams,
