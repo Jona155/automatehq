@@ -15,6 +15,10 @@ type FilterTab = 'all' | 'update' | 'no_change' | 'error';
 const formatPhone = (digits: string | null) => (digits ? `+${digits}` : '');
 const formatEmails = (emails: string[] | null) => (emails && emails.length > 0 ? emails.join(', ') : '');
 const formatTariff = (value: number | null) => (value != null ? `${value}₪` : '');
+const formatManager = (name: string | null, phone: string | null) => {
+  if (name && phone) return `${name} (${phone})`;
+  return name || phone || '';
+};
 
 const sameEmails = (a: string[] | null, b: string[] | null) => {
   const left = [...(a || [])].map((e) => e.toLowerCase()).sort();
@@ -79,6 +83,21 @@ function ChangesCell({ row }: { row: SiteTariffImportRow }) {
       />
     );
   }
+  // Field manager: only when its column was present in the file and the assignment
+  // actually changes (empty cell = unassign, rendered as "—").
+  if (
+    row.field_manager_present &&
+    (row.current_field_manager_id || null) !== (row.new_field_manager_id || null)
+  ) {
+    changes.push(
+      <FieldDiff
+        key="field_manager"
+        label="מנהל שדה"
+        before={formatManager(row.current_field_manager_name, row.current_field_manager_phone)}
+        after={formatManager(row.new_field_manager_name, row.new_field_manager_phone)}
+      />
+    );
+  }
 
   if (changes.length === 0) {
     return <span className="text-slate-400 text-xs">ללא שינוי</span>;
@@ -94,6 +113,8 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
   const [rows, setRows] = useState<SiteTariffImportRow[]>([]);
   const [summary, setSummary] = useState<SiteTariffImportSummary | null>(null);
   const [filterTab, setFilterTab] = useState<FilterTab>('all');
+  const [blocked, setBlocked] = useState(false);
+  const [blockReason, setBlockReason] = useState<string | null>(null);
 
   const handleClose = () => {
     setPhase('upload');
@@ -103,6 +124,8 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
     setRows([]);
     setSummary(null);
     setFilterTab('all');
+    setBlocked(false);
+    setBlockReason(null);
     onClose();
   };
 
@@ -114,6 +137,8 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
       const result = await previewSiteTariffImport(file);
       setRows(result.rows);
       setSummary(result.summary);
+      setBlocked(!!result.blocked);
+      setBlockReason(result.block_reason ?? null);
       setPhase('preview');
     } catch (err: any) {
       setError(err?.response?.data?.message || 'שגיאה בניתוח הקובץ');
@@ -123,6 +148,7 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
   };
 
   const handleApply = async () => {
+    if (blocked) return;
     const updateRows = rows.filter((r) => r.action === 'update');
     if (updateRows.length === 0) return;
     setPhase('applying');
@@ -172,8 +198,10 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
         {phase === 'upload' && (
           <>
             <p className="text-sm text-slate-600 dark:text-slate-400">
-              העלה קובץ Excel עם עמודות שם אתר, תעריף שעתי, טלפון איש קשר ומייל איש קשר.
-              המערכת תתאים אוטומטית את האתרים הקיימים. תאים ריקים נשארים ללא שינוי.
+              העלה קובץ Excel עם עמודות שם אתר, תעריף שעתי, טלפון איש קשר, מייל איש קשר,
+              מנהל שדה וטלפון מנהל שדה. המערכת תתאים אוטומטית את האתרים הקיימים. מנהל השדה מותאם
+              לפי מספר הטלפון — אם מספר טלפון אינו מזוהה, הייבוא כולו נחסם. תא טלפון מנהל שדה ריק מסיר
+              את שיוך מנהל השדה. שאר התאים הריקים נשארים ללא שינוי.
             </p>
             <div>
               <input
@@ -205,6 +233,12 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
 
         {phase === 'preview' && summary && (
           <>
+            {blocked && (
+              <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm rounded-lg border border-red-200 dark:border-red-800">
+                {blockReason || 'ייבוא נחסם — מנהל שדה לא זוהה לפי מספר טלפון באחת או יותר מהשורות'}. תקן את
+                מספרי הטלפון המסומנים ונסה שוב — לא בוצעו שינויים.
+              </div>
+            )}
             {/* Summary badges */}
             <div className="flex flex-wrap gap-3">
               <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
@@ -301,7 +335,7 @@ export default function SiteTariffImportModal({ isOpen, onClose, onApplied }: Si
               <button
                 type="button"
                 onClick={handleApply}
-                disabled={summary.update === 0}
+                disabled={blocked || summary.update === 0}
                 className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors font-bold shadow-lg shadow-primary/30 disabled:opacity-50"
               >
                 החל שינויים ({summary.update})

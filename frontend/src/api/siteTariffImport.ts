@@ -4,6 +4,8 @@ import type { SiteTariffImportRow, SiteTariffImportSummary } from '../types';
 export interface SiteTariffImportPreviewResponse {
   summary: SiteTariffImportSummary;
   rows: SiteTariffImportRow[];
+  blocked?: boolean;
+  block_reason?: string | null;
 }
 
 export interface SiteTariffImportFieldChange<T> {
@@ -18,6 +20,7 @@ export interface SiteTariffImportAppliedRow {
     tariff?: SiteTariffImportFieldChange<number>;
     phone?: SiteTariffImportFieldChange<string>;
     emails?: SiteTariffImportFieldChange<string[]>;
+    field_manager?: SiteTariffImportFieldChange<string>;
   };
 }
 
