@@ -708,13 +708,23 @@ def get_work_card_file(card_id):
         return api_response(status_code=404, message="File not found for this work card", error="Not Found")
     
     try:
-        # Return the image bytes with proper content type
-        return send_file(
+        # The stored image bytes for a card never change, so let the browser
+        # cache them aggressively. Without these headers every employee
+        # (re-)selection re-downloads the full blob from Postgres over the
+        # network — fine on localhost, slow in production.
+        # ETag (the immutable file row id) enables conditional 304 revalidation.
+        response = send_file(
             BytesIO(file.image_bytes),
             mimetype=file.content_type,
             as_attachment=False,
-            download_name=file.file_name
+            download_name=file.file_name,
+            etag=str(file.id),
+            max_age=86400,
+            conditional=True,
         )
+        # `private` so shared/proxy caches don't store tenant images.
+        response.headers['Cache-Control'] = 'private, max-age=86400, immutable'
+        return response
     except Exception as e:
         return api_response(status_code=500, message="Failed to retrieve file", error=str(e))
 
