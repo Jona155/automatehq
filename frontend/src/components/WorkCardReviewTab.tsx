@@ -272,6 +272,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [panStart, setPanStart] = useState<{ x: number; y: number; originX: number; originY: number } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestedExtractionsRef = useRef<Set<string>>(new Set());
+  // Session cache of downloaded card image blob URLs, keyed by cardId. Lets
+  // re-selecting an employee reuse an already-fetched image instead of
+  // re-downloading it. Revoked on unmount and cleared on month change.
+  const imageUrlCacheRef = useRef<Map<string, string>>(new Map());
   const selectedCardIdRef = useRef<string | null>(null);
   const imageViewportRef = useRef<HTMLDivElement | null>(null);
   const imageElementRef = useRef<HTMLImageElement | null>(null);
@@ -592,6 +596,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       setExtraction(null);
       setExtractionsByCardId({});
       requestedExtractionsRef.current = new Set();
+      // Cards changed — drop cached image URLs so we don't leak them.
+      imageUrlCacheRef.current.forEach(url => URL.revokeObjectURL(url));
+      imageUrlCacheRef.current.clear();
     } catch (err) {
       console.error('Failed to fetch work cards:', err);
       setError('שגיאה בטעינת הכרטיסים');
@@ -911,51 +918,75 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       return;
     }
     let cancelled = false;
-    const createdUrls: string[] = [];
-    setIsLoadingImage(true);
+    const cache = imageUrlCacheRef.current;
     setActiveImageIndex(0);
 
-    const run = async () => {
-      const images = await Promise.all(group.cards.map(async (c): Promise<GroupImage> => {
-        const base = { cardId: c.id, filename: c.original_filename ?? null, source: c.source ?? null };
-        // Manual ghost cards carry no image — render a placeholder tile.
-        if (c.source === 'MANUAL') {
-          return { ...base, url: null, hasFile: false };
-        }
-        try {
-          const blob = await getWorkCardFile(c.id);
-          const url = URL.createObjectURL(blob);
-          createdUrls.push(url);
-          return { ...base, url, hasFile: true };
-        } catch {
-          return { ...base, url: null, hasFile: true };
-        }
-      }));
-      if (cancelled) {
-        createdUrls.forEach(u => URL.revokeObjectURL(u));
-        return;
-      }
-      setGroupImages(images);
-      setIsLoadingImage(false);
-    };
+    // Seed the strip synchronously: placeholders for manual cards, the cached
+    // URL for any image already downloaded this session, and null (pending)
+    // otherwise. This renders the strip instantly instead of after a network
+    // round-trip.
+    const seeded: GroupImage[] = group.cards.map((c) => {
+      const base = { cardId: c.id, filename: c.original_filename ?? null, source: c.source ?? null };
+      if (c.source === 'MANUAL') return { ...base, url: null, hasFile: false };
+      return { ...base, url: cache.get(c.id) ?? null, hasFile: true };
+    });
+    setGroupImages(seeded);
 
-    run();
+    // Only block the viewer with a spinner if the active (first) image isn't
+    // already cached — the others stream in behind it.
+    const firstCard = group.cards[0];
+    const firstPending = Boolean(seeded[0]?.hasFile && !seeded[0].url);
+    setIsLoadingImage(firstPending);
+
+    const toFetch = group.cards.filter(c => c.source !== 'MANUAL' && !cache.get(c.id));
+    if (!toFetch.length) {
+      return () => { cancelled = true; };
+    }
+
+    // Fetch each missing image independently and paint it as soon as it lands,
+    // so a slow image deep in a multi-card group never holds up the first one.
+    toFetch.forEach(async (c) => {
+      try {
+        const blob = await getWorkCardFile(c.id);
+        if (cancelled) return;
+        const url = URL.createObjectURL(blob);
+        cache.set(c.id, url);
+        setGroupImages(prev => prev.map(img => (img.cardId === c.id ? { ...img, url } : img)));
+      } catch {
+        // Leave url null → broken-image placeholder for this card.
+      } finally {
+        if (!cancelled && firstCard && c.id === firstCard.id) {
+          setIsLoadingImage(false);
+        }
+      }
+    });
+
     return () => {
       cancelled = true;
-      createdUrls.forEach(u => URL.revokeObjectURL(u));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupImagesSignature]);
 
-  // Mirror the active strip image into the single viewer source, resetting the
-  // zoom/rotate/pan transform whenever the displayed image changes.
+  // Revoke all cached image URLs when the component unmounts.
   useEffect(() => {
-    const active = groupImages[activeImageIndex];
-    setImageUrl(active?.url ?? null);
+    const cache = imageUrlCacheRef.current;
+    return () => {
+      cache.forEach(url => URL.revokeObjectURL(url));
+      cache.clear();
+    };
+  }, []);
+
+  // Mirror the active strip image into the single viewer source, resetting the
+  // zoom/rotate/pan transform whenever the *displayed* image changes. Keyed on
+  // the active URL specifically so a background image streaming in (which
+  // mutates groupImages) doesn't reset zoom on the image currently in view.
+  const activeImageUrl = groupImages[activeImageIndex]?.url ?? null;
+  useEffect(() => {
+    setImageUrl(activeImageUrl);
     setImageScale(1);
     setImageRotation(0);
     setImageOffset({ x: 0, y: 0 });
-  }, [groupImages, activeImageIndex]);
+  }, [activeImageIndex, activeImageUrl]);
 
   // Fetch monthly hours breakdown so the admin sees the running employee total
   // (already-approved + this card pending = projected after approval).
@@ -1920,13 +1951,20 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           isActive ? 'bg-primary/10 border-r-4 border-r-primary' : ''
                         } ${isUnassigned ? 'bg-orange-50/50 dark:bg-orange-900/10' : ''}`}
                       >
-                        {/* Avatar */}
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs uppercase shrink-0 ${
+                        {/* Avatar — overlaid with a spinner while this group's
+                            table/images load, so the click gives immediate
+                            feedback right where the user clicked. */}
+                        <div className={`relative w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs uppercase shrink-0 ${
                           isUnassigned
                             ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-600'
                             : 'bg-blue-100 dark:bg-blue-900/40 text-blue-600'
                         }`}>
                           {avatarContent ?? <span className="material-symbols-outlined text-lg">help</span>}
+                          {isActive && (isLoadingImage || isLoadingEntries) && (
+                            <span className="absolute inset-0 flex items-center justify-center rounded-full bg-white/70 dark:bg-slate-900/70">
+                              <span className="material-symbols-outlined text-lg text-primary animate-spin">progress_activity</span>
+                            </span>
+                          )}
                         </div>
 
                         {/* Identity + meta */}
