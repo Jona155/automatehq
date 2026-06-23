@@ -143,6 +143,24 @@ class WhatsAppListenerClient:
             payload['mimetype'] = mimetype
         self._post('/api/send-document', payload)
 
+    def send_image(
+        self,
+        chat_id: str,
+        file_bytes: bytes,
+        caption: Optional[str] = None,
+        mimetype: Optional[str] = None,
+    ) -> None:
+        """Send an image that renders inline as a photo (not a file attachment)."""
+        payload: dict[str, Any] = {
+            'chatId': chat_id,
+            'fileBase64': base64.b64encode(file_bytes).decode('ascii'),
+        }
+        if caption is not None:
+            payload['caption'] = caption
+        if mimetype is not None:
+            payload['mimetype'] = mimetype
+        self._post('/api/send-image', payload)
+
     # ----- internals -----
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
