@@ -10,6 +10,7 @@ def _row(emp, status, *, site_id='S1', site_name='Site 1', fm='M1', fm_name='Man
         'employee_id': emp,
         'full_name': emp,
         'passport_id': f'P-{emp}',
+        'external_employee_id': f'SN-{emp}',
         'phone_number': '0500000000',
         'site_id': site_id,
         'site_name': site_name,
@@ -159,6 +160,31 @@ class XlsxGenerationTests(unittest.TestCase):
         data = output.read()
         self.assertTrue(len(data) > 0)
         self.assertEqual(data[:2], b'PK')  # xlsx is a zip
+
+    def _load(self, rows, **kwargs):
+        from openpyxl import load_workbook
+        output = mcs.generate_missing_cards_xlsx('T', rows, date(2026, 6, 1), **kwargs)
+        ws = load_workbook(output).active
+        header = [c.value for c in ws[2]]
+        body = [[c.value for c in row] for row in ws.iter_rows(min_row=3)]
+        return header, body
+
+    def test_serial_column_present_in_both_variants(self):
+        rows = [_row('a', mcs.STATUS_NONE)]
+        for include in (False, True):
+            header, body = self._load(rows, include_manager_column=include)
+            self.assertEqual(header[0], mcs._SERIAL_HEADER)
+            self.assertEqual(body[0][0], 'SN-a')
+
+    def test_manager_column_only_when_requested(self):
+        rows = [_row('a', mcs.STATUS_NONE)]
+        header_plain, _ = self._load(rows, include_manager_column=False)
+        self.assertNotIn(mcs._MANAGER_HEADER, header_plain)
+
+        header_company, body = self._load(rows, include_manager_column=True)
+        self.assertIn(mcs._MANAGER_HEADER, header_company)
+        mgr_idx = header_company.index(mcs._MANAGER_HEADER)
+        self.assertEqual(body[0][mgr_idx], 'Manager 1')
 
 
 if __name__ == '__main__':

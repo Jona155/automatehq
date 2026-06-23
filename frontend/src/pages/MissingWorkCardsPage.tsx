@@ -11,6 +11,7 @@ import {
   sendManagerWhatsapp,
   broadcastWhatsapp,
   downloadManagerReport,
+  downloadCompanyReport,
   type ManagerGroup,
   type SiteGroup,
   type MissingSummary,
@@ -189,6 +190,22 @@ export default function MissingWorkCardsPage() {
     }
   };
 
+  const handleExportCompany = async () => {
+    try {
+      const blob = await downloadCompanyReport(selectedMonth);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `כרטיסים חסרים - כל החברה - ${selectedMonth}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      showToast('שגיאה בייצוא הקובץ', 'error');
+    }
+  };
+
   const handleBroadcast = async () => {
     setBroadcasting(true);
     setBroadcastResult(null);
@@ -231,13 +248,22 @@ export default function MissingWorkCardsPage() {
             עובדים פעילים שטרם הוגשו עבורם כל כרטיסי העבודה החודשיים, מקובצים לפי מנהל שטח או אתר
           </p>
         </div>
-        <button
-          onClick={() => { setBroadcastResult(null); setBroadcastOpen(true); }}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-lg transition-colors"
-        >
-          <span className="material-symbols-outlined text-base">send</span>
-          שלח לכל מנהלי השטח
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleExportCompany}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold transition-colors"
+          >
+            <span className="material-symbols-outlined text-base">download</span>
+            הורד אקסל לכל החברה
+          </button>
+          <button
+            onClick={() => { setBroadcastResult(null); setBroadcastOpen(true); }}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-lg transition-colors"
+          >
+            <span className="material-symbols-outlined text-base">send</span>
+            שלח לכל מנהלי השטח
+          </button>
+        </div>
       </div>
 
       <PageBanner

@@ -148,6 +148,7 @@ def compute_missing(
             Employee.full_name.label('full_name'),
             Employee.passport_id.label('passport_id'),
             Employee.phone_number.label('phone_number'),
+            Employee.external_employee_id.label('external_employee_id'),
             Site.id.label('site_id'),
             Site.site_name.label('site_name'),
             Site.expected_work_cards_per_month.label('site_expected'),
@@ -180,6 +181,7 @@ def compute_missing(
             'full_name': r.full_name,
             'passport_id': r.passport_id,
             'phone_number': r.phone_number,
+            'external_employee_id': r.external_employee_id,
             'site_id': str(r.site_id) if r.site_id else None,
             'site_name': r.site_name,
             'field_manager_id': str(r.field_manager_id) if r.field_manager_id else None,
@@ -292,6 +294,11 @@ def group_by_site(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 # ----- XLSX report -----
 
+_SERIAL_HEADER = 'מס׳ סידורי'
+_MANAGER_HEADER = 'מנהל שטח'
+
+# Columns common to every report, in display order (serial is prepended; the
+# field-manager name is optionally inserted after 'אתר').
 _HEADERS = [
     'שם עובד',
     'ת.ז. / דרכון',
@@ -319,8 +326,22 @@ def generate_missing_cards_xlsx(
     title: str,
     rows: List[Dict[str, Any]],
     month: date,
+    include_manager_column: bool = False,
 ) -> BytesIO:
-    """Build a single-sheet XLSX of employees with missing cards. RTL-friendly."""
+    """Build a single-sheet XLSX of employees with missing cards. RTL-friendly.
+
+    A serial-number column (the employee's external_employee_id) is always
+    prepended. When include_manager_column is set, the field-manager name is
+    inserted after the site column (used by the company-wide report).
+    """
+    # Build headers + matching column widths dynamically.
+    headers = [_SERIAL_HEADER] + list(_HEADERS)
+    widths = [14, 22, 16, 16, 22, 16, 28, 16]
+    if include_manager_column:
+        site_pos = headers.index('אתר')
+        headers.insert(site_pos + 1, _MANAGER_HEADER)
+        widths.insert(site_pos + 1, 22)
+
     wb = Workbook()
     ws = wb.active
     ws.title = (month.strftime('%Y-%m'))
@@ -328,14 +349,14 @@ def generate_missing_cards_xlsx(
 
     month_label = month.strftime('%Y-%m')
     ws.append([f'כרטיסי עבודה חסרים — {title} — {month_label}'])
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(_HEADERS))
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
     ws.cell(row=1, column=1).font = Font(bold=True, size=13)
     ws.cell(row=1, column=1).alignment = Alignment(horizontal='right')
 
     header_row_idx = 2
-    ws.append(_HEADERS)
+    ws.append(headers)
     header_fill = PatternFill('solid', fgColor='D9E1F2')
-    for col in range(1, len(_HEADERS) + 1):
+    for col in range(1, len(headers) + 1):
         cell = ws.cell(row=header_row_idx, column=col)
         cell.font = Font(bold=True)
         cell.fill = header_fill
@@ -346,17 +367,22 @@ def generate_missing_cards_xlsx(
     for row in ordered:
         first_dt = row.get('first_uploaded_at')
         first_label = first_dt.split('T')[0] if first_dt else ''
-        ws.append([
+        cells = [
+            row.get('external_employee_id') or '',
             row.get('full_name') or '',
             row.get('passport_id') or '',
             row.get('phone_number') or '',
             row.get('site_name') or '',
+        ]
+        if include_manager_column:
+            cells.append(row.get('manager_name') or '')
+        cells.extend([
             f"{row['cards_count']}/{row['expected']}",
             _status_he(row),
             first_label,
         ])
+        ws.append(cells)
 
-    widths = [22, 16, 16, 22, 16, 28, 16]
     from openpyxl.utils import get_column_letter
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
