@@ -18,6 +18,14 @@ from ..auth_utils import token_required, role_required
 from ..extensions import db
 from ..models.sites import Site
 from ..models.work_cards import WorkCard
+from ..services.whatsapp_listener_client import (
+    WhatsAppListenerClient,
+    WhatsAppListenerError,
+    WhatsAppAuthError,
+    WhatsAppBadRequestError,
+    WhatsAppNotConnectedError,
+    WhatsAppPayloadTooLargeError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -709,6 +717,86 @@ def get_work_card_file(card_id):
         )
     except Exception as e:
         return api_response(status_code=500, message="Failed to retrieve file", error=str(e))
+
+
+# Map a content_type to a sensible file extension for the WhatsApp filename.
+_CONTENT_TYPE_EXT = {
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'application/pdf': 'pdf',
+}
+
+
+@work_cards_bp.route('/<uuid:card_id>/send-whatsapp', methods=['POST'])
+@token_required
+def send_work_card_to_whatsapp(card_id):
+    """Send a work card's image + a free-text note to a WhatsApp group.
+
+    Used from the review UI when an admin can't read a card and wants to ask the
+    group for help. Forwards the stored image bytes to the listener's
+    send-document endpoint — no Twilio / public URL involved.
+    """
+    # Verify ownership (same tenancy guard as get_work_card_file).
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+
+    data = request.get_json() or {}
+    chat_id = (data.get('chat_id') or '').strip()
+    note = data.get('note')
+    if note is not None:
+        note = str(note).strip() or None
+
+    if not chat_id or not chat_id.endswith('@g.us'):
+        return api_response(status_code=400, message="A valid WhatsApp group chat_id is required", error="Bad Request")
+
+    file = file_repo.get_by_work_card(card_id)
+    if not file:
+        return api_response(status_code=400, message="This work card has no image to send", error="Bad Request")
+
+    client = WhatsAppListenerClient.from_env()
+    if client is None:
+        return api_response(status_code=503, message="WhatsApp listener not configured", error="WA_LISTENER_URL is not set")
+
+    content_type = (file.content_type or '').lower()
+    ext = _CONTENT_TYPE_EXT.get(content_type, 'jpg')
+    filename = f"work_card_{card_id}.{ext}"
+
+    try:
+        if content_type.startswith('image/'):
+            # Send as an inline photo so it previews in WhatsApp instead of
+            # arriving as a downloadable file attachment.
+            client.send_image(
+                chat_id=chat_id,
+                file_bytes=file.image_bytes,
+                caption=note,
+                mimetype=file.content_type,
+            )
+        else:
+            # Non-images (e.g. PDF) can't render inline — send as a document.
+            client.send_document(
+                chat_id=chat_id,
+                file_bytes=file.image_bytes,
+                filename=filename,
+                caption=note,
+                mimetype=file.content_type,
+            )
+    except WhatsAppNotConnectedError as e:
+        return api_response(status_code=503, message="WhatsApp listener not connected", error=str(e))
+    except WhatsAppPayloadTooLargeError as e:
+        return api_response(status_code=413, message="Image is too large to send over WhatsApp", error=str(e))
+    except WhatsAppAuthError as e:
+        logger.error(f"Listener auth failure: {e}")
+        return api_response(status_code=500, message="WhatsApp listener auth misconfigured", error="Server Error")
+    except (WhatsAppBadRequestError, WhatsAppListenerError) as e:
+        logger.warning(f"send_work_card_to_whatsapp failed for card {card_id}: {e}")
+        return api_response(status_code=502, message="Failed to send image to WhatsApp", error=str(e))
+
+    return api_response(message="Image sent to WhatsApp")
+
 
 @work_cards_bp.route('/export', methods=['GET'])
 @token_required

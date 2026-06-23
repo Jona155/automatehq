@@ -157,6 +157,15 @@ export const getWorkCardFile = async (cardId: string): Promise<Blob> => {
   return response.data;
 };
 
+// Send a work card's image + an optional note to a WhatsApp group.
+export const sendWorkCardToWhatsApp = async (
+  cardId: string,
+  chatId: string,
+  note: string,
+): Promise<void> => {
+  await client.post(`/work_cards/${cardId}/send-whatsapp`, { chat_id: chatId, note });
+};
+
 // Export work cards as a ZIP. Pass card_ids to export specific cards, or
 // employee_ids for the legacy one-image-per-employee behavior.
 export const downloadWorkCardsExport = async (params: WorkCardExportParams): Promise<Blob> => {

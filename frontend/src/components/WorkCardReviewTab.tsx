@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup, WorkCardMonthlyBreakdown, Site } from '../types';
-import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard, getMissingWorkCardEmployees, createManualWorkCard, getWorkCardMonthlyBreakdown, getEmployeeMonthGroup } from '../api/workCards';
+import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard, getMissingWorkCardEmployees, createManualWorkCard, getWorkCardMonthlyBreakdown, getEmployeeMonthGroup, sendWorkCardToWhatsApp } from '../api/workCards';
+import { getWhatsAppGroups, type WhatsAppGroup } from '../api/whatsapp';
 import { getEmployees } from '../api/employees';
 import { getSites } from '../api/sites';
 import { getFirstName } from '../utils/nameUtils';
@@ -232,6 +233,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [isSaving, setIsSaving] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  // "Send to WhatsApp" modal — forward the active card image + a note to a group.
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [waGroups, setWaGroups] = useState<WhatsAppGroup[]>([]);
+  const [isLoadingWaGroups, setIsLoadingWaGroups] = useState(false);
+  const [waGroupsError, setWaGroupsError] = useState<string | null>(null);
+  const [waSelectedChatId, setWaSelectedChatId] = useState('');
+  const [waNote, setWaNote] = useState('');
+  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
   const [manuallyUnlockedDays, setManuallyUnlockedDays] = useState<Set<number>>(new Set());
   const [showRelockAllConfirm, setShowRelockAllConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1670,6 +1679,46 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     }
   };
 
+  // Open the "Send to WhatsApp" modal for the active card image and load the
+  // list of groups the connected WhatsApp account belongs to.
+  const openWhatsAppModal = useCallback(async () => {
+    if (!activeImage?.hasFile) return;
+    setWaNote('');
+    setWaSelectedChatId('');
+    setWaGroups([]);
+    setWaGroupsError(null);
+    setShowWhatsAppModal(true);
+    setIsLoadingWaGroups(true);
+    try {
+      const groups = await getWhatsAppGroups();
+      setWaGroups(groups);
+      if (groups.length > 0) setWaSelectedChatId(groups[0].chat_id);
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'לא ניתן לטעון את רשימת הקבוצות. ודאו שחיבור הוואטסאפ פעיל.';
+      setWaGroupsError(msg);
+    } finally {
+      setIsLoadingWaGroups(false);
+    }
+  }, [activeImage]);
+
+  // Forward the active card image + note to the selected WhatsApp group.
+  const handleSendWhatsApp = async () => {
+    if (!activeImage?.cardId || !waSelectedChatId) return;
+    setIsSendingWhatsApp(true);
+    try {
+      await sendWorkCardToWhatsApp(activeImage.cardId, waSelectedChatId, waNote.trim());
+      showToast('התמונה נשלחה לוואטסאפ', 'success');
+      setShowWhatsAppModal(false);
+      setWaNote('');
+      setWaSelectedChatId('');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'שליחה לוואטסאפ נכשלה';
+      showToast(msg, 'error');
+    } finally {
+      setIsSendingWhatsApp(false);
+    }
+  };
+
   // Assign an employee to an unassigned work card
   const handleAssignEmployee = async (employeeId: string) => {
     if (!selectedCard) return;
@@ -2290,6 +2339,20 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         >
                           אפס
                         </button>
+                        {activeImage?.hasFile && (
+                          <>
+                            <span className="mx-0.5 h-5 w-px bg-white/25" aria-hidden="true" />
+                            <button
+                              type="button"
+                              onClick={openWhatsAppModal}
+                              className="w-8 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                              aria-label="שלח לוואטסאפ"
+                              title="שלח לוואטסאפ"
+                            >
+                              <span className="material-symbols-outlined text-base">forward_to_inbox</span>
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -2825,6 +2888,96 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
             >
               <span className="material-symbols-outlined text-lg">delete</span>
               <span>דחה ומחק</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showWhatsAppModal}
+        onClose={() => setShowWhatsAppModal(false)}
+        title="שליחת תמונה לוואטסאפ"
+        maxWidth="md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            שלחו את תמונת הכרטיס לקבוצת וואטסאפ יחד עם הערה, כדי לקבל עזרה בפענוח.
+          </p>
+
+          {imageUrl ? (
+            <div className="flex justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2">
+              <img
+                src={imageUrl}
+                alt="תצוגה מקדימה של הכרטיס"
+                className="max-h-56 w-auto rounded-md object-contain"
+              />
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-32 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-400 text-sm">
+              אין תצוגה מקדימה זמינה
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="wa-group-select" className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1.5">
+              קבוצת יעד
+            </label>
+            {isLoadingWaGroups ? (
+              <div className="flex items-center gap-2 text-sm text-slate-500 py-2">
+                <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
+                <span>טוען קבוצות...</span>
+              </div>
+            ) : waGroupsError ? (
+              <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 dark:bg-red-900/20 p-3 rounded-lg border border-red-100 dark:border-red-800">
+                <span className="material-symbols-outlined text-lg">error</span>
+                <span>{waGroupsError}</span>
+              </div>
+            ) : waGroups.length === 0 ? (
+              <p className="text-sm text-slate-500 py-2">לא נמצאו קבוצות וואטסאפ.</p>
+            ) : (
+              <select
+                id="wa-group-select"
+                value={waSelectedChatId}
+                onChange={(e) => setWaSelectedChatId(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                {waGroups.map((group) => (
+                  <option key={group.chat_id} value={group.chat_id}>
+                    {group.chat_name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div>
+            <label htmlFor="wa-note-input" className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1.5">
+              הערה (אופציונלי)
+            </label>
+            <textarea
+              id="wa-note-input"
+              value={waNote}
+              onChange={(e) => setWaNote(e.target.value)}
+              rows={3}
+              placeholder="מה לא ברור בתמונה?"
+              className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              onClick={() => setShowWhatsAppModal(false)}
+              className="px-4 py-2 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium text-sm"
+            >
+              ביטול
+            </button>
+            <button
+              onClick={handleSendWhatsApp}
+              disabled={isSendingWhatsApp || isLoadingWaGroups || !waSelectedChatId}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className="material-symbols-outlined text-lg">send</span>
+              <span>{isSendingWhatsApp ? 'שולח...' : 'שלח'}</span>
             </button>
           </div>
         </div>
