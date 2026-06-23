@@ -28,6 +28,8 @@ class WorkCard(db.Model):
     telegram_caption = db.Column(db.Text, nullable=True)
     # Set when the user records a single month-level hours figure instead of per-day entries.
     monthly_total_hours = db.Column(db.Numeric(7, 2), nullable=True)
+    # Set once a 'new card arrived' WhatsApp notification has been sent — dedups retries.
+    whatsapp_notified_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

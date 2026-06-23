@@ -4,7 +4,11 @@ from uuid import UUID
 from sqlalchemy.exc import SQLAlchemyError
 
 from .base import BaseRepository
-from ..models.whatsapp import WhatsAppGroupConfig, WhatsAppIngestedMessage
+from ..models.whatsapp import (
+    WhatsAppGroupConfig,
+    WhatsAppIngestedMessage,
+    WhatsAppNotificationSettings,
+)
 from ..utils import utc_now
 
 
@@ -57,6 +61,29 @@ class WhatsAppGroupConfigRepository(BaseRepository[WhatsAppGroupConfig]):
             config.updated_at = utc_now()
             self.session.commit()
             return config
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            raise e
+
+
+class WhatsAppNotificationSettingsRepository(BaseRepository[WhatsAppNotificationSettings]):
+    def __init__(self):
+        super().__init__(WhatsAppNotificationSettings)
+
+    def get_by_business(self, business_id: UUID) -> Optional[WhatsAppNotificationSettings]:
+        return self.session.query(WhatsAppNotificationSettings).filter_by(business_id=business_id).first()
+
+    def upsert(self, business_id: UUID, **fields) -> WhatsAppNotificationSettings:
+        """Create or update the settings row for a business."""
+        settings = self.get_by_business(business_id)
+        if settings is None:
+            return self.create(business_id=business_id, **fields)
+        try:
+            for key, value in fields.items():
+                setattr(settings, key, value)
+            settings.updated_at = utc_now()
+            self.session.commit()
+            return settings
         except SQLAlchemyError as e:
             self.session.rollback()
             raise e

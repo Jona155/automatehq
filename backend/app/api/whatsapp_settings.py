@@ -1,9 +1,14 @@
 import logging
+import uuid
 
 from flask import Blueprint, request, g
 
 from ..auth_utils import token_required
-from ..repositories.whatsapp_repository import WhatsAppGroupConfigRepository
+from ..repositories.whatsapp_repository import (
+    WhatsAppGroupConfigRepository,
+    WhatsAppNotificationSettingsRepository,
+)
+from ..repositories.user_repository import UserRepository
 from ..services.whatsapp_listener_client import (
     WhatsAppAuthError,
     WhatsAppBadRequestError,
@@ -18,6 +23,8 @@ logger = logging.getLogger(__name__)
 whatsapp_settings_bp = Blueprint('whatsapp_settings', __name__, url_prefix='/api/whatsapp')
 
 config_repo = WhatsAppGroupConfigRepository()
+notification_repo = WhatsAppNotificationSettingsRepository()
+user_repo = UserRepository()
 
 
 def _get_client():
@@ -41,6 +48,94 @@ def _config_to_dict(config):
         'last_seen_timestamp': config.last_seen_timestamp.isoformat() if config.last_seen_timestamp else None,
         'is_active': config.is_active,
     }
+
+
+def _notification_settings_to_dict(settings):
+    if settings is None:
+        # Sensible defaults for a business that hasn't configured anything yet.
+        return {
+            'enabled': False,
+            'start_day': 1,
+            'end_day': 31,
+            'destination_user_ids': [],
+        }
+    return {
+        'enabled': settings.enabled,
+        'start_day': settings.start_day,
+        'end_day': settings.end_day,
+        'destination_user_ids': [str(uid) for uid in (settings.destination_user_ids or [])],
+    }
+
+
+@whatsapp_settings_bp.route('/notification-settings', methods=['GET'])
+@token_required
+def get_notification_settings():
+    """Return the current business's new-card notification settings (defaults if unset)."""
+    business_id = g.business_id
+    if not business_id:
+        return api_response(status_code=403, message="No business context", error="Forbidden")
+
+    settings = notification_repo.get_by_business(business_id)
+    return api_response(data=_notification_settings_to_dict(settings))
+
+
+@whatsapp_settings_bp.route('/notification-settings', methods=['PUT'])
+@token_required
+def update_notification_settings():
+    """Upsert the new-card notification settings for the current business."""
+    business_id = g.business_id
+    if not business_id:
+        return api_response(status_code=403, message="No business context", error="Forbidden")
+
+    data = request.get_json() or {}
+
+    enabled = data.get('enabled', False)
+    if not isinstance(enabled, bool):
+        return api_response(status_code=400, message="enabled must be a boolean", error="Bad Request")
+
+    def _valid_day(value):
+        return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 31
+
+    start_day = data.get('start_day')
+    end_day = data.get('end_day')
+    if not _valid_day(start_day) or not _valid_day(end_day):
+        return api_response(status_code=400, message="start_day and end_day must be integers 1–31", error="Bad Request")
+
+    raw_ids = data.get('destination_user_ids', [])
+    if not isinstance(raw_ids, list):
+        return api_response(status_code=400, message="destination_user_ids must be a list", error="Bad Request")
+
+    # Validate every id is a real, active user of THIS business.
+    validated_ids = []
+    for raw in raw_ids:
+        user = None
+        try:
+            user = user_repo.get_by_id(uuid.UUID(str(raw)))
+        except (ValueError, AttributeError, TypeError):
+            user = None
+        if not user or user.business_id != business_id:
+            return api_response(
+                status_code=400,
+                message="destination_user_ids must reference users of this business",
+                error="Bad Request",
+            )
+        validated_ids.append(str(user.id))
+
+    if enabled and not validated_ids:
+        return api_response(
+            status_code=400,
+            message="At least one recipient is required when notifications are enabled",
+            error="Bad Request",
+        )
+
+    settings = notification_repo.upsert(
+        business_id,
+        enabled=enabled,
+        start_day=start_day,
+        end_day=end_day,
+        destination_user_ids=validated_ids,
+    )
+    return api_response(data=_notification_settings_to_dict(settings), message="Notification settings updated")
 
 
 @whatsapp_settings_bp.route('/status', methods=['GET'])
