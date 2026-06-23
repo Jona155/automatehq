@@ -42,6 +42,7 @@ from app.repositories import (
 from extractor import extract_from_image_bytes, PIPELINE_VERSION
 from matcher import match_employee, diagnose_identity_mismatch
 from app.services.pdf_splitter import split_pdf_to_card_images
+from app.services.work_card_notifier import maybe_notify_new_card
 
 # Configure logging
 logging.basicConfig(
@@ -284,7 +285,11 @@ def process_job(
         if not work_card:
             extraction_repo.mark_failed(job_id, "Work card not found")
             return False
-        
+
+        # Best-effort 'new card arrived' WhatsApp alert. Self-contained and never raises,
+        # so it can't affect extraction. Idempotent via work_cards.whatsapp_notified_at.
+        maybe_notify_new_card(work_card)
+
         image_bytes = file_repo.get_image_bytes(job.work_card_id)
         if not image_bytes:
             extraction_repo.mark_failed(job_id, "Image file not found")

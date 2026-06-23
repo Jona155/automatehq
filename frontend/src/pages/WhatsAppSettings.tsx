@@ -12,6 +12,13 @@ import {
   type WhatsAppGroup,
   type WhatsAppStatus,
 } from '../api/whatsapp';
+import {
+  getWhatsAppNotificationSettings,
+  updateWhatsAppNotificationSettings,
+  type WhatsAppNotificationSettings,
+} from '../api/whatsappNotification';
+import { getUsers } from '../api/users';
+import type { User } from '../types';
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -194,6 +201,8 @@ export default function WhatsAppSettings() {
         {!statusError && isConnected && config && (
           <MonthAssignmentCard config={config} onSave={handleSaveCutoff} />
         )}
+
+        {!statusError && <NewCardNotificationCard />}
 
         {!statusError && !isConnected && status && (
           <QRCard status={status} qrDataUrl={qrDataUrl} />
@@ -794,6 +803,252 @@ function MonthAssignmentCard({
           <div className="mt-3 px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-[12.5px] text-rose-700">
             {error}
           </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// --------------------------------------------------------------------------
+// New-card notification card
+// --------------------------------------------------------------------------
+
+function NewCardNotificationCard() {
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
+
+  const [enabled, setEnabled] = useState(false);
+  const [startDay, setStartDay] = useState(1);
+  const [endDay, setEndDay] = useState(31);
+  const [recipients, setRecipients] = useState<string[]>([]);
+  const [initial, setInitial] = useState<WhatsAppNotificationSettings | null>(null);
+
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const [settings, userList] = await Promise.all([
+          getWhatsAppNotificationSettings(),
+          getUsers({ active: true }),
+        ]);
+        if (cancelled) return;
+        setUsers(userList);
+        setEnabled(settings.enabled);
+        setStartDay(settings.start_day);
+        setEndDay(settings.end_day);
+        setRecipients(settings.destination_user_ids);
+        setInitial(settings);
+      } catch (err) {
+        if (!cancelled) setLoadError(errorMessage(err) || 'טעינת הגדרות ההתראות נכשלה');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dirty = useMemo(() => {
+    if (!initial) return false;
+    const sameRecipients =
+      initial.destination_user_ids.length === recipients.length &&
+      initial.destination_user_ids.every((id) => recipients.includes(id));
+    return (
+      enabled !== initial.enabled ||
+      startDay !== initial.start_day ||
+      endDay !== initial.end_day ||
+      !sameRecipients
+    );
+  }, [initial, enabled, startDay, endDay, recipients]);
+
+  const toggleRecipient = (id: string) => {
+    setSaved(false);
+    setRecipients((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const clampDay = (raw: string) => Math.min(31, Math.max(1, parseInt(raw) || 1));
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+    setSaved(false);
+    try {
+      const next = await updateWhatsAppNotificationSettings({
+        enabled,
+        start_day: startDay,
+        end_day: endDay,
+        destination_user_ids: recipients,
+      });
+      setEnabled(next.enabled);
+      setStartDay(next.start_day);
+      setEndDay(next.end_day);
+      setRecipients(next.destination_user_ids);
+      setInitial(next);
+      setSaved(true);
+    } catch (err) {
+      setSaveError(errorMessage(err) || 'שמירת הגדרות ההתראות נכשלה');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        icon="notifications_active"
+        title="התראות על כרטיסים חדשים"
+        sub="שליחת הודעת WhatsApp עם תמונת הכרטיס כשמתקבל כרטיס חדש בטווח התאריכים שנבחר"
+      />
+
+      <div className="px-5 py-5 space-y-5">
+        {loading ? (
+          <div className="flex items-center gap-2 text-[13px] text-slate-500">
+            <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
+            טוען…
+          </div>
+        ) : loadError ? (
+          <div className="px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-[12.5px] text-rose-700">
+            {loadError}
+          </div>
+        ) : (
+          <>
+            {/* Enable toggle */}
+            <label className="flex items-center justify-between gap-4 cursor-pointer select-none">
+              <div className="min-w-0">
+                <div className="text-[13.5px] font-medium text-slate-900">הפעלת התראות</div>
+                <div className="text-[12.5px] text-slate-500 mt-0.5">
+                  כשמופעל, כל כרטיס שמתקבל בטווח הימים שנבחר יישלח לנמענים שנבחרו.
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={enabled}
+                onClick={() => {
+                  setSaved(false);
+                  setEnabled((e) => !e);
+                }}
+                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+                  enabled ? 'bg-indigo-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${
+                    enabled ? 'start-[22px]' : 'start-0.5'
+                  }`}
+                />
+              </button>
+            </label>
+
+            {/* Date window */}
+            <div>
+              <label className="block text-[12.5px] font-medium text-slate-700 mb-2">
+                טווח ימים בחודש (1–31)
+              </label>
+              <div className="flex items-center gap-2.5 text-[13.5px] text-slate-700">
+                <span>מה-</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={startDay}
+                  onChange={(e) => {
+                    setSaved(false);
+                    setStartDay(clampDay(e.target.value));
+                  }}
+                  className="w-20 h-10 px-3 text-[14px] text-slate-900 bg-white border border-slate-300 rounded-lg tabular-nums focus:outline-none focus:border-indigo-500 focus:shadow-[0_0_0_3px_rgba(99,102,241,0.18)]"
+                />
+                <span>עד ה-</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={endDay}
+                  onChange={(e) => {
+                    setSaved(false);
+                    setEndDay(clampDay(e.target.value));
+                  }}
+                  className="w-20 h-10 px-3 text-[14px] text-slate-900 bg-white border border-slate-300 rounded-lg tabular-nums focus:outline-none focus:border-indigo-500 focus:shadow-[0_0_0_3px_rgba(99,102,241,0.18)]"
+                />
+                <span>בחודש</span>
+              </div>
+            </div>
+
+            {/* Recipients */}
+            <div>
+              <label className="block text-[12.5px] font-medium text-slate-700 mb-2">
+                נמענים
+              </label>
+              {users.length === 0 ? (
+                <div className="text-[12.5px] text-slate-500">לא נמצאו משתמשים פעילים.</div>
+              ) : (
+                <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-[260px] overflow-y-auto">
+                  {users.map((u) => {
+                    const checked = recipients.includes(u.id);
+                    const noPhone = !u.phone_number;
+                    return (
+                      <label
+                        key={u.id}
+                        className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleRecipient(u.id)}
+                          className="w-4 h-4 accent-indigo-600 shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13.5px] text-slate-900 font-medium truncate">{u.full_name}</div>
+                          <div className="text-[11.5px] text-slate-400 truncate" dir="ltr">
+                            {u.phone_number || '—'}
+                          </div>
+                        </div>
+                        {noPhone && (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 rounded-full px-2 py-0.5 shrink-0">
+                            <span className="material-symbols-outlined text-[13px]">warning</span>
+                            אין טלפון
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="mt-1.5 text-[11.5px] text-slate-400">
+                נמענים ללא מספר טלפון תקין יידלגו בעת השליחה.
+              </div>
+            </div>
+
+            {/* Save */}
+            <div className="pt-1 flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || !dirty}
+                className="h-10 px-4 text-[13px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg inline-flex items-center gap-1.5 transition-colors"
+              >
+                {saving && <span className="material-symbols-outlined animate-spin text-[15px]">progress_activity</span>}
+                {saving ? 'שומר…' : 'שמור'}
+              </button>
+              {saved && !dirty && (
+                <span className="inline-flex items-center gap-1 text-[12.5px] text-emerald-700">
+                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                  נשמר
+                </span>
+              )}
+              {saveError && (
+                <span className="text-[12.5px] text-rose-700">{saveError}</span>
+              )}
+            </div>
+          </>
         )}
       </div>
     </Card>
