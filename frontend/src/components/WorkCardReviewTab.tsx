@@ -233,6 +233,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [manuallyUnlockedDays, setManuallyUnlockedDays] = useState<Set<number>>(new Set());
+  const [showRelockAllConfirm, setShowRelockAllConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
   const [extractionsByCardId, setExtractionsByCardId] = useState<Record<string, WorkCardExtraction | null>>({});
@@ -1303,22 +1304,25 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     [sites, siteId]
   );
 
+  // Shared by the per-row and bulk re-lock paths: a dirty unlocked row reverts to
+  // its previously approved values; everything else is left untouched.
+  const revertDayToPrevious = (e: DayEntryRow): DayEntryRow =>
+    (e.isDirty && e.previousEntry)
+      ? {
+          ...e,
+          from_time: normalizeTimeToHourMinute(e.previousEntry?.from_time),
+          to_time: normalizeTimeToHourMinute(e.previousEntry?.to_time),
+          total_hours: e.previousEntry?.total_hours?.toString() || '',
+          isDirty: false,
+        }
+      : e;
+
   const handleToggleCellLock = (dayOfMonth: number) => {
     if (manuallyUnlockedDays.has(dayOfMonth)) {
       // Re-locking: revert to previous values if dirty
-      const entry = dayEntries.find(e => e.day_of_month === dayOfMonth);
-      if (entry?.isDirty && entry.previousEntry) {
-        setDayEntries(prev => prev.map(e => {
-          if (e.day_of_month !== dayOfMonth) return e;
-          return {
-            ...e,
-            from_time: normalizeTimeToHourMinute(e.previousEntry?.from_time),
-            to_time: normalizeTimeToHourMinute(e.previousEntry?.to_time),
-            total_hours: e.previousEntry?.total_hours?.toString() || '',
-            isDirty: false,
-          };
-        }));
-      }
+      setDayEntries(prev =>
+        prev.map(e => (e.day_of_month === dayOfMonth ? revertDayToPrevious(e) : e))
+      );
     }
     setManuallyUnlockedDays(prev => {
       const next = new Set(prev);
@@ -1326,6 +1330,44 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       else next.add(dayOfMonth);
       return next;
     });
+  };
+
+  // Every day that is currently locked (per-day flag or whole-card approval).
+  const lockedDays = useMemo(
+    () => dayEntries.filter(e => isEntryEffectivelyLocked(e)).map(e => e.day_of_month),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dayEntries, selectedCard?.review_status]
+  );
+  const allLockedUnlocked =
+    lockedDays.length > 0 && lockedDays.every(d => manuallyUnlockedDays.has(d));
+
+  const relockAll = (opts: { revert: boolean }) => {
+    if (opts.revert) {
+      setDayEntries(prev =>
+        prev.map(e => (manuallyUnlockedDays.has(e.day_of_month) ? revertDayToPrevious(e) : e))
+      );
+    }
+    setManuallyUnlockedDays(prev => {
+      const next = new Set(prev);
+      lockedDays.forEach(d => next.delete(d));
+      return next;
+    });
+  };
+
+  const handleToggleAllLocks = () => {
+    if (!allLockedUnlocked) {
+      // Unlock the whole table
+      setManuallyUnlockedDays(prev => {
+        const next = new Set(prev);
+        lockedDays.forEach(d => next.add(d));
+        return next;
+      });
+      return;
+    }
+    // Re-lock the whole table — confirm first if there are unsaved edits
+    const hasDirty = dayEntries.some(e => manuallyUnlockedDays.has(e.day_of_month) && e.isDirty);
+    if (hasDirty) setShowRelockAllConfirm(true);
+    else relockAll({ revert: false });
   };
 
   const resetImageTransform = useCallback(() => {
@@ -2373,6 +2415,23 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         <span className="material-symbols-outlined text-sm">calendar_month</span>
                         עדכון מרובה
                       </button>
+                      {isAdmin && lockedDays.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleToggleAllLocks}
+                          disabled={!selectedCard || isEmbedded}
+                          className={`px-2 py-1 rounded-lg text-xs flex items-center gap-1 transition-colors ${
+                            allLockedUnlocked
+                              ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
+                              : 'border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          } disabled:opacity-50`}
+                        >
+                          <span className="material-symbols-outlined text-sm">
+                            {allLockedUnlocked ? 'lock' : 'lock_open'}
+                          </span>
+                          {allLockedUnlocked ? 'נעל מחדש את כל הטבלה' : 'בטל נעילה לכל הטבלה'}
+                        </button>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 flex-wrap justify-end">
                       <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
@@ -2766,6 +2825,51 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
             >
               <span className="material-symbols-outlined text-lg">delete</span>
               <span>דחה ומחק</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showRelockAllConfirm}
+        onClose={() => setShowRelockAllConfirm(false)}
+        title="נעילת כל הטבלה מחדש"
+        maxWidth="sm"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 text-blue-600 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-100 dark:border-blue-800">
+            <span className="material-symbols-outlined text-2xl">info</span>
+            <p className="text-sm font-medium">יש שינויים שלא נשמרו</p>
+          </div>
+          <p className="text-slate-600 dark:text-slate-300">
+            לפני נעילת הטבלה — האם לשמור את הערכים החדשים שערכת, או לחזור לערכים הקודמים?
+          </p>
+          <div className="flex justify-end gap-3 pt-4">
+            <button
+              onClick={() => setShowRelockAllConfirm(false)}
+              className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors font-medium text-sm"
+            >
+              ביטול
+            </button>
+            <button
+              onClick={() => {
+                relockAll({ revert: true });
+                setShowRelockAllConfirm(false);
+              }}
+              className="px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors font-medium text-sm"
+            >
+              השלך שינויים
+            </button>
+            <button
+              onClick={async () => {
+                await saveDayEntries();
+                relockAll({ revert: false });
+                setShowRelockAllConfirm(false);
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex items-center gap-2"
+            >
+              <span className="material-symbols-outlined text-lg">save</span>
+              <span>שמור שינויים</span>
             </button>
           </div>
         </div>
