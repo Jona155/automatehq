@@ -719,7 +719,6 @@ def get_work_card_file(card_id):
             as_attachment=False,
             download_name=file.file_name,
             etag=str(file.id),
-            max_age=86400,
             conditional=True,
         )
         # `private` so shared/proxy caches don't store tenant images.
