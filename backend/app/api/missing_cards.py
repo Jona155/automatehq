@@ -124,6 +124,29 @@ def export_manager_report(user_id):
     )
 
 
+@missing_cards_bp.route('/export', methods=['GET'])
+@token_required
+@role_required('ADMIN')
+def export_company_report():
+    """Download a single missing-cards XLSX covering the entire company."""
+    month, err = _parse_month(request.args.get('month'))
+    if err:
+        return api_response(status_code=400, message=err, error="Bad Request")
+
+    rows = mcs.compute_missing(g.business_id, month)
+    gap_rows = [r for r in rows if r['status'] != mcs.STATUS_COMPLETE]
+    output = mcs.generate_missing_cards_xlsx(
+        'כל החברה', gap_rows, month, include_manager_column=True
+    )
+    filename = f"missing_cards_all_{month.strftime('%Y-%m')}.xlsx"
+    return send_file(
+        output,
+        mimetype=XLSX_MIME,
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
 def _build_caption(business, manager_name, month, rows):
     business_name = business.name if business else ''
     month_label = month.strftime('%Y-%m')

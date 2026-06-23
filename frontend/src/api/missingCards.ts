@@ -121,3 +121,11 @@ export const downloadManagerReport = async (userId: string, month: string): Prom
   });
   return response.data;
 };
+
+export const downloadCompanyReport = async (month: string): Promise<Blob> => {
+  const response = await client.get('/missing-cards/export', {
+    params: { month: normalizeMonth(month) },
+    responseType: 'blob',
+  });
+  return response.data;
+};
