@@ -276,6 +276,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   // re-selecting an employee reuse an already-fetched image instead of
   // re-downloading it. Revoked on unmount and cleared on month change.
   const imageUrlCacheRef = useRef<Map<string, string>>(new Map());
+  // In-flight image downloads, keyed by cardId, so a prefetch and a real
+  // selection of the same card share one request instead of double-fetching.
+  const imageFetchRef = useRef<Map<string, Promise<string | null>>>(new Map());
   const selectedCardIdRef = useRef<string | null>(null);
   const imageViewportRef = useRef<HTMLDivElement | null>(null);
   const imageElementRef = useRef<HTMLImageElement | null>(null);
@@ -599,6 +602,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       // Cards changed — drop cached image URLs so we don't leak them.
       imageUrlCacheRef.current.forEach(url => URL.revokeObjectURL(url));
       imageUrlCacheRef.current.clear();
+      imageFetchRef.current.clear();
     } catch (err) {
       console.error('Failed to fetch work cards:', err);
       setError('שגיאה בטעינת הכרטיסים');
@@ -908,6 +912,29 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupEntriesSignature]);
 
+  // Download a card image once and cache its blob URL, deduping concurrent
+  // requests for the same card (a background prefetch and a real selection
+  // share one network round-trip). Resolves to the object URL, or null on
+  // failure. Cheap no-op when already cached.
+  const fetchCardImage = useCallback((cardId: string): Promise<string | null> => {
+    const cache = imageUrlCacheRef.current;
+    const cached = cache.get(cardId);
+    if (cached) return Promise.resolve(cached);
+    const inFlight = imageFetchRef.current.get(cardId);
+    if (inFlight) return inFlight;
+
+    const promise = getWorkCardFile(cardId)
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        cache.set(cardId, url);
+        return url;
+      })
+      .catch(() => null)
+      .finally(() => { imageFetchRef.current.delete(cardId); });
+    imageFetchRef.current.set(cardId, promise);
+    return promise;
+  }, []);
+
   // Load every card image in the group for the reference strip. Keyed only on
   // the set of cards, so approving (a status change) never re-downloads images.
   useEffect(() => {
@@ -934,38 +961,50 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
     // Only block the viewer with a spinner if the active (first) image isn't
     // already cached — the others stream in behind it.
-    const firstCard = group.cards[0];
-    const firstPending = Boolean(seeded[0]?.hasFile && !seeded[0].url);
-    setIsLoadingImage(firstPending);
+    const firstCardId = group.cards[0]?.id ?? null;
+    setIsLoadingImage(Boolean(seeded[0]?.hasFile && !seeded[0].url));
 
-    const toFetch = group.cards.filter(c => c.source !== 'MANUAL' && !cache.get(c.id));
+    // A pending entry (hasFile but no url yet) is one we still need to fetch.
+    const toFetch = seeded.filter(img => img.hasFile && !img.url);
     if (!toFetch.length) {
       return () => { cancelled = true; };
     }
 
-    // Fetch each missing image independently and paint it as soon as it lands,
-    // so a slow image deep in a multi-card group never holds up the first one.
-    toFetch.forEach(async (c) => {
-      try {
-        const blob = await getWorkCardFile(c.id);
-        if (cancelled) return;
-        const url = URL.createObjectURL(blob);
-        cache.set(c.id, url);
-        setGroupImages(prev => prev.map(img => (img.cardId === c.id ? { ...img, url } : img)));
-      } catch {
-        // Leave url null → broken-image placeholder for this card.
-      } finally {
-        if (!cancelled && firstCard && c.id === firstCard.id) {
-          setIsLoadingImage(false);
-        }
-      }
+    // Fetch each missing image independently and paint it as soon as it lands
+    // (reusing any prefetch already in flight), so a slow image deep in a
+    // multi-card group never holds up the first one.
+    toFetch.forEach(({ cardId }) => {
+      fetchCardImage(cardId)
+        .then((url) => {
+          if (cancelled || !url) return;
+          setGroupImages(prev => prev.map(img => (img.cardId === cardId ? { ...img, url } : img)));
+        })
+        .finally(() => {
+          if (!cancelled && cardId === firstCardId) setIsLoadingImage(false);
+        });
     });
 
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupImagesSignature]);
+  }, [groupImagesSignature, fetchCardImage]);
+
+  // Prefetch the next groups' primary images into the cache while the admin
+  // reviews the current one. Review is a sequential queue, so by the time they
+  // advance the image is usually already downloaded — turning a ~7s first load
+  // (DNS + connection + transfer all happen up front) into an instant one.
+  const PREFETCH_AHEAD = 2;
+  useEffect(() => {
+    if (selectedGroupIndex < 0) return;
+    const upcoming = groupedCards.slice(selectedGroupIndex + 1, selectedGroupIndex + 1 + PREFETCH_AHEAD);
+    // Only the primary (first) card of each upcoming group — enough to make the
+    // first paint instant without saturating a slow uplink with every image.
+    upcoming.forEach((group) => {
+      const primary = group.cards[0];
+      if (primary && primary.source !== 'MANUAL') fetchCardImage(primary.id);
+    });
+  }, [selectedGroupIndex, groupedCards, fetchCardImage]);
 
   // Revoke all cached image URLs when the component unmounts.
   useEffect(() => {
@@ -1947,6 +1986,11 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                       {/* Group row — selecting it loads the merged table + all card images */}
                       <button
                         onClick={() => setSelectedGroupKey(group.groupKey)}
+                        onMouseEnter={() => {
+                          // Warm the image cache on hover so the click feels instant.
+                          const primary = group.cards[0];
+                          if (primary && primary.source !== 'MANUAL') fetchCardImage(primary.id);
+                        }}
                         className={`w-full px-4 py-3 text-right flex items-center gap-3 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
                           isActive ? 'bg-primary/10 border-r-4 border-r-primary' : ''
                         } ${isUnassigned ? 'bg-orange-50/50 dark:bg-orange-900/10' : ''}`}
