@@ -1850,7 +1850,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const tablePanelWidth = 'w-full lg:w-[46%]';
 
   return (
-    <div className="flex flex-col">
+    <div className={`flex flex-col${isEmbedded ? '' : ' h-full min-h-0'}`}>
       <ToastContainer />
       
       {/* Header with Month Picker */}
@@ -1891,7 +1891,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       </div>
 
       {/* Main Content */}
-      <div className="flex flex-1">
+      <div className="flex flex-1 min-h-0">
         {/* Sidebar - Work Cards List */}
         <div className={`${reviewMode === 'focus' ? 'hidden' : 'w-80'} border-l border-slate-200 dark:border-slate-700 flex flex-col bg-slate-50 dark:bg-slate-900/50`}>
           <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 space-y-3">
@@ -2092,7 +2092,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         </div>
 
         {/* Main Area - Image and Day Entries */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col min-h-0">
           {!selectedCard ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
               <span className="material-symbols-outlined text-6xl text-slate-300 dark:text-slate-600 mb-4">playlist_play</span>
@@ -2102,7 +2102,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
               </p>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col min-h-0">
               {/* Card Header — 3-zone layout: identity | navigation | actions */}
               <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
                 <div className="flex items-center gap-4 min-w-0">
@@ -2319,7 +2319,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                   </>
                 )}
               </div>
-              <div className="flex flex-col lg:flex-row lg:h-[640px]">
+              <div className={`flex flex-col lg:flex-row ${isEmbedded ? 'lg:h-[640px]' : 'lg:flex-1 lg:min-h-0'}`}>
                 {/* Image Panel */}
                 <div className={`${imagePanelWidth} relative group`}>
                 {isEmbedded && <ReviewOverlay onClick={handleOpenInReviewMode} />}
@@ -2373,7 +2373,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                     </div>
                   )}
 
-                  <div className="relative flex-1">
+                  <div className="relative flex-1 min-h-0">
                     <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-20">
                       <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-slate-900/80 text-white shadow-lg px-2 py-1 backdrop-blur-sm">
                         <button
@@ -2455,13 +2455,13 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           <span className="material-symbols-outlined text-3xl text-slate-400 animate-spin">progress_activity</span>
                         </div>
                       ) : imageUrl ? (
-                        <div className="relative h-full w-full flex items-start justify-center overflow-hidden">
+                        <div className="relative h-full w-full flex items-center justify-center overflow-hidden">
                           <img
                             ref={imageElementRef}
                             src={imageUrl}
                             alt="Work Card"
                             draggable={false}
-                            className="max-w-full h-auto rounded-lg shadow-lg select-none"
+                            className="max-h-full max-w-full w-auto h-auto object-contain rounded-lg shadow-lg select-none"
                             style={{
                               transform: `translate(${imageOffset.x}px, ${imageOffset.y}px) scale(${imageScale}) rotate(${imageRotation}deg)`,
                               transformOrigin: 'center center',
