@@ -1,11 +1,10 @@
 import unittest
-from datetime import time
 from types import SimpleNamespace
 
-from backend.app.api.work_cards import _resolve_conflict_day
+from backend.app.api.work_cards import _approve_day_outcome, _entry_has_data
 
 
-def entry(total_hours, source='EXTRACTED', from_time=None, to_time=None, day_status=None):
+def entry(total_hours=None, source='EXTRACTED', from_time=None, to_time=None, day_status=None):
     return SimpleNamespace(
         total_hours=total_hours,
         source=source,
@@ -15,54 +14,64 @@ def entry(total_hours, source='EXTRACTED', from_time=None, to_time=None, day_sta
     )
 
 
-class ResolveConflictDayTests(unittest.TestCase):
-    def test_identical_values_are_left_untouched(self):
-        outcome = _resolve_conflict_day(
-            entry(10), entry(10), previous_status='APPROVED', day_in_override_days=False
-        )
-        self.assertEqual(outcome, 'noop')
+class ApproveDayOutcomeTests(unittest.TestCase):
+    """The per-day decision when approving consolidates a sibling card in.
 
-    def test_missing_latest_entry_carries_previous_forward(self):
-        outcome = _resolve_conflict_day(
-            None, entry(10), previous_status='APPROVED', day_in_override_days=False
-        )
-        self.assertEqual(outcome, 'carry_forward')
+    The model: the reviewed table is the truth. A human-saved value (any
+    source other than EXTRACTED) always wins — including a day cleared to empty.
+    Automatic extraction never overwrites an approved day. A day this card lacks
+    is carried in so the approved card holds the full month.
+    """
 
-    def test_latest_wins_when_previous_not_approved(self):
-        outcome = _resolve_conflict_day(
-            entry(11), entry(10), previous_status='NEEDS_REVIEW', day_in_override_days=False
+    def test_missing_current_entry_carries_sibling_in(self):
+        self.assertEqual(
+            _approve_day_outcome(None, sibling_is_approved=True), 'carry_in'
         )
-        self.assertEqual(outcome, 'take_latest')
+        self.assertEqual(
+            _approve_day_outcome(None, sibling_is_approved=False), 'carry_in'
+        )
 
-    def test_explicit_override_flag_keeps_latest_over_approved_previous(self):
-        outcome = _resolve_conflict_day(
-            entry(11), entry(10), previous_status='APPROVED', day_in_override_days=True
+    def test_extraction_defers_to_approved_sibling(self):
+        # A machine-written value must not overwrite an approved day.
+        self.assertEqual(
+            _approve_day_outcome(entry(source='EXTRACTED'), sibling_is_approved=True),
+            'keep_approved',
         )
-        self.assertEqual(outcome, 'take_latest')
 
-    def test_default_keeps_approved_previous_when_no_override_intent(self):
-        # An extracted/carried entry that simply differs (no manual intent) still
-        # defers to the approved previous value.
-        outcome = _resolve_conflict_day(
-            entry(11, source='EXTRACTED'),
-            entry(10),
-            previous_status='APPROVED',
-            day_in_override_days=False,
+    def test_extraction_wins_over_unapproved_sibling(self):
+        self.assertEqual(
+            _approve_day_outcome(entry(source='EXTRACTED'), sibling_is_approved=False),
+            'keep_current',
         )
-        self.assertEqual(outcome, 'take_previous')
 
-    def test_manual_override_edit_survives_approval_without_override_flag(self):
-        # Regression: a deliberate edit (source=MANUAL_OVERRIDE) to a day that an
-        # approved sibling card also covers must NOT be reverted on approve, even
-        # when the request carries no per-day override flag (e.g. approved after a
-        # reload dropped the in-memory unlock state).
-        outcome = _resolve_conflict_day(
-            entry(11, source='MANUAL_OVERRIDE'),
-            entry(10),
-            previous_status='APPROVED',
-            day_in_override_days=False,
+    def test_human_edit_wins_even_over_approved_sibling(self):
+        # The core fix: a value the admin saved is authoritative and survives
+        # approval, so it is never reverted to the approved sibling's value.
+        self.assertEqual(
+            _approve_day_outcome(entry(source='MANUAL'), sibling_is_approved=True),
+            'keep_current',
         )
-        self.assertEqual(outcome, 'take_latest')
+
+    def test_cleared_day_survives_approval(self):
+        # Regression for the phantom-hours bug: clearing a day (a MANUAL entry
+        # with no content) must win over an approved sibling — approval must NOT
+        # resurrect the sibling's hours onto the cleared day.
+        cleared = entry(source='MANUAL', total_hours=None, from_time=None, to_time=None)
+        self.assertFalse(_entry_has_data(cleared))
+        self.assertEqual(
+            _approve_day_outcome(cleared, sibling_is_approved=True), 'keep_current'
+        )
+
+
+class EntryHasDataTests(unittest.TestCase):
+    def test_empty_entry_has_no_data(self):
+        self.assertFalse(_entry_has_data(entry()))
+        self.assertFalse(_entry_has_data(None))
+
+    def test_entry_with_hours_or_status_has_data(self):
+        self.assertTrue(_entry_has_data(entry(total_hours=8)))
+        self.assertTrue(_entry_has_data(entry(day_status='VACATION')))
+        self.assertTrue(_entry_has_data(entry(from_time='09:00')))
 
 
 if __name__ == '__main__':

@@ -63,47 +63,46 @@ def _normalize_hours_value(value: Any) -> Optional[float]:
         return None
 
 
-def _entry_signature(from_time: Any, to_time: Any, total_hours: Any, day_status: Any = None) -> Tuple:
+def _entry_has_data(entry: Any) -> bool:
+    """Whether a day entry carries any real content (worked hours or a status).
+    A row with everything null is an intentional blank (a cleared day)."""
+    if entry is None:
+        return False
     return (
-        _normalize_time_value(from_time),
-        _normalize_time_value(to_time),
-        _normalize_hours_value(total_hours),
-        day_status,
+        entry.from_time is not None
+        or entry.to_time is not None
+        or entry.total_hours is not None
+        or entry.day_status is not None
     )
 
 
-def _entries_equal(a: Any, b: Any) -> bool:
-    return _entry_signature(a.from_time, a.to_time, a.total_hours, a.day_status) == _entry_signature(
-        b.from_time, b.to_time, b.total_hours, b.day_status
-    )
+# A day entry written by the AI extraction worker. Anything else (a human save,
+# an import, a carried-forward approved value) is treated as authoritative and
+# is never overwritten by automatic extraction.
+_MACHINE_SOURCE = 'EXTRACTED'
 
 
-def _resolve_conflict_day(current_entry, previous_entry, previous_status, day_in_override_days):
-    """Decide a single day's outcome when reconciling the latest card against a
-    previous sibling card during approval. Pure — performs no I/O.
+def _approve_day_outcome(current_entry: Any, sibling_is_approved: bool) -> str:
+    """Per-day decision when folding a sibling card's value into the card being
+    approved. Pure — no I/O. The whole reconciliation is these three cases:
 
-    Returns one of:
-      'noop'          — values identical; leave both entries untouched
-      'take_latest'   — latest value wins; delete the previous-card entry
-      'take_previous' — keep the approved previous value; replace the latest entry
-      'carry_forward' — latest card has no entry for this day; clone the previous value
+      'carry_in'      — this card has no entry for the day; clone the sibling
+                        value in so the approved card holds the full month.
+      'keep_approved' — this card's value is only an automatic extraction and an
+                        approved sibling owns the day; approved data must never be
+                        overwritten by extraction, so keep the approved value.
+      'keep_current'  — this card's value is the reviewed truth (a human save, or
+                        the sibling isn't approved); it wins, drop the sibling.
 
-    The latest value wins when the previous card is not yet approved, when the
-    admin flagged this day as an override on the request, OR when the latest
-    entry is a persisted manual override (source=MANUAL_OVERRIDE). The last case
-    is what makes a deliberate edit survive approval even if the request carries
-    no override flag (e.g. approved after a reload that dropped the in-memory
-    unlock state).
+    Note there is no "revert the human's edit" case — a value the admin saved
+    (source != EXTRACTED), including a day cleared to empty, always wins. That is
+    what makes "what you see is what gets approved" hold.
     """
     if current_entry is None:
-        return 'carry_forward'
-    if _entries_equal(current_entry, previous_entry):
-        return 'noop'
-    if previous_status != 'APPROVED':
-        return 'take_latest'
-    if day_in_override_days or current_entry.source == 'MANUAL_OVERRIDE':
-        return 'take_latest'
-    return 'take_previous'
+        return 'carry_in'
+    if sibling_is_approved and current_entry.source == _MACHINE_SOURCE:
+        return 'keep_approved'
+    return 'keep_current'
 
 
 def _sibling_entry_outranks(candidate: Dict[str, Any], existing: Dict[str, Any]) -> bool:
@@ -155,6 +154,27 @@ def _get_sibling_day_context(card: Any) -> Dict[int, Dict[str, Any]]:
             if existing is None or _sibling_entry_outranks(candidate, existing):
                 by_day[entry.day_of_month] = candidate
     return by_day
+
+
+def _approved_boundary_for_month(card: Any) -> int:
+    """Highest protected day-of-month for this employee-month: the max
+    `approved_through_day` recorded across all approved cards. Days <= this are
+    protected — automatic extraction from later cards must not fill or overwrite
+    them (they were settled by an approval, including intentional mid-month
+    days-off that carry no entry). Returns 0 when nothing is approved yet."""
+    if not card.employee_id:
+        return card.approved_through_day or 0
+    boundary = 0
+    for c in repo.get_for_monthly_breakdown(
+        employee_id=card.employee_id,
+        month=card.processing_month,
+        business_id=card.business_id,
+        site_id=card.site_id,
+    ):
+        if c.review_status == 'APPROVED' and c.approved_through_day:
+            boundary = max(boundary, c.approved_through_day)
+    return boundary
+
 
 @work_cards_bp.route('/manual', methods=['POST'])
 @token_required
@@ -539,104 +559,62 @@ def approve_work_card(card_id):
     
     data = request.get_json() or {}
     user_id = data.get('user_id')
-    override_conflict_days = data.get('override_conflict_days') or []
-    confirm_override_approved = bool(data.get('confirm_override_approved', False))
-    auto_keep_approved = bool(data.get('auto_keep_approved', False))
     # Employee-month review approves the whole group at once: once the primary
     # card's merged table is approved, the leftover sibling cards are superseded
     # so the employee no longer reads as pending anywhere.
     supersede_siblings = bool(data.get('supersede_siblings', False))
-    
+
     if not user_id:
         return api_response(status_code=400, message="User ID is required for approval", error="Bad Request")
 
-    if not isinstance(override_conflict_days, list):
-        return api_response(status_code=400, message="override_conflict_days must be an array", error="Bad Request")
-
-    override_days: Set[int] = set()
-    for item in override_conflict_days:
-        if not isinstance(item, int) or item < 1 or item > 31:
-            return api_response(
-                status_code=400,
-                message="override_conflict_days must contain integers between 1 and 31",
-                error="Bad Request"
-            )
-        override_days.add(item)
-
     try:
-        # Consolidate EVERY sibling card (not just the immediate previous one) so
-        # all of them fold into this card's approved month snapshot.
+        # Approving persists the merged month table exactly as reviewed — no
+        # per-day conflict resolution. The rules are simple:
+        #   * a day this card already holds is the human-reviewed truth and wins;
+        #   * a day only a sibling holds is folded in so the approved card carries
+        #     the full month;
+        #   * the ONE guard: an automatic extraction (source=EXTRACTED) never
+        #     overwrites an already-approved day — approved data is protected.
+        # Consolidate EVERY sibling card so all of them fold into this snapshot.
         prev_by_day = _get_sibling_day_context(card)
+        prior_boundary = _approved_boundary_for_month(card)
         current_entries = day_entry_repo.get_by_work_card(card.id)
         current_entries_by_day = {entry.day_of_month: entry for entry in current_entries}
 
-        approved_conflict_days = set()
-        for day, prev in prev_by_day.items():
-            current_entry = current_entries_by_day.get(day)
-            if current_entry and prev['is_approved'] and not _entries_equal(current_entry, prev['entry']):
-                approved_conflict_days.add(day)
-
-        requested_approved_overrides = override_days.intersection(approved_conflict_days)
-        if approved_conflict_days and not confirm_override_approved and not auto_keep_approved:
-            return api_response(
-                status_code=409,
-                message=(
-                    "Overriding approved previous data requires explicit confirmation. "
-                    "Resubmit with confirm_override_approved=true."
-                ),
-                error="Conflict",
-                data={
-                    'approved_conflict_days': sorted(list(approved_conflict_days))
-                }
+        def _clone_from(sibling_entry, day):
+            return day_entry_repo.create(
+                work_card_id=card.id,
+                day_of_month=day,
+                from_time=sibling_entry.from_time,
+                to_time=sibling_entry.to_time,
+                total_hours=sibling_entry.total_hours,
+                day_status=sibling_entry.day_status,
+                attributed_site_id=sibling_entry.attributed_site_id,
+                source='CARRIED_FORWARD',
+                is_valid=True,
             )
 
-        # Resolve each sibling day against this card before approving it.
         for day, prev in prev_by_day.items():
-            previous_entry = prev['entry']
+            sibling_entry = prev['entry']
             current_entry = current_entries_by_day.get(day)
-            outcome = _resolve_conflict_day(
-                current_entry,
-                previous_entry,
-                'APPROVED' if prev['is_approved'] else prev['card_status'],
-                day in override_days,
-            )
+            outcome = _approve_day_outcome(current_entry, prev['is_approved'])
+            if outcome == 'carry_in':
+                current_entries_by_day[day] = _clone_from(sibling_entry, day)
+            elif outcome == 'keep_approved':
+                day_entry_repo.delete(current_entry.id)
+                current_entries_by_day[day] = _clone_from(sibling_entry, day)
+            else:  # keep_current
+                day_entry_repo.delete(sibling_entry.id)
 
-            if outcome == 'noop':
-                continue
-            if outcome == 'take_latest':
-                # This card's value wins — drop the sibling's entry for this day.
-                day_entry_repo.delete(previous_entry.id)
-            elif outcome == 'take_previous':
-                # Keep the approved sibling value; replace this card's entry.
-                if current_entry is not None:
-                    day_entry_repo.delete(current_entry.id)
-                current_entries_by_day.pop(day, None)
-                cloned = day_entry_repo.create(
-                    work_card_id=card.id,
-                    day_of_month=day,
-                    from_time=previous_entry.from_time,
-                    to_time=previous_entry.to_time,
-                    total_hours=previous_entry.total_hours,
-                    day_status=previous_entry.day_status,
-                    attributed_site_id=previous_entry.attributed_site_id,
-                    source='CARRIED_FORWARD',
-                    is_valid=True
-                )
-                current_entries_by_day[day] = cloned
-            elif outcome == 'carry_forward':
-                # Sibling-only day — clone it in so the approved card holds the full month.
-                cloned = day_entry_repo.create(
-                    work_card_id=card.id,
-                    day_of_month=day,
-                    from_time=previous_entry.from_time,
-                    to_time=previous_entry.to_time,
-                    total_hours=previous_entry.total_hours,
-                    day_status=previous_entry.day_status,
-                    attributed_site_id=previous_entry.attributed_site_id,
-                    source='CARRIED_FORWARD',
-                    is_valid=True
-                )
-                current_entries_by_day[day] = cloned
+        # Extend the protected boundary: the highest day now carrying data, never
+        # shrinking below what an earlier approval already protected. Days <= this
+        # are shielded from automatic extraction by later cards (including
+        # intentional mid-month days-off that hold no entry).
+        max_day_with_data = max(
+            (e.day_of_month for e in current_entries_by_day.values() if _entry_has_data(e)),
+            default=0,
+        )
+        card.approved_through_day = max(prior_boundary, max_day_with_data) or None
 
         approved_card = repo.approve_card(card_id, user_id, g.business_id)
         if not approved_card:
@@ -946,74 +924,51 @@ def export_work_cards():
 def _serialize_day_entries_for_card(card: Any) -> list:
     """Build the merged month view of day entries for a single work card.
 
-    Returns the card's own day entries with conflict/lock metadata relative to
-    its immediate-previous sibling card, plus previous-only days appended for
-    full-month context. Days that conflict with an APPROVED prior card are
-    returned locked and with the approved value substituted in (source of
-    truth); every other day shows the latest card's value. Pure of HTTP — the
-    same logic backs both the per-card and employee-month endpoints.
+    Returns one row per day: the card's own entries plus sibling-only days
+    appended for full-month context. Each row carries two flags for the UI:
+
+      * is_approved  — the value shown comes from an approved source.
+      * is_protected — the day sits in the approved zone (approved, or its
+                       day-of-month <= the approved boundary); automatic
+                       extraction from later cards leaves these days alone.
+
+    Every cell stays editable by the admin regardless of these flags — they
+    drive display only. The one substitution: a day this card holds only from
+    automatic extraction (source=EXTRACTED) that an approved sibling also owns
+    is shown with the approved value, so the table reflects what approval keeps.
     """
     entries = day_entry_repo.get_by_work_card(card.id)
     prev_by_day = _get_sibling_day_context(card)
+    boundary = _approved_boundary_for_month(card)
     current_entries_by_day = {entry.day_of_month: entry for entry in entries}
+    card_approved = card.review_status == 'APPROVED'
     data = []
 
     for entry in entries:
         row = model_to_dict(entry)
-        row['has_conflict'] = False
-        row['conflict_type'] = None
-        row['is_locked'] = False
-        row['previous_work_card_id'] = None
-        row['previous_work_card_status'] = None
-        row['previous_entry'] = None
-        row['locked_from_previous'] = False
-        row['suggested_entry'] = None
-
         prev = prev_by_day.get(entry.day_of_month)
-        if prev and not _entries_equal(entry, prev['entry']):
-            previous_entry = prev['entry']
-            row['has_conflict'] = True
-            row['conflict_type'] = 'WITH_APPROVED' if prev['is_approved'] else 'WITH_PENDING'
-            row['is_locked'] = prev['is_approved']
-            row['previous_work_card_id'] = str(prev['card_id'])
-            row['previous_work_card_status'] = prev['card_status']
-            row['previous_entry'] = model_to_dict(previous_entry)
-
-            if prev['is_approved']:
-                row['suggested_entry'] = {
-                    'from_time': _normalize_time_value(entry.from_time),
-                    'to_time': _normalize_time_value(entry.to_time),
-                    'total_hours': float(entry.total_hours) if entry.total_hours is not None else None,
-                    'day_status': entry.day_status,
-                }
-                row['from_time'] = _normalize_time_value(previous_entry.from_time)
-                row['to_time'] = _normalize_time_value(previous_entry.to_time)
-                row['total_hours'] = float(previous_entry.total_hours) if previous_entry.total_hours is not None else None
-                row['day_status'] = previous_entry.day_status
-                row['attributed_site_id'] = str(previous_entry.attributed_site_id) if previous_entry.attributed_site_id else None
-
+        approved_owner = bool(prev and prev['is_approved'])
+        substituted = approved_owner and entry.source == _MACHINE_SOURCE
+        if substituted:
+            src = prev['entry']
+            row['from_time'] = _normalize_time_value(src.from_time)
+            row['to_time'] = _normalize_time_value(src.to_time)
+            row['total_hours'] = float(src.total_hours) if src.total_hours is not None else None
+            row['day_status'] = src.day_status
+            row['attributed_site_id'] = str(src.attributed_site_id) if src.attributed_site_id else None
+        row['is_approved'] = card_approved or substituted
+        row['is_protected'] = row['is_approved'] or entry.day_of_month <= boundary
         data.append(row)
 
     # Show sibling-only days even when absent from this card so review has full-month context.
     for day, prev in prev_by_day.items():
         if day in current_entries_by_day:
             continue
-        previous_entry = prev['entry']
-        row = model_to_dict(previous_entry)
+        src = prev['entry']
+        row = model_to_dict(src)
         row['work_card_id'] = str(card.id)
-        row['source'] = (
-            'LOCKED_PREVIOUS_APPROVED'
-            if prev['is_approved']
-            else 'PREVIOUS_CARRIED_CONTEXT'
-        )
-        row['has_conflict'] = False
-        row['conflict_type'] = None
-        row['is_locked'] = prev['is_approved']
-        row['locked_from_previous'] = prev['is_approved']
-        row['previous_work_card_id'] = str(prev['card_id'])
-        row['previous_work_card_status'] = prev['card_status']
-        row['previous_entry'] = model_to_dict(previous_entry)
-        row['suggested_entry'] = None
+        row['is_approved'] = prev['is_approved']
+        row['is_protected'] = prev['is_approved'] or day <= boundary
         data.append(row)
 
     data.sort(key=lambda item: item.get('day_of_month') or 0)
@@ -1280,11 +1235,13 @@ def update_day_entries(card_id):
                 'to_time': to_time_obj,
                 'total_hours': total_hours_val,
                 'day_status': day_status,
-                'updated_by_user_id': g.current_user.id
+                'updated_by_user_id': g.current_user.id,
+                # Every human save is the authoritative value for that day —
+                # including clearing it to empty. Marking it MANUAL means a
+                # later automatic extraction, and approval consolidation, never
+                # overwrite it (only EXTRACTED values defer to approved data).
+                'source': 'MANUAL',
             }
-
-            if entry.get('is_override'):
-                entry_data['source'] = 'MANUAL_OVERRIDE'
 
             # Store NULL when the attribution equals the card's own site (the
             # default) or is unset, so the column only ever holds genuine
@@ -1304,8 +1261,6 @@ def update_day_entries(card_id):
                 # Create new entry
                 entry_data['work_card_id'] = card_id
                 entry_data['day_of_month'] = day
-                if 'source' not in entry_data:
-                    entry_data['source'] = 'MANUAL'
                 new_entry = day_entry_repo.create(**entry_data)
                 updated_entries.append(new_entry)
 

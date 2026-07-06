@@ -117,19 +117,11 @@ interface DayEntryRow {
   to_time: string;
   total_hours: string;
   day_status: DayStatus | null;
-  latest_from_time: string;
-  latest_to_time: string;
-  latest_total_hours: string;
-  latest_day_status: DayStatus | null;
-  previousEntry: DayEntry['previous_entry'];
-  previous_work_card_id: string | null;
   attributed_site_id: string | null;
   isDirty: boolean;
-  isLocked: boolean;
-  hasConflict: boolean;
-  conflictType: 'WITH_APPROVED' | 'WITH_PENDING' | null;
-  lockedFromPrevious: boolean;
-  resolvedApprovedConflict: 'KEEP_PREVIOUS' | 'USE_LATEST' | null;
+  // Display-only: the day sits in the approved zone. Still fully editable.
+  isApproved: boolean;
+  isProtected: boolean;
 }
 
 // One reference image in the employee-month strip. Manual ghost cards carry no
@@ -241,8 +233,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [waSelectedChatId, setWaSelectedChatId] = useState('');
   const [waNote, setWaNote] = useState('');
   const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
-  const [manuallyUnlockedDays, setManuallyUnlockedDays] = useState<Set<number>>(new Set());
-  const [showRelockAllConfirm, setShowRelockAllConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<WorkCardExtraction | null>(null);
   const [extractionsByCardId, setExtractionsByCardId] = useState<Record<string, WorkCardExtraction | null>>({});
@@ -743,56 +733,21 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     });
 
     const rows: DayEntryRow[] = [];
-    const autoUnlockedDays = new Set<number>();
     for (let day = 1; day <= daysInMonth; day++) {
       const existing = entriesMap.get(day);
-      const normalizedFrom = normalizeTimeToHourMinute(existing?.from_time);
-      const normalizedTo = normalizeTimeToHourMinute(existing?.to_time);
-      const suggested = existing?.suggested_entry;
-
-      // If this entry was previously saved as a manual override, display the
-      // user's saved values (in suggested_entry) instead of the approved baseline.
-      const isManualOverride = existing?.source === 'MANUAL_OVERRIDE' && suggested && existing?.is_locked;
-      if (isManualOverride) {
-        autoUnlockedDays.add(day);
-      }
-
-      const displayFrom = isManualOverride ? normalizeTimeToHourMinute(suggested.from_time) : normalizedFrom;
-      const displayTo = isManualOverride ? normalizeTimeToHourMinute(suggested.to_time) : normalizedTo;
-      const displayHours = isManualOverride ? (suggested.total_hours?.toString() || '') : (existing?.total_hours?.toString() || '');
-      const displayStatus = isManualOverride ? (suggested.day_status || null) : (existing?.day_status || null);
-
       rows.push({
         day_of_month: day,
-        from_time: displayFrom,
-        to_time: displayTo,
-        total_hours: displayHours,
-        day_status: displayStatus,
-        latest_from_time: suggested
-          ? normalizeTimeToHourMinute(suggested.from_time)
-          : normalizedFrom,
-        latest_to_time: suggested
-          ? normalizeTimeToHourMinute(suggested.to_time)
-          : normalizedTo,
-        latest_total_hours: suggested
-          ? (suggested.total_hours?.toString() || '')
-          : (existing?.total_hours?.toString() || ''),
-        latest_day_status: suggested
-          ? (suggested.day_status || null)
-          : (existing?.day_status || null),
-        previousEntry: existing?.previous_entry || null,
-        previous_work_card_id: existing?.previous_work_card_id || null,
+        from_time: normalizeTimeToHourMinute(existing?.from_time),
+        to_time: normalizeTimeToHourMinute(existing?.to_time),
+        total_hours: existing?.total_hours?.toString() || '',
+        day_status: existing?.day_status || null,
         attributed_site_id: existing?.attributed_site_id ?? null,
         isDirty: false,
-        isLocked: !!existing?.is_locked,
-        hasConflict: !!existing?.has_conflict,
-        conflictType: existing?.conflict_type || null,
-        lockedFromPrevious: !!existing?.locked_from_previous,
-        resolvedApprovedConflict: null,
+        isApproved: !!existing?.is_approved,
+        isProtected: !!existing?.is_protected,
       });
     }
     setDayEntries(rows);
-    setManuallyUnlockedDays(autoUnlockedDays);
   }, [selectedMonth]);
 
 
@@ -1222,10 +1177,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const handleEntryChange = (dayIndex: number, field: 'from_time' | 'to_time' | 'total_hours', value: string) => {
     setDayEntries(prev => {
       const updated = [...prev];
-      const entry = updated[dayIndex];
-      if (isEntryEffectivelyLocked(entry) && !manuallyUnlockedDays.has(entry.day_of_month)) {
-        return prev;
-      }
       updated[dayIndex] = {
         ...updated[dayIndex],
         [field]: value,
@@ -1250,9 +1201,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const handleStatusChange = (dayIndex: number, status: DayStatus | null) => {
     setDayEntries(prev => {
       const updated = [...prev];
-      if (isEntryEffectivelyLocked(updated[dayIndex]) && !manuallyUnlockedDays.has(updated[dayIndex].day_of_month)) {
-        return prev;
-      }
       updated[dayIndex] = {
         ...updated[dayIndex],
         day_status: status,
@@ -1271,9 +1219,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     setDayEntries(prev => {
       const updated = [...prev];
       const entry = updated[dayIndex];
-      if (isEntryEffectivelyLocked(entry) && !manuallyUnlockedDays.has(entry.day_of_month)) {
-        return prev;
-      }
       const normalized = !siteValue || siteValue === siteId ? null : siteValue;
       if (normalized === entry.attributed_site_id) return prev;
       updated[dayIndex] = { ...entry, attributed_site_id: normalized, isDirty: true };
@@ -1288,20 +1233,13 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     day_status?: DayStatus | null;
     attributed_site_id?: string | null;
   }) => {
-    // Locked days are silently skipped below; surface that to the user instead
-    // of always reporting success for every selected day.
-    const selectedSet = new Set(selectedDays);
-    const lockedSkipped = dayEntries.filter(
-      e => selectedSet.has(e.day_of_month) && isEntryEffectivelyLocked(e) && !manuallyUnlockedDays.has(e.day_of_month)
-    ).length;
-    const appliedCount = selectedDays.length - lockedSkipped;
+    const appliedCount = selectedDays.length;
 
     setDayEntries(prev => {
       const selected = new Set(selectedDays);
       const updated = [...prev];
       for (let i = 0; i < updated.length; i++) {
         if (!selected.has(updated[i].day_of_month)) continue;
-        if (isEntryEffectivelyLocked(updated[i]) && !manuallyUnlockedDays.has(updated[i].day_of_month)) continue;
 
         const entry = { ...updated[i], isDirty: true };
 
@@ -1336,42 +1274,16 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     });
 
     if (appliedCount === 0) {
-      showToast('לא בוצע עדכון — כל הימים שנבחרו נעולים', 'info');
-    } else if (lockedSkipped > 0) {
-      showToast(`עודכנו ${appliedCount} ימים — ${lockedSkipped} ימים נעולים דולגו`, 'info');
+      showToast('לא נבחרו ימים', 'info');
     } else {
       showToast(`עודכנו ${appliedCount} ימים`, 'success');
     }
   };
 
-  // An entry is "effectively locked" when either the backend marked it
-  // is_locked (conflict with a previous approved card) OR the current card
-  // itself is already approved — in both cases edits must go through the
-  // explicit per-cell unlock affordance.
-  const isEntryEffectivelyLocked = (entry: DayEntryRow): boolean => {
-    if (entry.isLocked) return true;
-    if (selectedCard?.review_status === 'APPROVED') return true;
-    return false;
-  };
-
-  const isCellEditable = (entry: DayEntryRow): boolean => {
-    if (!isAdmin) return false;
-    if (isEntryEffectivelyLocked(entry) && !manuallyUnlockedDays.has(entry.day_of_month)) return false;
-    return true;
-  };
-
-  // The bulk panel only knows the backend's per-day is_locked flag, so it would
-  // let the admin select days that are locked merely because the whole card is
-  // approved. Surface the *effective* lock state so those days are disabled in
-  // the calendar, matching the table and avoiding "applied" toasts that no-op.
-  const bulkPanelEntries = useMemo(
-    () => dayEntries.map(e => ({
-      ...e,
-      isLocked: isEntryEffectivelyLocked(e) && !manuallyUnlockedDays.has(e.day_of_month),
-    })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dayEntries, manuallyUnlockedDays, selectedCard?.review_status]
-  );
+  // Every cell is editable by an admin — approved days included. Approval
+  // marks days visually (isProtected) but never blocks editing; whatever the
+  // admin saves is authoritative.
+  const isCellEditable = (_entry: DayEntryRow): boolean => isAdmin;
 
   // Options for the per-day site-attribution dropdown: the card's own site
   // (default) plus every other site, searchable by name.
@@ -1382,72 +1294,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     ],
     [sites, siteId]
   );
-
-  // Shared by the per-row and bulk re-lock paths: a dirty unlocked row reverts to
-  // its previously approved values; everything else is left untouched.
-  const revertDayToPrevious = (e: DayEntryRow): DayEntryRow =>
-    (e.isDirty && e.previousEntry)
-      ? {
-          ...e,
-          from_time: normalizeTimeToHourMinute(e.previousEntry?.from_time),
-          to_time: normalizeTimeToHourMinute(e.previousEntry?.to_time),
-          total_hours: e.previousEntry?.total_hours?.toString() || '',
-          isDirty: false,
-        }
-      : e;
-
-  const handleToggleCellLock = (dayOfMonth: number) => {
-    if (manuallyUnlockedDays.has(dayOfMonth)) {
-      // Re-locking: revert to previous values if dirty
-      setDayEntries(prev =>
-        prev.map(e => (e.day_of_month === dayOfMonth ? revertDayToPrevious(e) : e))
-      );
-    }
-    setManuallyUnlockedDays(prev => {
-      const next = new Set(prev);
-      if (next.has(dayOfMonth)) next.delete(dayOfMonth);
-      else next.add(dayOfMonth);
-      return next;
-    });
-  };
-
-  // Every day that is currently locked (per-day flag or whole-card approval).
-  const lockedDays = useMemo(
-    () => dayEntries.filter(e => isEntryEffectivelyLocked(e)).map(e => e.day_of_month),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dayEntries, selectedCard?.review_status]
-  );
-  const allLockedUnlocked =
-    lockedDays.length > 0 && lockedDays.every(d => manuallyUnlockedDays.has(d));
-
-  const relockAll = (opts: { revert: boolean }) => {
-    if (opts.revert) {
-      setDayEntries(prev =>
-        prev.map(e => (manuallyUnlockedDays.has(e.day_of_month) ? revertDayToPrevious(e) : e))
-      );
-    }
-    setManuallyUnlockedDays(prev => {
-      const next = new Set(prev);
-      lockedDays.forEach(d => next.delete(d));
-      return next;
-    });
-  };
-
-  const handleToggleAllLocks = () => {
-    if (!allLockedUnlocked) {
-      // Unlock the whole table
-      setManuallyUnlockedDays(prev => {
-        const next = new Set(prev);
-        lockedDays.forEach(d => next.add(d));
-        return next;
-      });
-      return;
-    }
-    // Re-lock the whole table — confirm first if there are unsaved edits
-    const hasDirty = dayEntries.some(e => manuallyUnlockedDays.has(e.day_of_month) && e.isDirty);
-    if (hasDirty) setShowRelockAllConfirm(true);
-    else relockAll({ revert: false });
-  };
 
   const resetImageTransform = useCallback(() => {
     setImageScale(1);
@@ -1574,9 +1420,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
 
     const { showNoChangesToast = true, showSuccessToast = true } = options ?? {};
 
-    const dirtyEntries = dayEntries.filter(
-      e => (!isEntryEffectivelyLocked(e) || manuallyUnlockedDays.has(e.day_of_month)) && e.isDirty && (e.from_time || e.to_time || e.total_hours || e.day_status !== undefined)
-    );
+    // Every dirty day is sent — including one cleared to empty. Clearing a day
+    // is a real edit that must persist (that is the whole point of the model);
+    // there is no content filter that could silently drop it.
+    const dirtyEntries = dayEntries.filter(e => e.isDirty);
 
     if (dirtyEntries.length === 0 && !monthlyTotalDirty) {
       if (showNoChangesToast) {
@@ -1584,10 +1431,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       }
       return false;
     }
-
-    const overrideCount = dirtyEntries.filter(
-      e => e.isLocked && manuallyUnlockedDays.has(e.day_of_month)
-    ).length;
 
     // Resolve the monthly_total_hours payload value: empty string clears it,
     // otherwise parse to number. Validation also happens server-side.
@@ -1615,12 +1458,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         total_hours: e.total_hours ? parseFloat(e.total_hours) : null,
         day_status: e.day_status || null,
         attributed_site_id: e.attributed_site_id ?? null,
-        // Any day the admin explicitly unlocked and edited is a deliberate
-        // override. Persist that intent (source=MANUAL_OVERRIDE) so it survives
-        // a reload — do NOT key this off e.isLocked, which is only true when the
-        // value already differed from an approved sibling at load time and is
-        // false for the common "edit a duplicate day" case.
-        ...(manuallyUnlockedDays.has(e.day_of_month) ? { is_override: true } : {}),
       }));
 
       const wasApproved = selectedCard.review_status === 'APPROVED';
@@ -1665,8 +1502,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         const flippedToReview = cardReviewStatus === 'NEEDS_REVIEW' && wasApproved;
         if (flippedToReview) {
           showToast('הנתונים נשמרו. הכרטיס הוחזר לסטטוס "ממתין לסקירה" — יש לאשרו מחדש.', 'success');
-        } else if (overrideCount > 0) {
-          showToast(`הנתונים נשמרו. ${overrideCount} ימים מאושרים עודכנו ידנית.`, 'success');
         } else {
           showToast('הנתונים נשמרו בהצלחה', 'success');
         }
@@ -1679,34 +1514,23 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     } finally {
       setIsSaving(false);
     }
-  }, [selectedCard, dayEntries, manuallyUnlockedDays, initializeDayEntries, showToast, monthlyTotalDirty, monthlyTotalInput, refreshMonthlyBreakdown]);
+  }, [selectedCard, dayEntries, initializeDayEntries, showToast, monthlyTotalDirty, monthlyTotalInput, refreshMonthlyBreakdown]);
 
   const handleApprove = async () => {
     if (!selectedCard || !user) return;
 
     try {
-      // Cell-level overrides: any day the admin explicitly unlocked is an
-      // intentional override of an approved previous value — regardless of
-      // whether the load-time value happened to match the previous card (in
-      // which case e.isLocked is false). Filtering on e.isLocked here was the
-      // bug: a duplicate day edited after unlocking was dropped from the
-      // override list and silently reverted on approve.
-      const cellOverrideDays = [...manuallyUnlockedDays];
+      // Approve persists the merged table exactly as reviewed. Approving the
+      // merged table approves the whole employee-month group: the sibling cards
+      // are superseded so the employee no longer reads pending.
       await approveWorkCard(selectedCard.id, user.id, {
-        override_conflict_days: cellOverrideDays.length > 0 ? cellOverrideDays : undefined,
-        confirm_override_approved: cellOverrideDays.length > 0 ? true : undefined,
-        // Always defer to the approved previous card for days it already
-        // covers. The second card is just filling in the remaining days.
-        auto_keep_approved: true,
-        // Approving the merged table approves the whole employee-month group:
-        // the sibling cards are superseded so the employee no longer reads pending.
         supersede_siblings: true,
       });
       showToast('שעות העובד אושרו בהצלחה', 'success');
 
       // Mark every card in the group APPROVED locally (mirrors the backend
       // supersede). The status change flips groupEntriesSignature, so the
-      // entries effect refetches the merged table with refreshed locks and the
+      // entries effect refetches the merged table with refreshed flags and the
       // monthly breakdown re-runs — no manual refetch needed here.
       const groupCardIds = new Set(selectedGroup?.cards.map(c => c.id) ?? [selectedCard.id]);
       setWorkCards(prev => prev.map(c =>
@@ -1825,15 +1649,8 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   // Without this match, hasUnsavedChanges can light up the Save button while
   // the underlying save bails with "no changes."
   const hasContentfulDirtyEntries = useMemo(
-    () => dayEntries.some(e =>
-      (!isEntryEffectivelyLocked(e) || manuallyUnlockedDays.has(e.day_of_month)) &&
-      e.isDirty &&
-      (e.from_time || e.to_time || e.total_hours || e.day_status !== undefined)
-    ),
-    // isEntryEffectivelyLocked closes over selectedCard.review_status, which is
-    // captured here so the memo re-runs when the card's status flips.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dayEntries, manuallyUnlockedDays, selectedCard?.review_status]
+    () => dayEntries.some(e => e.isDirty),
+    [dayEntries]
   );
   const hasUnsavedChanges = hasContentfulDirtyEntries || monthlyTotalDirty;
 
@@ -2560,23 +2377,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         <span className="material-symbols-outlined text-sm">calendar_month</span>
                         עדכון מרובה
                       </button>
-                      {isAdmin && lockedDays.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={handleToggleAllLocks}
-                          disabled={!selectedCard || isEmbedded}
-                          className={`px-2 py-1 rounded-lg text-xs flex items-center gap-1 transition-colors ${
-                            allLockedUnlocked
-                              ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
-                              : 'border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'
-                          } disabled:opacity-50`}
-                        >
-                          <span className="material-symbols-outlined text-sm">
-                            {allLockedUnlocked ? 'lock' : 'lock_open'}
-                          </span>
-                          {allLockedUnlocked ? 'נעל מחדש את כל הטבלה' : 'בטל נעילה לכל הטבלה'}
-                        </button>
-                      )}
                     </div>
                     <div className="flex items-center gap-3 flex-wrap justify-end">
                       <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
@@ -2730,7 +2530,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                   {showBulkPanel && selectedCard && (
                     <BulkDayUpdatePanel
                       month={selectedMonth}
-                      dayEntries={bulkPanelEntries}
+                      dayEntries={dayEntries}
                       onApply={handleBulkApply}
                       onClose={() => setShowBulkPanel(false)}
                       disabled={!isAdmin}
@@ -2770,8 +2570,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             const dayQuality = extractionQualityMeta.rowQuality[String(entry.day_of_month)] || null;
                             const isReviewRequired = extractionQualityMeta.reviewRequired.has(entry.day_of_month) || Boolean(dayQuality?.review_required);
                             const isOffMark = extractionQualityMeta.offMark.has(entry.day_of_month) || dayQuality?.row_state === 'OFF_MARK';
-                            const effectivelyLocked = isEntryEffectivelyLocked(entry);
-                            const isManualOverride = effectivelyLocked && manuallyUnlockedDays.has(entry.day_of_month);
                             const cellEditable = isCellEditable(entry);
                             const dayIndex = getDayOfWeek(selectedCard!.processing_month, entry.day_of_month);
                             const isSaturday = dayIndex === 6;
@@ -2782,16 +2580,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                 className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
                                   isActive
                                     ? 'ring-2 ring-inset ring-primary/60 bg-primary/5 dark:bg-primary/10'
-                                    : isManualOverride
-                                    ? 'bg-orange-50 dark:bg-orange-900/10'
-                                    : effectivelyLocked
-                                    ? 'bg-slate-100 dark:bg-slate-800/40'
+                                    : entry.isDirty
+                                    ? 'bg-yellow-50 dark:bg-yellow-900/10'
+                                    : entry.isProtected
+                                    ? 'bg-green-50 dark:bg-green-900/10'
                                     : isReviewRequired
                                     ? 'bg-amber-50 dark:bg-amber-900/10'
                                     : isOffMark
                                     ? 'bg-blue-50 dark:bg-blue-900/10'
-                                    : entry.isDirty
-                                    ? 'bg-yellow-50 dark:bg-yellow-900/10'
                                     : entry.day_status
                                     ? 'bg-purple-50 dark:bg-purple-900/10'
                                     : isSaturday
@@ -2810,18 +2606,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                       >
                                         {entry.day_of_month}
                                       </button>
-                                      {effectivelyLocked && isAdmin && (
-                                        <button
-                                          type="button"
-                                          onClick={() => handleToggleCellLock(entry.day_of_month)}
-                                          className="text-slate-400 hover:text-orange-500 transition-colors"
-                                          title={isManualOverride ? 'נעל מחדש' : 'בטל נעילה לעריכה'}
-                                          aria-label={isManualOverride ? 'Re-lock day' : 'Unlock day for editing'}
+                                      {entry.isProtected && (
+                                        <span
+                                          className="material-symbols-outlined text-sm text-green-600 dark:text-green-400"
+                                          title="יום מאושר — ניתן לעריכה בלחיצה"
+                                          aria-label="Approved day (still editable)"
                                         >
-                                          <span className="material-symbols-outlined text-sm">
-                                            {isManualOverride ? 'lock_open' : 'lock'}
-                                          </span>
-                                        </button>
+                                          verified
+                                        </span>
                                       )}
                                       {typeof zone?.confidence === 'number' && (
                                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" title={`Confidence ${Math.round(zone.confidence * 100)}%`}>
@@ -2853,7 +2645,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     onWheel={blockWheelValueChange}
                                     onKeyDown={blockArrowKeyValueChange}
                                     disabled={!cellEditable || !!entry.day_status}
-                                    className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 ${isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
+                                    className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 border-slate-200 dark:border-slate-600`}
                                     aria-label={`שעת כניסה יום ${entry.day_of_month}`}
                                   />
                                 </td>
@@ -2866,7 +2658,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     onWheel={blockWheelValueChange}
                                     onKeyDown={blockArrowKeyValueChange}
                                     disabled={!cellEditable || !!entry.day_status}
-                                    className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 ${isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
+                                    className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 border-slate-200 dark:border-slate-600`}
                                     aria-label={`שעת יציאה יום ${entry.day_of_month}`}
                                   />
                                 </td>
@@ -2882,7 +2674,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     onWheel={blockWheelValueChange}
                                     onKeyDown={blockArrowKeyValueChange}
                                     disabled={!cellEditable || !!entry.day_status}
-                                    className={`no-spinner w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 ${isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
+                                    className={`no-spinner w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary disabled:opacity-40 border-slate-200 dark:border-slate-600`}
                                     placeholder="0"
                                     aria-label={`סך שעות יום ${entry.day_of_month}`}
                                   />
@@ -2892,7 +2684,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                     value={entry.day_status || ''}
                                     onChange={(e) => handleStatusChange(index, (e.target.value as DayStatus) || null)}
                                     disabled={!cellEditable}
-                                    className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary text-sm ${isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
+                                    className={`w-full px-2 py-1 text-center bg-white dark:bg-slate-800 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus:border-primary text-sm border-slate-200 dark:border-slate-600`}
                                     aria-label={`סטטוס יום ${entry.day_of_month}`}
                                   >
                                     <option value="">—</option>
@@ -2911,7 +2703,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                       disabled={!cellEditable}
                                       ariaLabel={`אתר יום ${entry.day_of_month}`}
                                       searchPlaceholder="חיפוש אתר..."
-                                      className={`w-full px-2 py-1 bg-white dark:bg-slate-800 border rounded text-sm text-right disabled:opacity-40 ${entry.attributed_site_id ? 'border-indigo-400 ring-1 ring-indigo-300 text-indigo-700 dark:text-indigo-300' : isManualOverride ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200 dark:border-slate-600'}`}
+                                      className={`w-full px-2 py-1 bg-white dark:bg-slate-800 border rounded text-sm text-right disabled:opacity-40 ${entry.attributed_site_id ? 'border-indigo-400 ring-1 ring-indigo-300 text-indigo-700 dark:text-indigo-300' : 'border-slate-200 dark:border-slate-600'}`}
                                     />
                                   </td>
                                 )}
@@ -3060,51 +2852,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
             >
               <span className="material-symbols-outlined text-lg">send</span>
               <span>{isSendingWhatsApp ? 'שולח...' : 'שלח'}</span>
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        isOpen={showRelockAllConfirm}
-        onClose={() => setShowRelockAllConfirm(false)}
-        title="נעילת כל הטבלה מחדש"
-        maxWidth="sm"
-      >
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 text-blue-600 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-100 dark:border-blue-800">
-            <span className="material-symbols-outlined text-2xl">info</span>
-            <p className="text-sm font-medium">יש שינויים שלא נשמרו</p>
-          </div>
-          <p className="text-slate-600 dark:text-slate-300">
-            לפני נעילת הטבלה — האם לשמור את הערכים החדשים שערכת, או לחזור לערכים הקודמים?
-          </p>
-          <div className="flex justify-end gap-3 pt-4">
-            <button
-              onClick={() => setShowRelockAllConfirm(false)}
-              className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors font-medium text-sm"
-            >
-              ביטול
-            </button>
-            <button
-              onClick={() => {
-                relockAll({ revert: true });
-                setShowRelockAllConfirm(false);
-              }}
-              className="px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors font-medium text-sm"
-            >
-              השלך שינויים
-            </button>
-            <button
-              onClick={async () => {
-                await saveDayEntries();
-                relockAll({ revert: false });
-                setShowRelockAllConfirm(false);
-              }}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex items-center gap-2"
-            >
-              <span className="material-symbols-outlined text-lg">save</span>
-              <span>שמור שינויים</span>
             </button>
           </div>
         </div>
