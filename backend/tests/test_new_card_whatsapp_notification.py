@@ -22,6 +22,7 @@ from backend.app.models.business import Business
 from backend.app.models.users import User
 from backend.app.models.whatsapp import WhatsAppNotificationSettings
 from backend.app.models.work_cards import WorkCard, WorkCardFile
+from backend.app.repositories.business_repository import BusinessRepository
 from backend.app.repositories.whatsapp_repository import WhatsAppNotificationSettingsRepository
 from backend.app.services.work_card_notifier import maybe_notify_new_card
 
@@ -59,13 +60,7 @@ class _BaseWA(unittest.TestCase):
 
     def tearDown(self):
         try:
-            for c in WorkCard.query.filter_by(business_id=self.business.id).all():
-                db.session.delete(c)
-            WhatsAppNotificationSettings.query.filter_by(business_id=self.business.id).delete()
-            for u in User.query.filter_by(business_id=self.business.id).all():
-                db.session.delete(u)
-            db.session.delete(Business.query.get(self.business.id))
-            db.session.commit()
+            BusinessRepository().hard_delete(self.business.id)
         except Exception:
             db.session.rollback()
         self.ctx.pop()
@@ -260,9 +255,7 @@ class NotificationSettingsApiTests(_BaseWA):
         resp = self.client.put(self.URL, json=body, headers=self.headers)
         self.assertEqual(resp.status_code, 400)
 
-        db.session.delete(foreigner)
-        db.session.delete(Business.query.get(other_biz.id))
-        db.session.commit()
+        BusinessRepository().hard_delete(other_biz.id)
 
 
 if __name__ == '__main__':

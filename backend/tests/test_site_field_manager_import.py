@@ -21,6 +21,7 @@ from backend.app.auth_utils import encode_auth_token
 from backend.app.models.business import Business
 from backend.app.models.sites import Site
 from backend.app.models.users import User
+from backend.app.repositories.business_repository import BusinessRepository
 
 
 def _build_xlsx(headers, rows):
@@ -85,12 +86,7 @@ class SiteFieldManagerImportTests(unittest.TestCase):
 
     def tearDown(self):
         try:
-            for s in Site.query.filter_by(business_id=self.business.id).all():
-                db.session.delete(s)
-            for u in User.query.filter_by(business_id=self.business.id).all():
-                db.session.delete(u)
-            db.session.delete(Business.query.get(self.business.id))
-            db.session.commit()
+            BusinessRepository().hard_delete(self.business.id)
         except Exception:
             db.session.rollback()
         self.ctx.pop()
