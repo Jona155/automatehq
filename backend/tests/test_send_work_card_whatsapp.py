@@ -19,6 +19,7 @@ from backend.app.models.business import Business
 from backend.app.models.sites import Site, Employee
 from backend.app.models.users import User
 from backend.app.models.work_cards import WorkCard, WorkCardFile
+from backend.app.repositories.business_repository import BusinessRepository
 from backend.app.services.whatsapp_listener_client import (
     WhatsAppNotConnectedError,
     WhatsAppPayloadTooLargeError,
@@ -87,16 +88,7 @@ class SendWorkCardWhatsAppTests(unittest.TestCase):
 
     def tearDown(self):
         try:
-            for c in WorkCard.query.filter_by(business_id=self.business.id).all():
-                db.session.delete(c)
-            for e in Employee.query.filter_by(business_id=self.business.id).all():
-                db.session.delete(e)
-            for s in Site.query.filter_by(business_id=self.business.id).all():
-                db.session.delete(s)
-            for u in User.query.filter_by(business_id=self.business.id).all():
-                db.session.delete(u)
-            db.session.delete(Business.query.get(self.business.id))
-            db.session.commit()
+            BusinessRepository().hard_delete(self.business.id)
         except Exception:
             db.session.rollback()
         self.ctx.pop()
