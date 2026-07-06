@@ -258,6 +258,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [imageRotation, setImageRotation] = useState(0);
   const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
   const [isPanningImage, setIsPanningImage] = useState(false);
+  // Expand the image viewer to fill the screen for reviewing dense/handwritten
+  // cards. Morphs the existing viewer node via CSS (see the panel below) so
+  // zoom/rotate/pan and the current transform carry over unchanged.
+  const [isImageFullscreen, setIsImageFullscreen] = useState(false);
   const [highlightedImageDay, setHighlightedImageDay] = useState<number | null>(null);
   const [panStart, setPanStart] = useState<{ x: number; y: number; originX: number; originY: number } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1301,6 +1305,23 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     setImageOffset({ x: 0, y: 0 });
   }, []);
 
+  // While the image viewer is full screen, lock body scroll (mirrors Modal.tsx)
+  // and let Escape exit it. Wired only while active so it never clashes with the
+  // focus-mode arrow keys or the WhatsApp modal's own Escape handling.
+  useEffect(() => {
+    if (!isImageFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsImageFullscreen(false);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isImageFullscreen]);
+
   const zoomImage = useCallback((direction: 'in' | 'out') => {
     setImageScale((prev) => {
       const next = direction === 'in' ? prev + 0.2 : prev - 0.2;
@@ -2140,7 +2161,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                 {/* Image Panel */}
                 <div className={`${imagePanelWidth} relative group`}>
                 {isEmbedded && <ReviewOverlay onClick={handleOpenInReviewMode} />}
-                <div className="flex flex-col lg:border-l border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 h-[400px] lg:h-full">
+                <div className={`flex flex-col border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 ${isImageFullscreen ? 'fixed inset-0 z-40 w-screen h-screen' : 'lg:border-l h-[400px] lg:h-full'}`}>
                   <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between gap-2">
                     <h4 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
                       <span className="material-symbols-outlined text-lg">image</span>
@@ -2237,6 +2258,17 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           title="איפוס"
                         >
                           אפס
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsImageFullscreen((prev) => !prev)}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-full hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                          aria-label={isImageFullscreen ? 'צא ממסך מלא' : 'מסך מלא'}
+                          title={isImageFullscreen ? 'צא ממסך מלא' : 'מסך מלא'}
+                        >
+                          <span className="material-symbols-outlined text-base">
+                            {isImageFullscreen ? 'fullscreen_exit' : 'fullscreen'}
+                          </span>
                         </button>
                         {activeImage?.hasFile && (
                           <>
