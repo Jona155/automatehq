@@ -20,6 +20,7 @@ from ..repositories.whatsapp_repository import WhatsAppNotificationSettingsRepos
 from ..repositories.user_repository import UserRepository
 from ..repositories.work_card_file_repository import WorkCardFileRepository
 from ..repositories.site_repository import SiteRepository
+from ..repositories.business_repository import BusinessRepository
 from ..services.whatsapp_listener_client import (
     WhatsAppListenerClient,
     WhatsAppListenerError,
@@ -58,12 +59,12 @@ def _in_window(day: int, start_day: int, end_day: int) -> bool:
     return day >= start_day or day <= end_day
 
 
-def _build_caption(work_card) -> str:
+def _build_caption(work_card, business_name: str) -> str:
     lines = [
         '📄 כרטיס עבודה חדש התקבל!',
         '',
         'כרטיס זה התקבל לאחר תקופת העיבוד והבדיקה של הכרטיסים לצורך חישוב השכר '
-        '(בהתאם להגדרות במערכת AutoHQ), ולכן ייתכן שטרם טופל. '
+        '(בהתאם להגדרות במערכת), ולכן ייתכן שטרם טופל. '
         'מומלץ לבדוק את הכרטיס ולעדכן את הנתונים במידת הצורך.',
     ]
 
@@ -88,6 +89,11 @@ def _build_caption(work_card) -> str:
     if context:
         lines.append('')
         lines.extend(context)
+
+    if business_name:
+        lines.append('')
+        lines.append('בברכה,')
+        lines.append(business_name)
 
     return '\n'.join(lines)
 
@@ -133,7 +139,9 @@ def _maybe_notify_new_card(work_card) -> None:
         logger.info("new-card notification skipped: work_card %s has no image", work_card.id)
         return
 
-    caption = _build_caption(work_card)
+    business = BusinessRepository().get_by_id(work_card.business_id)
+    business_name = business.name if business else ''
+    caption = _build_caption(work_card, business_name)
     content_type = (file.content_type or '').lower()
     is_image = content_type.startswith('image/')
     ext = _IMAGE_EXT.get(content_type, 'jpg')
