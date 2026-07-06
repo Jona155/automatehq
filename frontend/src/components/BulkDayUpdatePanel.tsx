@@ -15,7 +15,9 @@ interface DayEntryRow {
   day_status: DayStatus | null;
   attributed_site_id?: string | null;
   isDirty: boolean;
-  isLocked: boolean;
+  // Retained for compatibility; the review model no longer locks days, so this
+  // is always absent/false and every day is selectable.
+  isLocked?: boolean;
 }
 
 interface BulkDayUpdatePanelProps {

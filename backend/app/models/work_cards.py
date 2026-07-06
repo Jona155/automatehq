@@ -28,6 +28,12 @@ class WorkCard(db.Model):
     telegram_caption = db.Column(db.Text, nullable=True)
     # Set when the user records a single month-level hours figure instead of per-day entries.
     monthly_total_hours = db.Column(db.Numeric(7, 2), nullable=True)
+    # Highest day-of-month covered by an approval for this employee-month. Days
+    # <= this value are "protected": automatic extraction from later-arriving
+    # cards must not fill or overwrite them (they were already settled by an
+    # approval, including intentional mid-month days-off that carry no entry).
+    # NULL means nothing has been approved yet. Set/extended on approval.
+    approved_through_day = db.Column(db.SmallInteger, nullable=True)
     # Set once a 'new card arrived' WhatsApp notification has been sent — dedups retries.
     whatsapp_notified_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)

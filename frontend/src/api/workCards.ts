@@ -37,7 +37,6 @@ export interface UpdateDayEntriesRequest {
     to_time: string | null;
     total_hours: number | null;
     day_status?: string | null;
-    is_override?: boolean;
     attributed_site_id?: string | null;
   }>;
   monthly_total_hours?: number | null;
@@ -90,9 +89,6 @@ export const updateWorkCard = async (cardId: string, data: { employee_id?: strin
 
 // Approve work card
 export interface ApproveWorkCardOptions {
-  override_conflict_days?: number[];
-  confirm_override_approved?: boolean;
-  auto_keep_approved?: boolean;
   // When approving from the employee-month view, mark the remaining sibling
   // cards for this employee/month as superseded so they no longer read pending.
   supersede_siblings?: boolean;

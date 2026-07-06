@@ -381,7 +381,32 @@ def process_job(
                     f"Comparing against previous card {previous_card.id} "
                     f"with {len(previous_entries_by_day)} day entries"
                 )
-        
+
+        # Protected zone: days already settled by an approval for this
+        # employee-month must never be filled by automatic extraction of a
+        # later-arriving card. `approved_through_day` on an approved card marks
+        # the highest such day (covers worked days AND intentional mid-month
+        # days-off that carry no entry). Extraction only fills days beyond it.
+        protected_through_day = 0
+        if effective_employee_id:
+            for sibling in work_card_repo.get_for_monthly_breakdown(
+                employee_id=effective_employee_id,
+                month=work_card.processing_month,
+                business_id=work_card.business_id,
+                site_id=work_card.site_id,
+            ):
+                if (
+                    sibling.id != work_card.id
+                    and sibling.review_status == 'APPROVED'
+                    and sibling.approved_through_day
+                ):
+                    protected_through_day = max(protected_through_day, sibling.approved_through_day)
+            if protected_through_day:
+                logger.info(
+                    f"Approved boundary is day {protected_through_day}; "
+                    f"extraction will skip days <= that"
+                )
+
         # Identity diagnostics for assigned employee vs extracted passport
         identity_mismatch = False
         identity_reason = None
@@ -411,9 +436,16 @@ def process_job(
         # In FULL mode we add incrementally (skip existing days and previous-card duplicates).
         day_entries_created = 0
         day_entries_skipped_as_duplicate = 0
+        day_entries_skipped_as_protected = 0
         for entry in entries:
             day = entry.get('day')
             if day is None or day < 1 or day > 31:
+                continue
+
+            # Never auto-fill a day already settled by an approval.
+            if protected_through_day and day <= protected_through_day:
+                day_entries_skipped_as_protected += 1
+                logger.debug(f"Day {day} within approved boundary {protected_through_day}, skipping")
                 continue
 
             if not hours_only:
@@ -445,7 +477,8 @@ def process_job(
 
         logger.info(
             f"Created {day_entries_created} day entries "
-            f"(skipped {day_entries_skipped_as_duplicate} duplicates)"
+            f"(skipped {day_entries_skipped_as_duplicate} duplicates, "
+            f"{day_entries_skipped_as_protected} within approved boundary)"
         )
 
         # Update work card with matched employee (if found and not already assigned).
