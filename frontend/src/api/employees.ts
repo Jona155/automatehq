@@ -2,19 +2,21 @@ import client from './client';
 import type { Employee } from '../types';
 
 export interface CreateEmployeePayload {
-  site_id: string;
+  site_id?: string | null;
   full_name: string;
   passport_id: string;
   phone_number: string;
   external_employee_id?: string;
+  is_active?: boolean;
 }
 
 export interface UpdateEmployeePayload {
-  site_id?: string;
+  site_id?: string | null;
   full_name?: string;
   passport_id?: string;
   phone_number?: string;
   external_employee_id?: string;
+  is_active?: boolean;
 }
 
 export interface GetEmployeesParams {

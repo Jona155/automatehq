@@ -10,7 +10,7 @@ export interface EmployeeImportPreviewResponse {
 export interface EmployeeImportApplyResponse {
   summary: EmployeeImportSummary;
   rows: EmployeeImportRow[];
-  applied: Array<{ action: 'create' | 'update'; employee: any; row_number: number | null }>;
+  applied: Array<{ action: 'create' | 'update' | 'deactivate'; employee: any; row_number: number | null }>;
 }
 
 export const previewEmployeeImport = async (file: File) => {

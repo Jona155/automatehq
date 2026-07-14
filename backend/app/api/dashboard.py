@@ -192,6 +192,7 @@ def get_dashboard_summary():
             func.count(Employee.id).label("count")
         ).filter(
             Employee.business_id == g.business_id,
+            Employee.is_active.is_(True),
             Employee.created_at >= start_month,
             Employee.created_at < end_month_exclusive
         ).group_by("month").all()

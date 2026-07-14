@@ -5,9 +5,12 @@ import type { CreateEmployeePayload, UpdateEmployeePayload } from '../api/employ
 import { getSites } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
+import { formatNumber } from '../utils/formatNumber';
+import Toggle from '../components/Toggle';
 
 type SortField = 'full_name' | 'passport_id' | 'phone_number' | 'site_name';
 type SortOrder = 'asc' | 'desc';
+type StatusFilter = 'all' | 'active' | 'inactive';
 
 export default function EmployeesPage() {
   const { isAuthenticated } = useAuth();
@@ -26,6 +29,7 @@ export default function EmployeesPage() {
   const [filterPassport, setFilterPassport] = useState('');
   const [filterPhone, setFilterPhone] = useState('');
   const [filterSiteId, setFilterSiteId] = useState('');
+  const [filterStatus, setFilterStatus] = useState<StatusFilter>('active');
 
   // Sort state
   const [sortField, setSortField] = useState<SortField>('full_name');
@@ -42,6 +46,7 @@ export default function EmployeesPage() {
     phone_number: '',
     site_id: '',
     external_employee_id: '',
+    is_active: true,
   });
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -49,7 +54,7 @@ export default function EmployeesPage() {
   const fetchEmployees = async () => {
     setIsLoading(true);
     try {
-      const data = await getEmployees({ active: true });
+      const data = await getEmployees();
       setEmployees(data);
       setError(null);
     } catch (err) {
@@ -98,10 +103,16 @@ export default function EmployeesPage() {
       const matchesPassport = !filterPassport || passportId.toLowerCase().includes(filterPassport.toLowerCase());
       const matchesPhone = !filterPhone || phoneNumber.includes(filterPhone);
       const matchesSite = !filterSiteId || emp.site_id === filterSiteId;
-      
-      return matchesName && matchesPassport && matchesPhone && matchesSite;
+      const matchesStatus =
+        filterStatus === 'all' ||
+        (filterStatus === 'active' ? emp.is_active : !emp.is_active);
+
+      return matchesName && matchesPassport && matchesPhone && matchesSite && matchesStatus;
     });
-  }, [employees, filterName, filterPassport, filterPhone, filterSiteId]);
+  }, [employees, filterName, filterPassport, filterPhone, filterSiteId, filterStatus]);
+
+  const activeCount = useMemo(() => employees.filter((e) => e.is_active).length, [employees]);
+  const inactiveCount = employees.length - activeCount;
 
   // Sorting logic
   const sortedEmployees = useMemo(() => {
@@ -134,7 +145,7 @@ export default function EmployeesPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterName, filterPassport, filterPhone, filterSiteId, sortField, sortOrder, pageSize]);
+  }, [filterName, filterPassport, filterPhone, filterSiteId, filterStatus, sortField, sortOrder, pageSize]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -156,11 +167,12 @@ export default function EmployeesPage() {
     setFilterPassport('');
     setFilterPhone('');
     setFilterSiteId('');
+    setFilterStatus('active');
   };
 
   const handleOpenCreate = () => {
     setEditingEmployee(null);
-    setFormData({ full_name: '', passport_id: '', phone_number: '', site_id: '', external_employee_id: '' });
+    setFormData({ full_name: '', passport_id: '', phone_number: '', site_id: '', external_employee_id: '', is_active: true });
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -168,11 +180,12 @@ export default function EmployeesPage() {
   const handleOpenEdit = (employee: Employee) => {
     setEditingEmployee(employee);
     setFormData({
-      full_name: employee.full_name,
-      passport_id: employee.passport_id,
-      phone_number: employee.phone_number,
-      site_id: employee.site_id,
+      full_name: employee.full_name ?? '',
+      passport_id: employee.passport_id ?? '',
+      phone_number: employee.phone_number ?? '',
+      site_id: employee.site_id ?? '',
       external_employee_id: employee.external_employee_id ?? '',
+      is_active: employee.is_active,
     });
     setFormError(null);
     setIsModalOpen(true);
@@ -184,10 +197,14 @@ export default function EmployeesPage() {
   };
 
   const validateForm = () => {
-    if (!formData.full_name.trim()) return 'שם מלא הוא שדה חובה';
-    if (!formData.passport_id.trim()) return 'תעודת זהות היא שדה חובה';
-    if (!formData.phone_number.trim()) return 'מספר טלפון הוא שדה חובה';
-    if (!formData.site_id) return 'אתר הוא שדה חובה';
+    if (!(formData.full_name ?? '').trim()) return 'שם מלא הוא שדה חובה';
+    if (!(formData.passport_id ?? '').trim()) return 'תעודת זהות היא שדה חובה';
+    // Phone and site are only required for active employees; a deactivated employee
+    // may legitimately have neither.
+    if (formData.is_active) {
+      if (!(formData.phone_number ?? '').trim()) return 'מספר טלפון הוא שדה חובה לעובד פעיל';
+      if (!formData.site_id) return 'אתר הוא שדה חובה לעובד פעיל';
+    }
     return null;
   };
 
@@ -208,8 +225,9 @@ export default function EmployeesPage() {
           full_name: formData.full_name,
           passport_id: formData.passport_id,
           phone_number: formData.phone_number,
-          site_id: formData.site_id,
+          site_id: formData.site_id || null,
           external_employee_id: formData.external_employee_id.trim() || undefined,
+          is_active: formData.is_active,
         };
         await updateEmployee(editingEmployee.id, payload);
       } else {
@@ -217,8 +235,9 @@ export default function EmployeesPage() {
           full_name: formData.full_name,
           passport_id: formData.passport_id,
           phone_number: formData.phone_number,
-          site_id: formData.site_id,
+          site_id: formData.site_id || null,
           external_employee_id: formData.external_employee_id.trim() || undefined,
+          is_active: formData.is_active,
         };
         await createEmployee(payload);
       }
@@ -272,9 +291,27 @@ export default function EmployeesPage() {
         </button>}
       </div>
 
+      {/* Metric tiles */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-500">עובדים פעילים</p>
+            <span className="material-symbols-outlined text-emerald-500">group</span>
+          </div>
+          <p className="text-3xl font-bold text-slate-900 dark:text-white mt-3">{formatNumber(activeCount)}</p>
+        </div>
+        <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-500">עובדים לא פעילים</p>
+            <span className="material-symbols-outlined text-slate-400">group_off</span>
+          </div>
+          <p className="text-3xl font-bold text-slate-900 dark:text-white mt-3">{formatNumber(inactiveCount)}</p>
+        </div>
+      </section>
+
       {/* Filter Bar */}
       <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 p-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
               סינון לפי שם
@@ -313,6 +350,20 @@ export default function EmployeesPage() {
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+              סטטוס
+            </label>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value as StatusFilter)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all text-sm"
+            >
+              <option value="active">פעילים</option>
+              <option value="inactive">לא פעילים</option>
+              <option value="all">הכל</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
               סינון לפי אתר
             </label>
             <div className="flex flex-col sm:flex-row gap-2">
@@ -328,7 +379,7 @@ export default function EmployeesPage() {
                   </option>
                 ))}
               </select>
-              {(filterName || filterPassport || filterPhone || filterSiteId) && (
+              {(filterName || filterPassport || filterPhone || filterSiteId || filterStatus !== 'active') && (
                 <button
                   onClick={clearFilters}
                   className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium"
@@ -390,6 +441,9 @@ export default function EmployeesPage() {
                       <SortIcon field="site_name" />
                     </div>
                   </th>
+                  <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200">
+                    סטטוס
+                  </th>
                   {isAdmin && <th className="px-6 py-4 text-sm font-bold text-[#111518] dark:text-slate-200 text-left">
                     פעולות
                   </th>}
@@ -397,7 +451,7 @@ export default function EmployeesPage() {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
                 {paginatedEmployees.map((employee) => (
-                  <tr key={employee.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                  <tr key={employee.id} className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors ${employee.is_active ? '' : 'opacity-60'}`}>
                     <td className="px-6 py-5">
                       <div className="flex items-center gap-2">
                         <span className="text-[#111518] dark:text-white font-medium">{employee.full_name}</span>
@@ -422,6 +476,17 @@ export default function EmployeesPage() {
                         {getSiteName(employee.site_id)}
                       </span>
                     </td>
+                    <td className="px-6 py-5">
+                      {employee.is_active ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
+                          פעיל
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                          לא פעיל
+                        </span>
+                      )}
+                    </td>
                     {isAdmin && <td className="px-6 py-5 text-left">
                       <div className="flex items-center justify-end gap-3">
                         <button
@@ -444,7 +509,7 @@ export default function EmployeesPage() {
                 ))}
                 {sortedEmployees.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-slate-500">
+                    <td colSpan={isAdmin ? 7 : 6} className="p-8 text-center text-slate-500">
                       {filterName || filterPassport || filterPhone || filterSiteId
                         ? 'לא נמצאו עובדים התואמים את הסינון'
                         : 'לא נמצאו עובדים'}
@@ -573,6 +638,17 @@ export default function EmployeesPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300">סטטוס עובד</p>
+                  <p className="text-xs text-slate-500">{formData.is_active ? 'פעיל — נספר במדדים' : 'לא פעיל — לא נספר במדדים'}</p>
+                </div>
+                <Toggle
+                  checked={formData.is_active}
+                  onChange={(v) => setFormData({ ...formData, is_active: v })}
+                  aria-label="סטטוס עובד"
+                />
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <button

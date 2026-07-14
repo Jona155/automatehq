@@ -5,6 +5,7 @@ from flask import Blueprint, request, g
 from ..repositories.employee_repository import EmployeeRepository
 from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required, role_required
+from .dashboard import invalidate_business_cache
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ def create_employee():
         data['business_id'] = g.business_id
         
         employee = repo.create(**data)
+        invalidate_business_cache(g.business_id)
         return api_response(data=model_to_dict(employee), message="Employee created successfully", status_code=201)
     except Exception as e:
         logger.exception("Failed to create employee")
@@ -131,7 +133,8 @@ def update_employee(employee_id):
             return api_response(status_code=400, message="Invalid status value", error="Bad Request")
 
         updated_employee = repo.update(employee_id, **data)
-            
+        invalidate_business_cache(g.business_id)
+
         return api_response(data=model_to_dict(updated_employee), message="Employee updated successfully")
     except Exception as e:
         logger.exception(f"Failed to update employee {employee_id}")
@@ -152,7 +155,8 @@ def delete_employee(employee_id):
         success = repo.deactivate(employee_id, business_id=g.business_id)  # Soft delete via deactivation
         if not success:
             return api_response(status_code=404, message="Employee not found", error="Not Found")
-            
+
+        invalidate_business_cache(g.business_id)
         return api_response(message="Employee deleted successfully")
     except Exception as e:
         logger.exception(f"Failed to delete employee {employee_id}")
@@ -168,7 +172,8 @@ def deactivate_employee(employee_id):
         success = repo.deactivate(employee_id, business_id=g.business_id)
         if not success:
             return api_response(status_code=404, message="Employee not found", error="Not Found")
-            
+
+        invalidate_business_cache(g.business_id)
         return api_response(message="Employee deactivated successfully")
     except Exception as e:
         logger.exception(f"Failed to deactivate employee {employee_id}")
@@ -184,7 +189,8 @@ def activate_employee(employee_id):
         success = repo.activate(employee_id, business_id=g.business_id)
         if not success:
             return api_response(status_code=404, message="Employee not found", error="Not Found")
-            
+
+        invalidate_business_cache(g.business_id)
         return api_response(message="Employee activated successfully")
     except Exception as e:
         logger.exception(f"Failed to activate employee {employee_id}")

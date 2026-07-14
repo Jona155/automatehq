@@ -12,6 +12,7 @@ from ..repositories.employee_repository import EmployeeRepository
 from ..repositories.site_repository import SiteRepository
 from ..utils import normalize_phone
 from .utils import api_response, model_to_dict
+from .dashboard import invalidate_business_cache
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ STATUS_MAP = {
     'דווח כחזר מבריחה': 'REPORTED_RETURNED_FROM_ESCAPE',
 }
 NEW_SITE_PREFIX = 'new:'
+# Report rows with no site are assigned to this dedicated site (created on demand) and kept active.
+WITHOUT_SITE_NAME = 'ללא אתר'
 
 PASSPORT_COLUMNS = ['מספר דרכון', 'passport', 'passport_id', 'Passport', 'Passport ID']
 FIRST_NAME_COLUMNS = ['שם פרטי', 'first_name', 'first name']
@@ -185,8 +188,10 @@ def _build_diff(
     employees_by_passport: Dict[str, Any],
     sites_by_name: Dict[str, Any],
     sites_by_id: Dict[str, Any],
-    allow_site_create: bool = False
+    allow_site_create: bool = False,
+    employees_by_id: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
+    employees_by_id = employees_by_id or {}
     diff_rows = []
     for row in rows:
         passport_id = row.get('passport_id')
@@ -208,12 +213,30 @@ def _build_diff(
         site_id = str(site.id) if site else None
         if site_name and not site and allow_site_create:
             site_id = f"{NEW_SITE_PREFIX}{site_name}"
+
+        # A row that appears in the report but has no site is assigned to the dedicated
+        # "without site" site (created once per business) and stays active — only employees
+        # absent from the report entirely are deactivated.
+        if not site_id:
+            without_site = sites_by_name.get(WITHOUT_SITE_NAME)
+            site_id = str(without_site.id) if without_site else f"{NEW_SITE_PREFIX}{WITHOUT_SITE_NAME}"
+            site_name = WITHOUT_SITE_NAME
+
         phone_number, phone_warning = _normalize_employee_phone(row.get('phone_number'))
         if phone_warning:
             warnings.append(phone_warning)
         external_employee_id = row.get('external_employee_id')
 
-        existing = employees_by_passport.get(passport_id) if passport_id else None
+        # Every employee present in the report is active (with a site assigned above).
+        desired_active = bool(site_id)
+
+        # Resolve the target employee by explicit id first (absent-from-report rows and
+        # null-passport employees), then fall back to passport matching.
+        row_employee_id = row.get('employee_id')
+        existing = employees_by_id.get(str(row_employee_id)) if row_employee_id else None
+        if not existing and passport_id:
+            existing = employees_by_passport.get(passport_id)
+
         changes = []
         action = 'no_change'
         current = None
@@ -230,7 +253,8 @@ def _build_diff(
                 'site_id': str(existing.site_id) if existing.site_id else None,
                 'site_name': current_site_name,
                 'status': existing.status,
-                'external_employee_id': existing.external_employee_id
+                'external_employee_id': existing.external_employee_id,
+                'is_active': existing.is_active,
             }
 
             if row.get('full_name') and row['full_name'] != existing.full_name:
@@ -248,7 +272,15 @@ def _build_diff(
             if site_id and str(existing.site_id) != site_id:
                 changes.append({'field': 'site_id', 'from': str(existing.site_id), 'to': site_id})
 
-            action = 'update' if changes else 'no_change'
+            if desired_active != existing.is_active:
+                changes.append({'field': 'is_active', 'from': existing.is_active, 'to': desired_active})
+
+            if not changes:
+                action = 'no_change'
+            elif not desired_active and existing.is_active:
+                action = 'deactivate'
+            else:
+                action = 'update'
         else:
             required_missing = []
             if not row.get('full_name'):
@@ -264,6 +296,7 @@ def _build_diff(
                     {'field': 'full_name', 'from': None, 'to': row.get('full_name')},
                     {'field': 'phone_number', 'from': None, 'to': phone_number},
                     {'field': 'site_id', 'from': None, 'to': site_id},
+                    {'field': 'is_active', 'from': None, 'to': desired_active},
                 ]
                 if external_employee_id:
                     changes.append({'field': 'external_employee_id', 'from': None, 'to': external_employee_id})
@@ -275,6 +308,7 @@ def _build_diff(
 
         diff_rows.append({
             'row_number': row.get('row_number'),
+            'employee_id': str(existing.id) if existing else None,
             'passport_id': passport_id,
             'full_name': row.get('full_name'),
             'phone_number': phone_number,
@@ -283,6 +317,7 @@ def _build_diff(
             'status_raw': status_raw,
             'status': status,
             'external_employee_id': external_employee_id,
+            'is_active': desired_active,
             'action': action,
             'changes': changes,
             'errors': errors,
@@ -292,8 +327,62 @@ def _build_diff(
     return diff_rows
 
 
+def _build_absent_deactivations(
+    active_employees: List[Any],
+    present_passports: set,
+    present_employee_ids: set,
+    sites_by_id: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Synthesize deactivation rows for active employees absent from the report.
+
+    Source-of-truth rule: an active employee who does not appear in the uploaded
+    report should be deactivated. Represented as its own diff row so the admin sees
+    the full deactivation list in the preview before applying.
+    """
+    absent_rows = []
+    for emp in active_employees:
+        emp_id = str(emp.id)
+        if emp_id in present_employee_ids:
+            continue
+        if emp.passport_id and emp.passport_id in present_passports:
+            continue
+
+        current_site_name = None
+        if emp.site_id:
+            current_site = sites_by_id.get(str(emp.site_id))
+            current_site_name = current_site.site_name if current_site else None
+
+        absent_rows.append({
+            'row_number': None,
+            'employee_id': emp_id,
+            'passport_id': emp.passport_id,
+            'full_name': emp.full_name,
+            'phone_number': emp.phone_number,
+            'site_name': None,
+            'site_id': None,
+            'status_raw': None,
+            'status': emp.status,
+            'external_employee_id': emp.external_employee_id,
+            'is_active': False,
+            'action': 'deactivate',
+            'changes': [{'field': 'is_active', 'from': True, 'to': False}],
+            'errors': [],
+            'warnings': [{'code': 'absent_from_report'}],
+            'current': {
+                'full_name': emp.full_name,
+                'phone_number': emp.phone_number,
+                'site_id': str(emp.site_id) if emp.site_id else None,
+                'site_name': current_site_name,
+                'status': emp.status,
+                'external_employee_id': emp.external_employee_id,
+                'is_active': emp.is_active,
+            },
+        })
+    return absent_rows
+
+
 def _summarize(rows: List[Dict[str, Any]]) -> Dict[str, int]:
-    summary = {'create': 0, 'update': 0, 'no_change': 0, 'error': 0, 'total': len(rows)}
+    summary = {'create': 0, 'update': 0, 'deactivate': 0, 'no_change': 0, 'error': 0, 'total': len(rows)}
     for row in rows:
         action = row.get('action')
         if action in summary:
@@ -325,7 +414,20 @@ def preview_import():
         sites_by_name = {s.site_name: s for s in sites}
         sites_by_id = {str(s.id): s for s in sites}
 
-        diff_rows = _build_diff(rows, employees_by_passport, sites_by_name, sites_by_id, allow_site_create=True)
+        employees_by_id = {str(e.id): e for e in employees}
+        diff_rows = _build_diff(
+            rows, employees_by_passport, sites_by_name, sites_by_id,
+            allow_site_create=True, employees_by_id=employees_by_id
+        )
+
+        # Deactivate active employees absent from the report (report is source of truth).
+        present_passports = {r.get('passport_id') for r in rows if r.get('passport_id')}
+        present_employee_ids = {r['employee_id'] for r in diff_rows if r.get('employee_id')}
+        active_employees = employee_repo.get_active_employees(business_id=g.business_id)
+        diff_rows.extend(_build_absent_deactivations(
+            active_employees, present_passports, present_employee_ids, sites_by_id
+        ))
+
         summary = _summarize(diff_rows)
         logger.info("employee_imports.preview summary=%s matched=%s sites=%s", summary, len(employees_by_passport), len(sites))
 
@@ -360,45 +462,72 @@ def apply_import():
     normalized_rows = [
         {
             'row_number': row.get('row_number'),
+            'employee_id': _normalize_cell(row.get('employee_id')),
             'passport_id': _normalize_cell(row.get('passport_id')),
             'full_name': _normalize_cell(row.get('full_name')),
             'phone_number': _normalize_cell(row.get('phone_number')),
             'site_name': _normalize_cell(row.get('site_name')),
             'status_raw': _normalize_cell(row.get('status_raw')),
             'external_employee_id': _normalize_cell(row.get('external_employee_id')),
+            'action': row.get('action'),
             'errors': [],
             'warnings': []
         }
         for row in rows_input
     ]
 
-    # Deduplicate by passport (keep last)
+    # Split absent-from-report deactivations from ordinary report rows. Under the current
+    # rule a report row always gets a site (real or the "without site" site) and stays
+    # active, so only synthesized absent rows carry action == 'deactivate'. These must NOT
+    # go through _build_diff — its no-site defaulting would re-assign them a site and keep
+    # them active. They are deactivated directly below instead.
+    deactivate_input = [r for r in normalized_rows if r.get('action') == 'deactivate']
+    report_input = [r for r in normalized_rows if r.get('action') != 'deactivate']
+
+    # Deduplicate report rows by passport (keep last); passport-less report rows are errors.
     rows_by_passport = {}
     error_rows = []
-    for row in normalized_rows:
+    for row in report_input:
         passport = row.get('passport_id')
-        if not passport:
+        if passport:
+            rows_by_passport[passport] = row
+        else:
             row['errors'] = ['missing_passport']
             error_rows.append(row)
-            continue
-        rows_by_passport[passport] = row
     rows = list(rows_by_passport.values())
     rows.extend(error_rows)
 
+    # Deduplicate absent rows by employee id (falling back to passport).
+    deactivate_by_key = {}
+    for row in deactivate_input:
+        key = row.get('employee_id') or row.get('passport_id')
+        if key:
+            deactivate_by_key[key] = row
+    deactivate_rows = list(deactivate_by_key.values())
+
     try:
         passports = [r['passport_id'] for r in rows if r.get('passport_id')]
-        employees = employee_repo.get_by_passports(passports, business_id=g.business_id)
-        employees_by_passport = {e.passport_id: e for e in employees}
+        passports += [r['passport_id'] for r in deactivate_rows if r.get('passport_id')]
+        employee_ids = [r['employee_id'] for r in (rows + deactivate_rows) if r.get('employee_id')]
+        employees = list(employee_repo.get_by_passports(passports, business_id=g.business_id))
+        if employee_ids:
+            employees += employee_repo.get_by_ids_for_business(employee_ids, business_id=g.business_id)
+        employees_by_passport = {e.passport_id: e for e in employees if e.passport_id}
+        employees_by_id = {str(e.id): e for e in employees}
 
         sites = site_repo.get_all_for_business(g.business_id)
         sites_by_name = {s.site_name: s for s in sites}
         sites_by_id = {str(s.id): s for s in sites}
 
-        diff_rows = _build_diff(rows, employees_by_passport, sites_by_name, sites_by_id, allow_site_create=True)
+        diff_rows = _build_diff(
+            rows, employees_by_passport, sites_by_name, sites_by_id,
+            allow_site_create=True, employees_by_id=employees_by_id
+        )
 
         applied = []
         created_count = 0
         updated_count = 0
+        deactivated_count = 0
         created_sites = {}
         for row in diff_rows:
             if row['action'] == 'create':
@@ -425,15 +554,18 @@ def apply_import():
                     passport_id=row['passport_id'],
                     phone_number=row['phone_number'],
                     status=row['status'],
-                    external_employee_id=row['external_employee_id']
+                    external_employee_id=row['external_employee_id'],
+                    is_active=row['is_active']
                 )
                 applied.append({'action': 'create', 'employee': model_to_dict(employee), 'row_number': row['row_number']})
                 created_count += 1
             elif row['action'] == 'update':
-                existing = employees_by_passport.get(row['passport_id'])
+                existing = employees_by_id.get(str(row.get('employee_id'))) if row.get('employee_id') else None
+                if not existing and row.get('passport_id'):
+                    existing = employees_by_passport.get(row['passport_id'])
                 if not existing:
                     row['action'] = 'error'
-                    row['errors'].append({'code': 'missing_employee', 'details': row['passport_id']})
+                    row['errors'].append({'code': 'missing_employee', 'details': row.get('passport_id') or row.get('employee_id')})
                     continue
 
                 update_payload = {}
@@ -465,6 +597,8 @@ def apply_import():
                         update_payload['external_employee_id'] = row['external_employee_id']
                     elif field == 'status':
                         update_payload['status'] = row['status']
+                    elif field == 'is_active':
+                        update_payload['is_active'] = row['is_active']
 
                 if update_payload:
                     updated = employee_repo.update(existing.id, **update_payload)
@@ -473,8 +607,53 @@ def apply_import():
             else:
                 continue
 
+        # Deactivate employees absent from the report — directly, bypassing _build_diff's
+        # no-site defaulting. The report always wins: skip anyone also present as a report row.
+        report_employee_ids = {r['employee_id'] for r in diff_rows if r.get('employee_id')}
+        for row in deactivate_rows:
+            existing = employees_by_id.get(str(row.get('employee_id'))) if row.get('employee_id') else None
+            if not existing and row.get('passport_id'):
+                existing = employees_by_passport.get(row['passport_id'])
+
+            if not existing:
+                diff_rows.append({
+                    'row_number': row.get('row_number'), 'employee_id': row.get('employee_id'),
+                    'passport_id': row.get('passport_id'), 'full_name': row.get('full_name'),
+                    'phone_number': None, 'site_name': None, 'site_id': None,
+                    'status_raw': None, 'status': None, 'external_employee_id': None,
+                    'is_active': False, 'action': 'error', 'changes': [],
+                    'errors': [{'code': 'missing_employee', 'details': row.get('employee_id') or row.get('passport_id')}],
+                    'warnings': [{'code': 'absent_from_report'}], 'current': None,
+                })
+                continue
+
+            if str(existing.id) in report_employee_ids:
+                continue  # also present in the report — stays active
+
+            transitioned = bool(existing.is_active)
+            if transitioned:
+                updated = employee_repo.update(existing.id, is_active=False)
+                applied.append({'action': 'deactivate', 'employee': model_to_dict(updated), 'row_number': row.get('row_number')})
+                deactivated_count += 1
+
+            diff_rows.append({
+                'row_number': row.get('row_number'), 'employee_id': str(existing.id),
+                'passport_id': existing.passport_id, 'full_name': existing.full_name,
+                'phone_number': existing.phone_number, 'site_name': None,
+                'site_id': str(existing.site_id) if existing.site_id else None,
+                'status_raw': None, 'status': existing.status,
+                'external_employee_id': existing.external_employee_id, 'is_active': False,
+                'action': 'deactivate' if transitioned else 'no_change',
+                'changes': [{'field': 'is_active', 'from': True, 'to': False}] if transitioned else [],
+                'errors': [], 'warnings': [{'code': 'absent_from_report'}], 'current': None,
+            })
+
+        invalidate_business_cache(g.business_id)
         summary = _summarize(diff_rows)
-        logger.info("employee_imports.apply summary=%s created=%s updated=%s created_sites=%s", summary, created_count, updated_count, len(created_sites))
+        logger.info(
+            "employee_imports.apply summary=%s created=%s updated=%s deactivated=%s created_sites=%s",
+            summary, created_count, updated_count, deactivated_count, len(created_sites)
+        )
         return api_response(
             data={
                 'summary': summary,

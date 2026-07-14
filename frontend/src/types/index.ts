@@ -56,6 +56,7 @@ export interface Employee {
 
 export interface EmployeeImportRow {
   row_number: number | null;
+  employee_id?: string | null;
   passport_id: string | null;
   full_name: string | null;
   phone_number: string | null;
@@ -64,8 +65,9 @@ export interface EmployeeImportRow {
   status_raw: string | null;
   status: EmployeeStatus | null;
   external_employee_id: string | null;
-  action: 'create' | 'update' | 'no_change' | 'error';
-  changes: Array<{ field: string; from: string | null; to: string | null }>;
+  is_active?: boolean;
+  action: 'create' | 'update' | 'deactivate' | 'no_change' | 'error';
+  changes: Array<{ field: string; from: string | boolean | null; to: string | boolean | null }>;
   errors: Array<string | { code: string; details?: any }>;
   warnings: Array<string | { code: string; details?: any }>;
   current?: {
@@ -75,12 +77,14 @@ export interface EmployeeImportRow {
     site_name: string | null;
     status: EmployeeStatus | null;
     external_employee_id: string | null;
+    is_active?: boolean;
   } | null;
 }
 
 export interface EmployeeImportSummary {
   create: number;
   update: number;
+  deactivate: number;
   no_change: number;
   error: number;
   total: number;

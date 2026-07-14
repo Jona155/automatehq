@@ -53,6 +53,7 @@ def get_latest_work_card_with_extraction_by_employee(
     ).filter(
         Employee.site_id == site_id,
         Employee.business_id == business_id,
+        Employee.is_active.is_(True),
     ).all()
 
 
