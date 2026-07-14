@@ -140,9 +140,11 @@ class SiteRepository(BaseRepository[Site]):
         query = self.session.query(
             Site,
             func.count(Employee.id).label('employee_count')
-        ).outerjoin(Employee, Site.id == Employee.site_id)\
-         .group_by(Site.id)
-        
+        ).outerjoin(
+            Employee,
+            (Site.id == Employee.site_id) & (Employee.is_active == True)
+        ).group_by(Site.id)
+
         if business_id:
             query = query.filter(Site.business_id == business_id)
         

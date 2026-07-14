@@ -16,6 +16,7 @@ import WorkCardReviewTab from '../components/WorkCardReviewTab';
 import MonthlySummaryTab from '../components/MonthlySummaryTab';
 import AccessLinksManager from '../components/AccessLinksManager';
 import Modal from '../components/Modal';
+import Toggle from '../components/Toggle';
 import MonthPicker from '../components/MonthPicker';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import { downloadBlobFile } from '../utils/fileDownload';
@@ -878,17 +879,7 @@ export default function SiteDetailsPage() {
                 אתר שאינו פעיל לא ייספר בדוחות לוח הבקרה. הנתונים הקיימים יישמרו וניתן להפעיל את האתר מחדש בכל עת.
               </p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={isActive}
-              onClick={() => setIsActive(!isActive)}
-              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${isActive ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'}`}
-            >
-              <span
-                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform mt-0.5 ${isActive ? 'translate-x-0.5' : 'translate-x-[1.375rem]'}`}
-              />
-            </button>
+            <Toggle checked={isActive} onChange={setIsActive} aria-label="סטטוס אתר" />
           </div>
 
           <div>

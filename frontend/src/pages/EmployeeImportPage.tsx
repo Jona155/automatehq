@@ -15,17 +15,20 @@ const fieldLabels: Record<string, string> = {
   site_id: 'אתר',
   status: 'סטטוס',
   external_employee_id: 'מספר סידורי',
+  is_active: 'סטטוס פעילות',
 };
+
+const activeLabel = (value: unknown) => (value ? 'פעיל' : 'לא פעיל');
 
 export default function EmployeeImportPage() {
   const { showToast, ToastContainer } = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [previewRows, setPreviewRows] = useState<EmployeeImportRow[]>([]);
-  const [summary, setSummary] = useState<{ create: number; update: number; no_change: number; error: number; total: number } | null>(null);
+  const [summary, setSummary] = useState<{ create: number; update: number; deactivate: number; no_change: number; error: number; total: number } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeFilter, setActiveFilter] = useState<'create' | 'update' | 'error' | 'all'>('create');
+  const [activeFilter, setActiveFilter] = useState<'create' | 'update' | 'deactivate' | 'error' | 'all'>('create');
 
   const handlePreview = async () => {
     if (!file) {
@@ -85,6 +88,9 @@ export default function EmployeeImportPage() {
             const to = row.status ? STATUS_LABELS[row.status] : '—';
             return `${label}: ${from} → ${to}`;
           }
+          if (change.field === 'is_active') {
+            return `${label}: ${activeLabel(change.from)} → ${activeLabel(change.to)}`;
+          }
           const from = change.from ?? '—';
           const to = change.to ?? '—';
           return `${label}: ${from} → ${to}`;
@@ -100,6 +106,8 @@ export default function EmployeeImportPage() {
         return 'bg-emerald-100 text-emerald-700 border border-emerald-200';
       case 'update':
         return 'bg-amber-100 text-amber-700 border border-amber-200';
+      case 'deactivate':
+        return 'bg-rose-100 text-rose-700 border border-rose-200';
       case 'error':
         return 'bg-red-100 text-red-700 border border-red-200';
       default:
@@ -197,11 +205,12 @@ export default function EmployeeImportPage() {
       </div>
 
       {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           {[
             { label: 'סה"כ', value: summary.total, color: 'text-slate-700', bg: 'from-slate-50 to-slate-100' },
             { label: 'יצירה', value: summary.create, color: 'text-emerald-700', bg: 'from-emerald-50 to-emerald-100' },
             { label: 'עדכון', value: summary.update, color: 'text-amber-700', bg: 'from-amber-50 to-amber-100' },
+            { label: 'השבתה', value: summary.deactivate, color: 'text-rose-700', bg: 'from-rose-50 to-rose-100' },
             { label: 'ללא שינוי', value: summary.no_change, color: 'text-slate-500', bg: 'from-slate-50 to-slate-100' },
             { label: 'שגיאות', value: summary.error, color: 'text-red-700', bg: 'from-red-50 to-red-100' },
           ].map((item) => (
@@ -243,6 +252,17 @@ export default function EmployeeImportPage() {
                   }`}
                 >
                   עדכון ({summary?.update ?? 0})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveFilter('deactivate')}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                    activeFilter === 'deactivate'
+                      ? 'bg-rose-600 text-white shadow'
+                      : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  השבתה ({summary?.deactivate ?? 0})
                 </button>
                 <button
                   type="button"
@@ -296,6 +316,7 @@ export default function EmployeeImportPage() {
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${actionBadge(row.action)}`}>
                         {row.action === 'create' && 'יצירה'}
                         {row.action === 'update' && 'עדכון'}
+                        {row.action === 'deactivate' && 'השבתה'}
                         {row.action === 'no_change' && 'ללא שינוי'}
                         {row.action === 'error' && 'שגיאה'}
                       </span>
