@@ -2582,13 +2582,21 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                     </div>
                   ) : (
                     <div ref={tableScrollRef} className="flex-1 overflow-auto" role="region" aria-label="טבלת שעות עבודה" onKeyDown={handleTableKeyDown}>
-                      <table className="w-full text-sm">
+                      <table className="w-full text-sm table-fixed">
+                        <colgroup>
+                          <col className="w-16" />
+                          <col className="w-[110px]" />
+                          <col className="w-[110px]" />
+                          <col className="w-[90px]" />
+                          <col className="w-[140px]" />
+                          {sites.length > 1 && <col className="w-[160px]" />}
+                        </colgroup>
                         <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800 z-10">
                           <tr className="text-slate-600 dark:text-slate-400">
-                            <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700 w-16">יום</th>
+                            <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">יום</th>
                             <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">כניסה</th>
                             <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">יציאה</th>
-                            <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">סה"כ</th>
+                            <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">סה"כ</th>
                             <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">סטטוס</th>
                             {sites.length > 1 && (
                               <th className="px-3 py-2 text-center font-medium border-b border-slate-200 dark:border-slate-700">אתר</th>
