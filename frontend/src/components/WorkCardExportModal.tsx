@@ -1,17 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Employee, WorkCard } from '../types';
+import type { WorkCard } from '../types';
 import MonthPicker from './MonthPicker';
 import Modal from './Modal';
 import { downloadWorkCardsExport, getWorkCards } from '../api/workCards';
 import { getFirstName } from '../utils/nameUtils';
+import type { Employee } from '../types';
 
-interface WorkCardExportModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  siteId: string;
-  siteName: string;
-  employees: Employee[];
-}
+type WorkCardExportModalProps =
+  | {
+      isOpen: boolean;
+      onClose: () => void;
+      mode: 'site';
+      siteId: string;
+      siteName: string;
+      employees: Employee[];
+    }
+  | {
+      isOpen: boolean;
+      onClose: () => void;
+      mode: 'employee';
+      employeeId: string;
+      employeeName: string;
+    };
 
 const getPreviousMonth = (): string => {
   const now = new Date();
@@ -23,10 +33,10 @@ const getPreviousMonth = (): string => {
 
 const UNASSIGNED_KEY = 'unassigned';
 
-interface EmployeeGroup {
+interface ExportGroup {
   key: string;
   name: string;
-  passportId: string;
+  subtitle: string;
   cards: WorkCard[];
 }
 
@@ -44,19 +54,15 @@ const formatDate = (value: string): string => {
 };
 
 // Latest APPROVED card, falling back to the latest card overall — mirrors the
-// backend's default one-per-employee export selection.
+// backend's default one-per-group export selection.
 const defaultCardForGroup = (cards: WorkCard[]): WorkCard | undefined => {
   if (cards.length === 0) return undefined;
   return cards.find((card) => card.review_status === 'APPROVED') ?? cards[0];
 };
 
-export default function WorkCardExportModal({
-  isOpen,
-  onClose,
-  siteId,
-  siteName,
-  employees,
-}: WorkCardExportModalProps) {
+export default function WorkCardExportModal(props: WorkCardExportModalProps) {
+  const { isOpen, onClose, mode } = props;
+
   const [selectedMonth, setSelectedMonth] = useState<string>(getPreviousMonth());
   const [cards, setCards] = useState<WorkCard[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -66,20 +72,29 @@ export default function WorkCardExportModal({
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // NOTE: narrowing must check `props.mode`, not the destructured `mode` local
+  // — TS can't correlate a copied discriminant value back to the `props` union.
   const employeeNameById = useMemo(() => {
     const map = new Map<string, Employee>();
-    employees.forEach((employee) => map.set(employee.id, employee));
+    if (props.mode === 'site') props.employees.forEach((employee) => map.set(employee.id, employee));
     return map;
-  }, [employees]);
+  }, [props.mode === 'site' ? props.employees : null]);
 
-  // Fetch all cards for the site/month whenever the modal opens or month changes.
+  const scopeId = props.mode === 'site' ? props.siteId : props.employeeId;
+  const scopeName = props.mode === 'site' ? props.siteName : props.employeeName;
+
+  // Fetch all cards for the scope/month whenever the modal opens or month changes.
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
     setIsLoading(true);
     setError(null);
     setSearch('');
-    getWorkCards({ site_id: siteId, processing_month: selectedMonth, include_employee: true })
+    const request =
+      props.mode === 'site'
+        ? getWorkCards({ site_id: props.siteId, processing_month: selectedMonth, include_employee: true })
+        : getWorkCards({ employee_id: props.employeeId, processing_month: selectedMonth, include_site: true });
+    request
       .then((result) => {
         if (cancelled) return;
         // Newest first so the default selection picks the latest card.
@@ -99,30 +114,41 @@ export default function WorkCardExportModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, siteId, selectedMonth]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, mode, scopeId, selectedMonth]);
 
-  // Group cards by employee (cards are already newest-first).
-  const groups = useMemo<EmployeeGroup[]>(() => {
-    const byEmployee = new Map<string, WorkCard[]>();
+  // Group cards — by employee in site mode, by site in employee mode (cards
+  // are already newest-first).
+  const groups = useMemo<ExportGroup[]>(() => {
+    const byGroup = new Map<string, WorkCard[]>();
     cards.forEach((card) => {
-      const key = card.employee_id ?? UNASSIGNED_KEY;
-      const list = byEmployee.get(key);
+      const key = (mode === 'site' ? card.employee_id : card.site_id) ?? UNASSIGNED_KEY;
+      const list = byGroup.get(key);
       if (list) list.push(card);
-      else byEmployee.set(key, [card]);
+      else byGroup.set(key, [card]);
     });
 
-    return Array.from(byEmployee.entries()).map(([key, groupCards]) => {
-      const employee = key === UNASSIGNED_KEY ? undefined : groupCards[0].employee ?? employeeNameById.get(key);
+    return Array.from(byGroup.entries()).map(([key, groupCards]) => {
+      if (mode === 'site') {
+        const employee = key === UNASSIGNED_KEY ? undefined : groupCards[0].employee ?? employeeNameById.get(key);
+        return {
+          key,
+          name: key === UNASSIGNED_KEY ? 'כרטיסים לא משויכים' : getFirstName(employee?.full_name) || 'עובד לא ידוע',
+          subtitle: employee?.passport_id || '',
+          cards: groupCards,
+        };
+      }
+      const site = key === UNASSIGNED_KEY ? undefined : groupCards[0].site;
       return {
         key,
-        name: key === UNASSIGNED_KEY ? 'כרטיסים לא משויכים' : getFirstName(employee?.full_name) || 'עובד לא ידוע',
-        passportId: employee?.passport_id || '',
+        name: key === UNASSIGNED_KEY ? 'כרטיסים ללא אתר' : site?.site_name || 'אתר לא ידוע',
+        subtitle: '',
         cards: groupCards,
       };
     });
-  }, [cards, employeeNameById]);
+  }, [cards, mode, employeeNameById]);
 
-  // Default selection: latest approved (else latest) per employee group.
+  // Default selection: latest approved (else latest) per group.
   useEffect(() => {
     if (!isOpen) return;
     const defaults = new Set<string>();
@@ -138,8 +164,7 @@ export default function WorkCardExportModal({
     const query = search.trim().toLowerCase();
     if (!query) return groups;
     return groups.filter(
-      (group) =>
-        group.name.toLowerCase().includes(query) || group.passportId.toLowerCase().includes(query)
+      (group) => group.name.toLowerCase().includes(query) || group.subtitle.toLowerCase().includes(query)
     );
   }, [groups, search]);
 
@@ -185,16 +210,24 @@ export default function WorkCardExportModal({
     setIsDownloading(true);
     setError(null);
     try {
-      const blob = await downloadWorkCardsExport({
-        site_id: siteId,
-        processing_month: selectedMonth,
-        card_ids: Array.from(selectedCardIds),
-      });
+      const blob = await downloadWorkCardsExport(
+        props.mode === 'site'
+          ? {
+              site_id: props.siteId,
+              processing_month: selectedMonth,
+              card_ids: Array.from(selectedCardIds),
+            }
+          : {
+              employee_id: props.employeeId,
+              processing_month: selectedMonth,
+              card_ids: Array.from(selectedCardIds),
+            }
+      );
 
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `work_cards_${siteName}_${selectedMonth}.zip`;
+      link.download = `work_cards_${scopeName}_${selectedMonth}.zip`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -248,7 +281,7 @@ export default function WorkCardExportModal({
               <span className="material-symbols-outlined">download</span>
             </div>
             <div>
-              <div className="font-bold text-slate-900 dark:text-white">{siteName}</div>
+              <div className="font-bold text-slate-900 dark:text-white">{scopeName}</div>
               <div className="text-sm text-slate-600 dark:text-slate-400">
                 בחירת כרטיסי עבודה להורדה לפי חודש
               </div>
@@ -263,7 +296,7 @@ export default function WorkCardExportModal({
           <MonthPicker
             value={selectedMonth}
             onChange={setSelectedMonth}
-            storageKey={`work_card_export_month_${siteId}`}
+            storageKey={`work_card_export_month_${mode}_${scopeId}`}
           />
         </div>
 
@@ -289,7 +322,7 @@ export default function WorkCardExportModal({
             type="text"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="חיפוש לפי שם או דרכון"
+            placeholder={mode === 'site' ? 'חיפוש לפי שם או דרכון' : 'חיפוש לפי שם אתר'}
             className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm mb-3"
           />
 
@@ -315,9 +348,9 @@ export default function WorkCardExportModal({
                         </span>
                         <div className="flex flex-col items-start min-w-0">
                           <span className="font-medium truncate">{group.name}</span>
-                          {group.passportId && (
+                          {group.subtitle && (
                             <span className="text-xs text-slate-500 dark:text-slate-400">
-                              {group.passportId}
+                              {group.subtitle}
                             </span>
                           )}
                         </div>

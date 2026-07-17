@@ -16,7 +16,7 @@ from ..repositories.employee_repository import EmployeeRepository
 from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required, role_required
 from ..extensions import db
-from ..models.sites import Site
+from ..models.sites import Site, Employee
 from ..models.work_cards import WorkCard
 from ..services.whatsapp_listener_client import (
     WhatsAppListenerClient,
@@ -305,12 +305,14 @@ def get_missing_work_card_employees():
 @work_cards_bp.route('', methods=['GET'])
 @token_required
 def get_work_cards():
-    """Get work cards in the current business, filtered by site+month or status."""
+    """Get work cards in the current business, filtered by site+month, employee+month, or status."""
     site_id = request.args.get('site_id')
+    employee_id = request.args.get('employee_id')
     month_str = request.args.get('month') # YYYY-MM-DD
     status = request.args.get('status')
     include_employee = request.args.get('include_employee', 'false').lower() == 'true'
-    
+    include_site = request.args.get('include_site', 'false').lower() == 'true'
+
     if site_id and month_str:
         try:
             month = datetime.strptime(month_str, '%Y-%m-%d').date()
@@ -320,19 +322,27 @@ def get_work_cards():
                 results = repo.get_by_site_month(site_id, month, business_id=g.business_id)
         except ValueError:
             return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
+    elif employee_id and month_str:
+        try:
+            month = datetime.strptime(month_str, '%Y-%m-%d').date()
+            results = repo.get_by_employee_month_with_site(employee_id, month, business_id=g.business_id)
+        except ValueError:
+            return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
     elif status:
         results = repo.get_by_review_status(status, business_id=g.business_id)
     else:
         results = repo.get_all_for_business(business_id=g.business_id)
-    
-    # Serialize results with optional employee data
+
+    # Serialize results with optional employee/site data
     data = []
     for card in results:
         card_dict = model_to_dict(card)
         if include_employee and hasattr(card, 'employee') and card.employee:
             card_dict['employee'] = model_to_dict(card.employee)
+        if include_site and hasattr(card, 'site') and card.site:
+            card_dict['site'] = model_to_dict(card.site)
         data.append(card_dict)
-        
+
     return api_response(data=data)
 
 @work_cards_bp.route('/<uuid:card_id>', methods=['GET'])
@@ -789,32 +799,82 @@ def send_work_card_to_whatsapp(card_id):
 @token_required
 @role_required('ADMIN')
 def export_work_cards():
-    """Export work card images for a site and month as a ZIP file.
+    """Export work card images as a ZIP file, scoped to either a site or an employee.
 
-    Two selection modes:
+    Exactly one of site_id / employee_id must be given, alongside month.
+
+    Site-scoped selection modes:
       - card_ids:     export exactly these cards (lets the user pick specific
                       cards, including multiple per employee).
       - employee_ids: legacy mode — one latest (or latest-approved) card per
                       employee. Used when card_ids is not provided.
+
+    Employee-scoped mode (spans every site the employee has cards under for
+    the month) only supports card_ids — there is no "legacy" single-employee
+    equivalent since the scope is already one employee.
     """
     site_id = request.args.get('site_id')
+    employee_id = request.args.get('employee_id')
     month_str = request.args.get('month')  # YYYY-MM-DD
     card_ids_str = request.args.get('card_ids')
     employee_ids_str = request.args.get('employee_ids')
     approved_only = request.args.get('approved_only', 'true').lower() == 'true'
 
-    if not site_id or not month_str:
-        return api_response(status_code=400, message="site_id and month are required", error="Bad Request")
-
-    if not card_ids_str and not employee_ids_str:
-        return api_response(status_code=400, message="card_ids or employee_ids is required", error="Bad Request")
+    if not month_str or (not site_id and not employee_id) or (site_id and employee_id):
+        return api_response(
+            status_code=400,
+            message="Exactly one of site_id or employee_id is required, along with month",
+            error="Bad Request",
+        )
 
     try:
         month = datetime.strptime(month_str, '%Y-%m-%d').date()
     except ValueError:
         return api_response(status_code=400, message="Invalid month format. Use YYYY-MM-DD", error="Bad Request")
 
-    if card_ids_str:
+    if site_id:
+        if not card_ids_str and not employee_ids_str:
+            return api_response(status_code=400, message="card_ids or employee_ids is required", error="Bad Request")
+
+        if card_ids_str:
+            parsed_card_ids = []
+            for raw_id in [item.strip() for item in card_ids_str.split(',') if item.strip()]:
+                try:
+                    parsed_card_ids.append(UUID(raw_id))
+                except ValueError:
+                    return api_response(status_code=400, message="Invalid card_id format", error="Bad Request")
+
+            if not parsed_card_ids:
+                return api_response(status_code=400, message="card_ids is required", error="Bad Request")
+
+            cards = repo.get_by_ids_for_export(
+                card_ids=parsed_card_ids,
+                site_id=site_id,
+                month=month,
+                business_id=g.business_id,
+            )
+        else:
+            parsed_employee_ids = []
+            for emp_id in [item.strip() for item in employee_ids_str.split(',') if item.strip()]:
+                try:
+                    parsed_employee_ids.append(UUID(emp_id))
+                except ValueError:
+                    return api_response(status_code=400, message="Invalid employee_id format", error="Bad Request")
+
+            if not parsed_employee_ids:
+                return api_response(status_code=400, message="employee_ids is required", error="Bad Request")
+
+            cards = repo.get_latest_per_employee_for_export(
+                site_id=site_id,
+                month=month,
+                business_id=g.business_id,
+                employee_ids=parsed_employee_ids,
+                approved_only=approved_only,
+            )
+    else:
+        if not card_ids_str:
+            return api_response(status_code=400, message="card_ids is required", error="Bad Request")
+
         parsed_card_ids = []
         for raw_id in [item.strip() for item in card_ids_str.split(',') if item.strip()]:
             try:
@@ -825,29 +885,11 @@ def export_work_cards():
         if not parsed_card_ids:
             return api_response(status_code=400, message="card_ids is required", error="Bad Request")
 
-        cards = repo.get_by_ids_for_export(
+        cards = repo.get_by_ids_for_employee_export(
             card_ids=parsed_card_ids,
-            site_id=site_id,
+            employee_id=employee_id,
             month=month,
             business_id=g.business_id,
-        )
-    else:
-        parsed_employee_ids = []
-        for emp_id in [item.strip() for item in employee_ids_str.split(',') if item.strip()]:
-            try:
-                parsed_employee_ids.append(UUID(emp_id))
-            except ValueError:
-                return api_response(status_code=400, message="Invalid employee_id format", error="Bad Request")
-
-        if not parsed_employee_ids:
-            return api_response(status_code=400, message="employee_ids is required", error="Bad Request")
-
-        cards = repo.get_latest_per_employee_for_export(
-            site_id=site_id,
-            month=month,
-            business_id=g.business_id,
-            employee_ids=parsed_employee_ids,
-            approved_only=approved_only,
         )
 
     def safe_label(value: str) -> str:
@@ -865,9 +907,16 @@ def export_work_cards():
         label = '_'.join(filter(None, label.split('_')))
         return label
 
-    site = db.session.query(Site).filter_by(id=site_id, business_id=g.business_id).first()
-    site_label = safe_label(site.site_name) if site else str(site_id)
-    folder_name = f"{site_label}_{month.strftime('%Y-%m')}_work_cards"
+    if site_id:
+        site = db.session.query(Site).filter_by(id=site_id, business_id=g.business_id).first()
+        site_label = safe_label(site.site_name) if site else str(site_id)
+        folder_name = f"{site_label}_{month.strftime('%Y-%m')}_work_cards"
+        download_name = f"work_cards_{site_id}_{month.strftime('%Y-%m')}.zip"
+    else:
+        employee = db.session.query(Employee).filter_by(id=employee_id, business_id=g.business_id).first()
+        employee_label = safe_label(employee.full_name) if employee else str(employee_id)
+        folder_name = f"{employee_label}_{month.strftime('%Y-%m')}_work_cards"
+        download_name = f"work_cards_{employee_id}_{month.strftime('%Y-%m')}.zip"
 
     zip_buffer = BytesIO()
     used_names: Set[str] = set()
@@ -882,15 +931,24 @@ def export_work_cards():
             if '.' in safe_original:
                 extension = f".{safe_original.rsplit('.', 1)[-1]}"
 
-            if card.employee:
-                id_number = card.employee.passport_id or str(card.employee.id)
-                # Use only the first name in the filename.
-                first_name = (card.employee.full_name or '').split()[0] if card.employee.full_name else ''
-                safe_employee = safe_label(first_name) or str(card.employee.id)
-                safe_id_number = safe_label(id_number) or str(card.employee.id)
-                base_name = f"{safe_employee}_{safe_id_number}"
+            if site_id:
+                # Site-scoped export: name entries by employee (first name + passport/ID),
+                # since the site is already constant across the whole ZIP.
+                if card.employee:
+                    id_number = card.employee.passport_id or str(card.employee.id)
+                    first_name = (card.employee.full_name or '').split()[0] if card.employee.full_name else ''
+                    safe_employee = safe_label(first_name) or str(card.employee.id)
+                    safe_id_number = safe_label(id_number) or str(card.employee.id)
+                    base_name = f"{safe_employee}_{safe_id_number}"
+                else:
+                    base_name = f"unassigned_{card.id}"
             else:
-                base_name = f"unassigned_{card.id}"
+                # Employee-scoped export: name entries by site instead, since the
+                # employee is already constant — the site is what varies here.
+                if card.site:
+                    base_name = safe_label(card.site.site_name) or str(card.site.id)
+                else:
+                    base_name = f"unassigned_site_{card.id}"
 
             # Embed the review comment in the filename so it travels with the
             # image. Hebrew letters survive safe_label (Unicode category L).
@@ -898,7 +956,7 @@ def export_work_cards():
             if comment_label:
                 base_name = f"{base_name}__{comment_label}"
 
-            # Multiple cards can now share a base name (same employee, several
+            # Multiple cards can share a base name (same employee/site, several
             # cards). Disambiguate so zip entries never overwrite each other.
             file_name = f"{base_name}{extension}"
             if file_name in used_names:
@@ -913,7 +971,6 @@ def export_work_cards():
             zipf.writestr(file_path, card.files.image_bytes)
 
     zip_buffer.seek(0)
-    download_name = f"work_cards_{site_id}_{month.strftime('%Y-%m')}.zip"
     return send_file(
         zip_buffer,
         mimetype='application/zip',
