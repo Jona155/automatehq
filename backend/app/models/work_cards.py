@@ -41,6 +41,7 @@ class WorkCard(db.Model):
 
     # Relationships
     employee = db.relationship('Employee', backref='work_cards', foreign_keys=[employee_id])
+    site = db.relationship('Site', backref='work_cards', foreign_keys=[site_id])
     files = db.relationship('WorkCardFile', backref='work_card', uselist=False, cascade="all, delete-orphan")
     extraction = db.relationship('WorkCardExtraction', backref='work_card', uselist=False, cascade="all, delete-orphan")
     day_entries = db.relationship('WorkCardDayEntry', backref='work_card', cascade="all, delete-orphan")

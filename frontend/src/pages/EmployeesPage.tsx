@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { formatNumber } from '../utils/formatNumber';
 import Toggle from '../components/Toggle';
+import WorkCardExportModal from '../components/WorkCardExportModal';
 
 type SortField = 'full_name' | 'passport_id' | 'phone_number' | 'site_name';
 type SortOrder = 'asc' | 'desc';
@@ -23,6 +24,7 @@ export default function EmployeesPage() {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [employeeToDelete, setEmployeeToDelete] = useState<Employee | null>(null);
+  const [exportEmployee, setExportEmployee] = useState<Employee | null>(null);
 
   // Filter states
   const [filterName, setFilterName] = useState('');
@@ -490,6 +492,13 @@ export default function EmployeesPage() {
                     {isAdmin && <td className="px-6 py-5 text-left">
                       <div className="flex items-center justify-end gap-3">
                         <button
+                          onClick={() => setExportEmployee(employee)}
+                          className="p-2 text-[#617989] hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
+                          title="הורדת כרטיסי עבודה"
+                        >
+                          <span className="material-symbols-outlined">download</span>
+                        </button>
+                        <button
                           onClick={() => handleOpenEdit(employee)}
                           className="p-2 text-[#617989] hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
                           title="ערוך"
@@ -702,6 +711,16 @@ export default function EmployeesPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {exportEmployee && (
+        <WorkCardExportModal
+          isOpen={!!exportEmployee}
+          onClose={() => setExportEmployee(null)}
+          mode="employee"
+          employeeId={exportEmployee.id}
+          employeeName={exportEmployee.full_name}
+        />
       )}
     </div>
   );

@@ -1059,6 +1059,7 @@ export default function SiteDetailsPage() {
       <WorkCardExportModal
         isOpen={exportModalOpen}
         onClose={() => setExportModalOpen(false)}
+        mode="site"
         siteId={siteId!}
         siteName={site.site_name}
         employees={employees}

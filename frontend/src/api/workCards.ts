@@ -16,14 +16,17 @@ const normalizeMonthFormat = (month: string): string => {
 };
 
 export interface GetWorkCardsParams {
-  site_id: string;
+  site_id?: string;
+  employee_id?: string;
   processing_month: string;
   review_status?: string;
   include_employee?: boolean;
+  include_site?: boolean;
 }
 
 export interface WorkCardExportParams {
-  site_id: string;
+  site_id?: string;
+  employee_id?: string;
   processing_month: string;
   employee_ids?: string[];
   card_ids?: string[];
@@ -61,14 +64,22 @@ export interface GetMatrixParams {
 // List work cards with optional filtering
 export const getWorkCards = async (params: GetWorkCardsParams) => {
   const normalizedParams: Record<string, string> = {
-    site_id: params.site_id,
     month: normalizeMonthFormat(params.processing_month),
   };
+  if (params.site_id) {
+    normalizedParams.site_id = params.site_id;
+  }
+  if (params.employee_id) {
+    normalizedParams.employee_id = params.employee_id;
+  }
   if (params.review_status) {
     normalizedParams.status = params.review_status;
   }
   if (params.include_employee) {
     normalizedParams.include_employee = 'true';
+  }
+  if (params.include_site) {
+    normalizedParams.include_site = 'true';
   }
   const response = await client.get<{ data: WorkCard[] }>('/work_cards', { params: normalizedParams });
   return response.data.data;
@@ -162,14 +173,20 @@ export const sendWorkCardToWhatsApp = async (
   await client.post(`/work_cards/${cardId}/send-whatsapp`, { chat_id: chatId, note });
 };
 
-// Export work cards as a ZIP. Pass card_ids to export specific cards, or
-// employee_ids for the legacy one-image-per-employee behavior.
+// Export work cards as a ZIP, scoped to either a site or an employee (across
+// every site they have cards under). Pass card_ids to export specific cards,
+// or (site-scoped only) employee_ids for the legacy one-image-per-employee behavior.
 export const downloadWorkCardsExport = async (params: WorkCardExportParams): Promise<Blob> => {
   const queryParams: Record<string, string> = {
-    site_id: params.site_id,
     month: normalizeMonthFormat(params.processing_month),
     approved_only: params.approved_only ? 'true' : 'false',
   };
+  if (params.site_id) {
+    queryParams.site_id = params.site_id;
+  }
+  if (params.employee_id) {
+    queryParams.employee_id = params.employee_id;
+  }
   if (params.card_ids && params.card_ids.length > 0) {
     queryParams.card_ids = params.card_ids.join(',');
   } else if (params.employee_ids && params.employee_ids.length > 0) {

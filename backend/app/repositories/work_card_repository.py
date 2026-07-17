@@ -73,7 +73,30 @@ class WorkCardRepository(BaseRepository[WorkCard]):
         ).filter(
             WorkCard.review_status != 'SPLITTING'
         ).order_by(WorkCard.created_at.desc()).all()
-    
+
+    def get_by_employee_month_with_site(self, employee_id: UUID, month: date, business_id: UUID) -> List[WorkCard]:
+        """
+        Get all work cards for an employee and month in a business, across every
+        site they belong to, with site data eagerly loaded.
+
+        Args:
+            employee_id: The employee's UUID
+            month: The processing month
+            business_id: The business UUID
+
+        Returns:
+            List of WorkCard instances with site relationship loaded
+        """
+        return self.session.query(WorkCard).options(
+            joinedload(WorkCard.site)
+        ).filter_by(
+            employee_id=employee_id,
+            processing_month=month,
+            business_id=business_id
+        ).filter(
+            WorkCard.review_status != 'SPLITTING'
+        ).order_by(WorkCard.created_at.desc()).all()
+
     def get_by_employee_month(self, employee_id: UUID, month: date, business_id: UUID) -> List[WorkCard]:
         """
         Get all work cards for an employee and month in a business.
@@ -546,6 +569,33 @@ class WorkCardRepository(BaseRepository[WorkCard]):
             .filter(
                 WorkCard.id.in_(card_ids),
                 WorkCard.site_id == site_id,
+                WorkCard.processing_month == month,
+                WorkCard.business_id == business_id,
+            )
+            .all()
+        )
+        cards_by_id = {card.id: card for card in cards}
+        return [cards_by_id[cid] for cid in card_ids if cid in cards_by_id]
+
+    def get_by_ids_for_employee_export(
+        self,
+        card_ids: List[UUID],
+        employee_id: UUID,
+        month: date,
+        business_id: UUID,
+    ) -> List[WorkCard]:
+        """
+        Get the specific work cards requested for image export, scoped to the
+        given employee/month/business for safety (across every site the
+        employee has cards under). Eager-loads files and site and preserves
+        the order of the requested card_ids.
+        """
+        cards = (
+            self.session.query(WorkCard)
+            .options(joinedload(WorkCard.files), joinedload(WorkCard.site))
+            .filter(
+                WorkCard.id.in_(card_ids),
+                WorkCard.employee_id == employee_id,
                 WorkCard.processing_month == month,
                 WorkCard.business_id == business_id,
             )
