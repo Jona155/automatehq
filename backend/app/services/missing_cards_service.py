@@ -16,15 +16,16 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from sqlalchemy import func
+from sqlalchemy import and_, case, func
 
 from ..extensions import db
 from ..models.business import Business
@@ -38,6 +39,14 @@ DEFAULT_EXPECTED = 2
 STATUS_NONE = 'NONE'
 STATUS_PARTIAL = 'PARTIAL'
 STATUS_COMPLETE = 'COMPLETE'
+
+# Upload timestamps are evaluated in the business's local timezone (Israel) so
+# the late-card grace window lines up with the calendar the user sees, not UTC.
+_LOCAL_TZ = ZoneInfo('Asia/Jerusalem')
+
+# Rule 1 grace window end: a single card uploaded on/before this day-of-month of
+# the *following* month still counts as the complete month submission.
+GRACE_WINDOW_END_DAY = 5
 
 # Hebrew label for the "no field manager assigned" bucket.
 NO_MANAGER_LABEL = 'ללא מנהל שטח'
@@ -86,6 +95,62 @@ def _last_day_of_month(month: date) -> date:
     return date(month.year, month.month, calendar.monthrange(month.year, month.month)[1])
 
 
+def _next_month_first(month: date) -> date:
+    if month.month == 12:
+        return date(month.year + 1, 1, 1)
+    return date(month.year, month.month + 1, 1)
+
+
+def _to_local_date(dt: datetime) -> date:
+    """Calendar date of a timestamp in the business-local timezone (Israel).
+
+    Naive datetimes are assumed UTC (matches how ``created_at`` is stored).
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_LOCAL_TZ).date()
+
+
+def _late_single_card_exempt(
+    cards_count: int, first_uploaded_at: Optional[datetime], month: date
+) -> bool:
+    """Rule 1 — late single card.
+
+    Exactly one card for the month, uploaded (local time) between the last day
+    of the reporting month and the ``GRACE_WINDOW_END_DAY`` of the following
+    month, inclusive. Such a single late card is the complete submission.
+    """
+    if cards_count != 1 or first_uploaded_at is None:
+        return False
+    upload_date = _to_local_date(first_uploaded_at)
+    window_start = _last_day_of_month(month)
+    nm = _next_month_first(month)
+    window_end = date(nm.year, nm.month, GRACE_WINDOW_END_DAY)
+    return window_start <= upload_date <= window_end
+
+
+def _apply_exemptions(
+    base_status: str,
+    cards_count: int,
+    first_uploaded_at: Optional[datetime],
+    has_full_manual_approval: bool,
+    month: date,
+) -> str:
+    """Override a threshold-based status to COMPLETE when an exemption applies.
+
+    Rule 1 (late single card) and Rule 2 (month approved via manual card) both
+    mean the employee's month is settled even though the raw card count would
+    otherwise flag them. Only downgrades a gap to COMPLETE — never the reverse.
+    """
+    if base_status == STATUS_COMPLETE:
+        return base_status
+    if has_full_manual_approval:
+        return STATUS_COMPLETE
+    if _late_single_card_exempt(cards_count, first_uploaded_at, month):
+        return STATUS_COMPLETE
+    return base_status
+
+
 def effective_threshold(month: date, expected: int, today: Optional[date] = None) -> int:
     """How many cards an employee must have *right now* to not count as missing.
 
@@ -118,6 +183,10 @@ def compute_missing(
     during the open month a single card clears the bar, while after the month
     ends the full expected count is required. ``expected`` always carries the
     configured monthly target so the UI/report can show the real goal.
+
+    Two exemptions then override a gap to COMPLETE (see ``_apply_exemptions``):
+    a single card uploaded within the month-end grace window (Rule 1), or a
+    manual card whose approval covers the whole month (Rule 2).
     """
     business = db.session.query(Business).filter(Business.id == business_id).first()
     business_default = (
@@ -126,12 +195,29 @@ def compute_missing(
         else DEFAULT_EXPECTED
     )
 
-    # Cards per employee for the month (assigned cards only).
+    last_day = _last_day_of_month(month)
+
+    # Cards per employee for the month (assigned cards only). ``full_manual``
+    # flags a manual "ghost" card whose approval settles the whole month, so the
+    # employee is exempt from the missing list even without an image card.
     cards_sub = (
         db.session.query(
             WorkCard.employee_id.label('employee_id'),
             func.count(func.distinct(WorkCard.id)).label('cards_count'),
             func.min(WorkCard.created_at).label('first_uploaded_at'),
+            func.max(
+                case(
+                    (
+                        and_(
+                            WorkCard.source == 'MANUAL',
+                            WorkCard.review_status == 'APPROVED',
+                            WorkCard.approved_through_day >= last_day.day,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label('full_manual'),
         )
         .filter(
             WorkCard.business_id == business_id,
@@ -157,6 +243,7 @@ def compute_missing(
             User.phone_number.label('manager_phone'),
             func.coalesce(cards_sub.c.cards_count, 0).label('cards_count'),
             cards_sub.c.first_uploaded_at.label('first_uploaded_at'),
+            func.coalesce(cards_sub.c.full_manual, 0).label('full_manual'),
         )
         .outerjoin(Site, Site.id == Employee.site_id)
         .outerjoin(User, User.id == Site.field_manager_id)
@@ -176,6 +263,13 @@ def compute_missing(
         expected = int(r.site_expected) if r.site_expected else int(business_default)
         threshold = effective_threshold(month, expected, today)
         cards_count = int(r.cards_count or 0)
+        status = _apply_exemptions(
+            _classify(cards_count, threshold),
+            cards_count,
+            r.first_uploaded_at,
+            bool(r.full_manual),
+            month,
+        )
         rows.append({
             'employee_id': str(r.employee_id),
             'full_name': r.full_name,
@@ -189,7 +283,7 @@ def compute_missing(
             'manager_phone': r.manager_phone,
             'cards_count': cards_count,
             'expected': expected,
-            'status': _classify(cards_count, threshold),
+            'status': status,
             'first_uploaded_at': r.first_uploaded_at.isoformat() if r.first_uploaded_at else None,
         })
     return rows

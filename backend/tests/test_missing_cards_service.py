@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 
 from backend.app.services import missing_cards_service as mcs
 
@@ -60,6 +60,80 @@ class EffectiveThresholdTests(unittest.TestCase):
         after = mcs._classify(0, mcs.effective_threshold(self.MONTH, 2, date(2026, 7, 5)))
         self.assertEqual(within, mcs.STATUS_NONE)
         self.assertEqual(after, mcs.STATUS_NONE)
+
+
+def _utc(y, m, d, hh=12, mm=0):
+    return datetime(y, m, d, hh, mm, tzinfo=timezone.utc)
+
+
+class LateSingleCardExemptionTests(unittest.TestCase):
+    """Rule 1 — a single card uploaded in the month-end grace window is COMPLETE."""
+
+    MONTH = date(2026, 6, 1)  # June, last day = 30; grace window 06-30..07-05
+
+    def test_uploaded_on_last_day_of_month_is_exempt(self):
+        self.assertTrue(mcs._late_single_card_exempt(1, _utc(2026, 6, 30), self.MONTH))
+
+    def test_uploaded_on_grace_end_fifth_is_exempt(self):
+        self.assertTrue(mcs._late_single_card_exempt(1, _utc(2026, 7, 5), self.MONTH))
+
+    def test_uploaded_on_sixth_is_not_exempt(self):
+        self.assertFalse(mcs._late_single_card_exempt(1, _utc(2026, 7, 6), self.MONTH))
+
+    def test_mid_month_upload_is_not_exempt(self):
+        self.assertFalse(mcs._late_single_card_exempt(1, _utc(2026, 6, 15), self.MONTH))
+
+    def test_only_applies_to_exactly_one_card(self):
+        # Two cards, even if the earliest is in the window, is normal counting.
+        self.assertFalse(mcs._late_single_card_exempt(2, _utc(2026, 6, 30), self.MONTH))
+        self.assertFalse(mcs._late_single_card_exempt(0, None, self.MONTH))
+
+    def test_window_compared_in_israel_local_time(self):
+        # 2026-07-05 20:00Z -> 23:00 IDT on the 5th -> still exempt.
+        self.assertTrue(mcs._late_single_card_exempt(1, _utc(2026, 7, 5, 20), self.MONTH))
+        # 2026-07-05 22:00Z -> 01:00 IDT on the 6th -> past the cutoff.
+        self.assertFalse(mcs._late_single_card_exempt(1, _utc(2026, 7, 5, 22), self.MONTH))
+
+    def test_december_rolls_into_january(self):
+        dec = date(2026, 12, 1)
+        self.assertTrue(mcs._late_single_card_exempt(1, _utc(2027, 1, 5), dec))
+        self.assertFalse(mcs._late_single_card_exempt(1, _utc(2027, 1, 6), dec))
+
+
+class ApplyExemptionsTests(unittest.TestCase):
+    MONTH = date(2026, 6, 1)
+
+    def test_manual_full_approval_overrides_partial(self):
+        status = mcs._apply_exemptions(
+            mcs.STATUS_PARTIAL, 1, _utc(2026, 6, 15), True, self.MONTH
+        )
+        self.assertEqual(status, mcs.STATUS_COMPLETE)
+
+    def test_manual_full_approval_overrides_none(self):
+        # Manual card approved through month-end with no image cards at all.
+        status = mcs._apply_exemptions(
+            mcs.STATUS_NONE, 0, None, True, self.MONTH
+        )
+        self.assertEqual(status, mcs.STATUS_COMPLETE)
+
+    def test_late_single_card_overrides_partial(self):
+        status = mcs._apply_exemptions(
+            mcs.STATUS_PARTIAL, 1, _utc(2026, 6, 30), False, self.MONTH
+        )
+        self.assertEqual(status, mcs.STATUS_COMPLETE)
+
+    def test_no_exemption_leaves_status_unchanged(self):
+        # 1 mid-month card, no manual approval -> stays PARTIAL.
+        status = mcs._apply_exemptions(
+            mcs.STATUS_PARTIAL, 1, _utc(2026, 6, 15), False, self.MONTH
+        )
+        self.assertEqual(status, mcs.STATUS_PARTIAL)
+
+    def test_complete_is_never_downgraded(self):
+        status = mcs._apply_exemptions(
+            mcs.STATUS_COMPLETE, 2, _utc(2026, 6, 15), False, self.MONTH
+        )
+        self.assertEqual(status, mcs.STATUS_COMPLETE)
 
 
 class GroupByFieldManagerTests(unittest.TestCase):
