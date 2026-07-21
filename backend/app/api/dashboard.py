@@ -323,7 +323,8 @@ def get_dashboard_summary():
               "extractions_failed": int(row.extractions_failed),
               "export_count": int(row.export_count),
               "last_exported_at": row.last_exported_at.isoformat() if row.last_exported_at else None}
-             for row in review_rows],
+             for row in review_rows
+             if int(row.active_employee_count) > 0],
             key=lambda x: x["needs_review"] + x["needs_assignment"],
             reverse=True,
         )
