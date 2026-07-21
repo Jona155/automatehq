@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import Modal from './Modal';
+import ImageZoomViewer from './ImageZoomViewer';
 import type { GroupImage } from './WorkCardReviewTab';
 
 interface WorkCardCommentSuggestionModalProps {
@@ -68,20 +69,13 @@ export default function WorkCardCommentSuggestionModal({
               </span>
             </div>
 
-            <div className="flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 min-h-[16rem] max-h-[28rem] overflow-hidden">
-              {activeImage.url ? (
-                <img
-                  src={activeImage.url}
-                  alt={activeLabel}
-                  className="max-w-full max-h-[28rem] object-contain"
-                />
-              ) : (
-                <div className="flex items-center gap-2 text-slate-400 p-8">
-                  <span className="material-symbols-outlined animate-spin">progress_activity</span>
-                  <span className="text-sm">טוען תמונה…</span>
-                </div>
-              )}
-            </div>
+            <ImageZoomViewer
+              // Key on the card so switching images resets zoom/rotate/pan.
+              key={activeCardId}
+              src={activeImage.url}
+              alt={activeLabel}
+              className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 h-[28rem]"
+            />
 
             {/* Thumbnail strip when there is more than one image */}
             {images.length > 1 && (
