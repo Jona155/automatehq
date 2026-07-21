@@ -180,6 +180,8 @@ export interface DayEntry {
   // of the work card's own site (employee transferred mid-month). null = inherit.
   attributed_site_id?: string | null;
   source?: string | null;
+  // Free-text reviewer note for this day, exported as a cell comment in the Excel.
+  comment?: string | null;
   is_valid?: boolean;
   // The shown value comes from an approved source.
   is_approved?: boolean;

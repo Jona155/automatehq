@@ -41,6 +41,7 @@ export interface UpdateDayEntriesRequest {
     total_hours: number | null;
     day_status?: string | null;
     attributed_site_id?: string | null;
+    comment?: string | null;
   }>;
   monthly_total_hours?: number | null;
 }

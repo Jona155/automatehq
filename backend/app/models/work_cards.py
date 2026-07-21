@@ -113,6 +113,9 @@ class WorkCardDayEntry(db.Model):
     to_time = db.Column(db.Time, nullable=True)
     total_hours = db.Column(db.Numeric(5, 2), nullable=True)
     day_status = db.Column(db.Text, nullable=True)
+    # Free-text reviewer note for this specific day. Exported into the payroll
+    # Excel as a native cell comment (hover note) on the day's total-hours cell.
+    comment = db.Column(db.Text, nullable=True)
     # Per-day site override: when set, this day's hours are attributed to this
     # site instead of the parent work_card.site_id. NULL => inherit the card's
     # site. Lets one (managed) card split hours across sites by date.

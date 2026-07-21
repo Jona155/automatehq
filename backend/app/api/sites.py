@@ -16,6 +16,7 @@ from copy import copy
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill
+from openpyxl.comments import Comment
 from sqlalchemy import and_, or_, func, case
 from sqlalchemy.orm import joinedload
 from twilio.rest import Client
@@ -71,14 +72,14 @@ STATUS_DAY_LABELS = {
     'HOLIDAY': 'חג',
 }
 
-# Israeli labor law requires special notice for workdays of 12+ hours.
-# Per-day hours cells at or above this threshold are shaded grey in exports.
+# Israeli labor law requires special notice for workdays exceeding 12 hours.
+# Per-day hours cells strictly above this threshold are shaded grey in exports.
 LONG_DAY_HOURS_THRESHOLD = 12
 LONG_DAY_FILL = PatternFill('solid', fgColor='D9D9D9')  # grey
 
 
 def _is_long_day(value):
-    return isinstance(value, (int, float)) and float(value) >= LONG_DAY_HOURS_THRESHOLD
+    return isinstance(value, (int, float)) and float(value) > LONG_DAY_HOURS_THRESHOLD
 
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
@@ -346,7 +347,7 @@ def _copy_salary_row_template(ws, source_row, target_row):
     ws.row_dimensions[target_row].height = ws.row_dimensions[source_row].height
 
 
-def _populate_salary_template_sheet(ws, employees, matrix, month_date, status_matrix=None):
+def _populate_salary_template_sheet(ws, employees, matrix, month_date, status_matrix=None, comment_matrix=None):
     """
     Populate salary template:
     - Row 1 remains as header (passport/day columns).
@@ -354,9 +355,12 @@ def _populate_salary_template_sheet(ws, employees, matrix, month_date, status_ma
     - Column A contains employee passport/ID.
     - Day columns contain numeric hours when available, otherwise remain blank
       (except prefilled 'שבת' values are preserved).
+    - Per-day reviewer comments are attached as native Excel cell notes.
     """
     if status_matrix is None:
         status_matrix = {}
+    if comment_matrix is None:
+        comment_matrix = {}
     ws.sheet_view.rightToLeft = True
     day_columns = _ensure_salary_template_month_columns(ws, month_date)
     days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
@@ -388,6 +392,7 @@ def _populate_salary_template_sheet(ws, employees, matrix, month_date, status_ma
         employee_id_str = str(employee.id)
         employee_days = matrix.get(employee_id_str, {})
         employee_statuses = status_matrix.get(employee_id_str, {})
+        employee_comments = comment_matrix.get(employee_id_str, {})
         for day, col in day_columns.items():
             cell = ws.cell(row=row_index, column=col)
             status = employee_statuses.get(day)
@@ -403,6 +408,9 @@ def _populate_salary_template_sheet(ws, employees, matrix, month_date, status_ma
                     cell.value = numeric
                     if _is_long_day(numeric):
                         cell.fill = LONG_DAY_FILL
+            comment_text = employee_comments.get(day)
+            if comment_text:
+                cell.comment = Comment(comment_text, 'AutomateHQ')
 
     for row_index in range(employee_start_row + needed_rows, instruction_row):
         clear_row(row_index)
@@ -443,6 +451,7 @@ def _populate_template_core_sheet(
     style_total,
     status_matrix=None,
     monthly_totals=None,
+    comment_matrix=None,
 ):
     """Populate a worksheet in the core template format (no fee summary rows).
 
@@ -450,11 +459,16 @@ def _populate_template_core_sheet(
     employee is written as a literal value (the manual override) instead of
     the default =SUM(C3:C33) formula. Per-day cells still reflect any
     extracted/manual day entries — only the total cell is overridden.
+
+    Per-day reviewer comments are attached as native Excel cell notes on the
+    matching per-day hours cell.
     """
     if status_matrix is None:
         status_matrix = {}
     if monthly_totals is None:
         monthly_totals = {}
+    if comment_matrix is None:
+        comment_matrix = {}
     days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
     employee_count = len(employees)
     last_data_col = max(2, employee_count + 1)
@@ -499,6 +513,9 @@ def _populate_template_core_sheet(
             cell._style = copy(style_body)
             if not status and _is_long_day(value):
                 cell.fill = LONG_DAY_FILL
+            comment_text = comment_matrix.get(employee_id_str, {}).get(day)
+            if comment_text:
+                cell.comment = Comment(comment_text, 'AutomateHQ')
 
     # Clear template styling for any excess rows (e.g. days 29-31 when month has 28 days)
     for excess_day in range(days_in_month + 1, 32):
@@ -611,8 +628,8 @@ def _load_hours_matrix(site_id, processing_month, approved_only, include_inactiv
         include_inactive=include_inactive,
         business_id=g.business_id,
     )
-    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}})
-    return site_data['employees'], site_data['matrix'], site_data['status_map'], month, site_data['status_matrix'], site_data['monthly_totals']
+    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}})
+    return site_data['employees'], site_data['matrix'], site_data['status_map'], month, site_data['status_matrix'], site_data['monthly_totals'], site_data['comment_matrix']
 
 
 def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, include_inactive, business_id):
@@ -623,7 +640,7 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         return {}
 
     site_results = {
-        site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}}
+        site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}}
         for site_id in unique_site_ids
     }
     target_site_ids = set(unique_site_ids)
@@ -741,6 +758,7 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         WorkCardDayEntry.total_hours,
         WorkCardDayEntry.day_status,
         WorkCardDayEntry.attributed_site_id,
+        WorkCardDayEntry.comment,
     ).filter(
         WorkCardDayEntry.work_card_id.in_(work_card_ids)
     ).all()
@@ -774,6 +792,11 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
             site_data['status_matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = entry.day_status
         elif entry.total_hours is not None:
             site_data['matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = float(entry.total_hours)
+
+        # A per-day comment can accompany either an hours day or a status day,
+        # so accumulate it independently of the branch above.
+        if entry.comment:
+            site_data['comment_matrix'].setdefault(employee_id_str, {})[entry.day_of_month] = entry.comment
 
     # monthly_total_hours is a single card-level figure used when per-day hours
     # aren't recorded. It cannot be divided across sites, so it only applies to a
@@ -1085,7 +1108,7 @@ def get_hours_matrix(site_id):
         include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
         try:
-            employees, matrix, status_map, _, status_matrix, monthly_totals = _load_hours_matrix(
+            employees, matrix, status_map, _, status_matrix, monthly_totals, _ = _load_hours_matrix(
                 site_id,
                 processing_month,
                 approved_only,
@@ -1119,7 +1142,7 @@ def get_hours_matrix(site_id):
                 }
             )
 
-def _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals=None):
+def _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals=None, comment_matrix=None):
     """Generate a monthly summary XLSX workbook and return (BytesIO, filename)."""
     template_path = _resolve_summary_template_path()
     workbook = load_workbook(template_path)
@@ -1144,6 +1167,7 @@ def _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthl
         style_total=style_total,
         status_matrix=status_matrix,
         monthly_totals=monthly_totals,
+        comment_matrix=comment_matrix,
     )
 
     for extra_ws in workbook.worksheets[1:]:
@@ -1186,7 +1210,7 @@ def export_monthly_summary(site_id):
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
     try:
-        employees, matrix, status_map, month, status_matrix, monthly_totals = _load_hours_matrix(
+        employees, matrix, status_map, month, status_matrix, monthly_totals, comment_matrix = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only,
@@ -1200,7 +1224,7 @@ def export_monthly_summary(site_id):
         return api_response(status_code=500, message="Failed to export summary", error=str(e))
 
     try:
-        output, download_name = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals)
+        output, download_name = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals, comment_matrix)
     except Exception as e:
         logger.exception(f"Failed to generate summary XLSX for site {site_id}")
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
@@ -1235,7 +1259,7 @@ def send_summary_email(site_id):
         return api_response(status_code=400, message="processing_month is required", error="Bad Request")
 
     try:
-        employees, matrix, _, month, status_matrix, monthly_totals = _load_hours_matrix(
+        employees, matrix, _, month, status_matrix, monthly_totals, comment_matrix = _load_hours_matrix(
             site_id, processing_month, approved_only=False, include_inactive=False
         )
     except ValueError as e:
@@ -1245,7 +1269,7 @@ def send_summary_email(site_id):
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
 
     try:
-        output, filename = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals)
+        output, filename = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals, comment_matrix)
     except Exception as e:
         logger.exception(f"Failed to generate summary XLSX for email, site {site_id}")
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
@@ -1317,7 +1341,7 @@ def send_summary_whatsapp(site_id):
         )
 
     try:
-        employees, matrix, _, month, status_matrix, monthly_totals = _load_hours_matrix(
+        employees, matrix, _, month, status_matrix, monthly_totals, comment_matrix = _load_hours_matrix(
             site_id, processing_month, approved_only=False, include_inactive=False
         )
     except ValueError as e:
@@ -1327,7 +1351,7 @@ def send_summary_whatsapp(site_id):
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
 
     try:
-        output, _ = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals)
+        output, _ = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals, comment_matrix)
     except Exception as e:
         logger.exception(f"Failed to generate summary XLSX for WhatsApp, site {site_id}")
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
@@ -1448,7 +1472,7 @@ def export_monthly_summary_batch():
 
         used_sheet_names = set()
         for site in sites:
-            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}})
+            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}})
             total_employee_count += len(site_data['employees'])
 
             ws = workbook.copy_worksheet(template_ws)
@@ -1463,6 +1487,7 @@ def export_monthly_summary_batch():
                 style_total=style_total,
                 status_matrix=site_data['status_matrix'],
                 monthly_totals=site_data.get('monthly_totals'),
+                comment_matrix=site_data.get('comment_matrix'),
             )
             _add_tariff_summary(
                 ws,
@@ -1535,7 +1560,7 @@ def export_salary_template_site(site_id):
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
 
     try:
-        employees, matrix, _, _, status_matrix, __ = _load_hours_matrix(
+        employees, matrix, _, _, status_matrix, __, comment_matrix = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only=False,
@@ -1545,7 +1570,7 @@ def export_salary_template_site(site_id):
         template_path = _resolve_salary_template_path(month)
         workbook = load_workbook(template_path)
         ws = workbook.worksheets[0]
-        _populate_salary_template_sheet(ws, employees, matrix, month, status_matrix)
+        _populate_salary_template_sheet(ws, employees, matrix, month, status_matrix, comment_matrix)
         ws.title = _safe_sheet_name(site.site_name, set())
     except ValueError as e:
         return api_response(status_code=500, message="Invalid salary template format", error=str(e))
@@ -1620,13 +1645,13 @@ def export_salary_template_batch():
         used_sheet_names = set()
         populated_count = 0
         for site in sites:
-            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}})
+            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'comment_matrix': {}})
             total_employee_count += len(site_data['employees'])
 
             ws = workbook.copy_worksheet(template_ws)
             ws.title = _safe_sheet_name(site.site_name, used_sheet_names)
             try:
-                _populate_salary_template_sheet(ws, site_data['employees'], site_data['matrix'], month, site_data['status_matrix'])
+                _populate_salary_template_sheet(ws, site_data['employees'], site_data['matrix'], month, site_data['status_matrix'], site_data.get('comment_matrix'))
                 populated_count += 1
             except ValueError as e:
                 logger.exception(f"Invalid salary template format for site {site.id}")

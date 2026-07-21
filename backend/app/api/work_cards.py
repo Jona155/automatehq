@@ -1013,6 +1013,7 @@ def _serialize_day_entries_for_card(card: Any) -> list:
             row['total_hours'] = float(src.total_hours) if src.total_hours is not None else None
             row['day_status'] = src.day_status
             row['attributed_site_id'] = str(src.attributed_site_id) if src.attributed_site_id else None
+            row['comment'] = src.comment
         row['is_approved'] = card_approved or substituted
         row['is_protected'] = row['is_approved'] or entry.day_of_month <= boundary
         data.append(row)
@@ -1299,6 +1300,13 @@ def update_day_entries(card_id):
                 # overwrite it (only EXTRACTED values defer to approved data).
                 'source': 'MANUAL',
             }
+
+            # Per-day free-text comment (exported as an Excel cell note). Kept
+            # outside the status clear-block so a comment can accompany either an
+            # hours day or a status day. Normalize blank/whitespace to NULL.
+            raw_comment = entry.get('comment')
+            comment_val = raw_comment.strip() if isinstance(raw_comment, str) else None
+            entry_data['comment'] = comment_val or None
 
             # Store NULL when the attribution equals the card's own site (the
             # default) or is unset, so the column only ever holds genuine

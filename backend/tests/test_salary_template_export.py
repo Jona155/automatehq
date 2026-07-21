@@ -132,15 +132,45 @@ class SalaryTemplateExportTests(unittest.TestCase):
             status_matrix=status_matrix,
         )
 
-        # Below threshold: not marked.
+        # At or below threshold: not marked (exactly 12 is NOT flagged).
         self.assertFalse(_is_grey(ws.cell(row=2, column=day_columns[1])))
-        # At and above threshold (>= 12): marked grey.
-        self.assertTrue(_is_grey(ws.cell(row=2, column=day_columns[2])))
+        self.assertFalse(_is_grey(ws.cell(row=2, column=day_columns[2])))
+        # Strictly above threshold (> 12): marked grey.
         self.assertTrue(_is_grey(ws.cell(row=2, column=day_columns[3])))
         # Status-label day is not a numeric hours cell: not marked.
         vacation_cell = ws.cell(row=2, column=day_columns[4])
         self.assertEqual(vacation_cell.value, 'חופשה')
         self.assertFalse(_is_grey(vacation_cell))
+
+    def test_populate_sheet_attaches_day_comments(self):
+        _, ws = self._load_template_sheet()
+        day_columns = _extract_salary_day_columns_map(ws, date(2026, 2, 1))
+
+        employee = SimpleNamespace(id=uuid.uuid4(), passport_id='P-300')
+        matrix = {str(employee.id): {1: 10.0}}
+        status_matrix = {str(employee.id): {4: 'VACATION'}}
+        # Comment on an hours day AND on a status day; day 2 has no comment.
+        comment_matrix = {str(employee.id): {1: 'verify 10h?', 4: 'sick note attached'}}
+
+        _populate_salary_template_sheet(
+            ws=ws,
+            employees=[employee],
+            matrix=matrix,
+            month_date=date(2026, 2, 1),
+            status_matrix=status_matrix,
+            comment_matrix=comment_matrix,
+        )
+
+        hours_cell = ws.cell(row=2, column=day_columns[1])
+        self.assertIsNotNone(hours_cell.comment)
+        self.assertEqual(hours_cell.comment.text, 'verify 10h?')
+
+        vacation_cell = ws.cell(row=2, column=day_columns[4])
+        self.assertIsNotNone(vacation_cell.comment)
+        self.assertEqual(vacation_cell.comment.text, 'sick note attached')
+
+        # Day without a comment has no cell note.
+        self.assertIsNone(ws.cell(row=2, column=day_columns[2]).comment)
 
 
 if __name__ == '__main__':
