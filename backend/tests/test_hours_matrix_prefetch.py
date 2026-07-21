@@ -84,7 +84,7 @@ class LoadHoursMatrixForSitesTests(unittest.TestCase):
             )
             day_entries.append(SimpleNamespace(
                 work_card_id=work_card_id, day_of_month=1, total_hours=8.0,
-                day_status=None, attributed_site_id=None,
+                day_status=None, attributed_site_id=None, comment=None,
             ))
 
         # No visiting employees → the optional "missing visiting employees" query
@@ -132,9 +132,9 @@ class LoadHoursMatrixForSitesTests(unittest.TestCase):
             monthly_total_hours=200.0,
         )]
         day_entries = [
-            SimpleNamespace(work_card_id=work_card_id, day_of_month=1, total_hours=8.0, day_status=None, attributed_site_id=site_x),
-            SimpleNamespace(work_card_id=work_card_id, day_of_month=2, total_hours=7.0, day_status=None, attributed_site_id=site_y),
-            SimpleNamespace(work_card_id=work_card_id, day_of_month=3, total_hours=6.0, day_status=None, attributed_site_id=None),
+            SimpleNamespace(work_card_id=work_card_id, day_of_month=1, total_hours=8.0, day_status=None, attributed_site_id=site_x, comment=None),
+            SimpleNamespace(work_card_id=work_card_id, day_of_month=2, total_hours=7.0, day_status=None, attributed_site_id=site_y, comment=None),
+            SimpleNamespace(work_card_id=work_card_id, day_of_month=3, total_hours=6.0, day_status=None, attributed_site_id=None, comment=None),
         ]
 
         fake_session = _FakeSession([

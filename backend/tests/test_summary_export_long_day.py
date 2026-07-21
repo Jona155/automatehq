@@ -45,12 +45,37 @@ class SummaryExportLongDayTests(unittest.TestCase):
 
         # Layout is transposed: employee at column 2, day N at row N+2.
         self.assertFalse(_is_grey(ws.cell(row=3, column=2)))  # day 1 = 11.5, below threshold
-        self.assertTrue(_is_grey(ws.cell(row=4, column=2)))   # day 2 = 12.0, at threshold
+        self.assertFalse(_is_grey(ws.cell(row=4, column=2)))  # day 2 = 12.0, exactly 12 not flagged
         self.assertTrue(_is_grey(ws.cell(row=5, column=2)))   # day 3 = 12.5, above threshold
 
         vacation_cell = ws.cell(row=6, column=2)              # day 4 = VACATION label
         self.assertEqual(vacation_cell.value, 'חופשה')
         self.assertFalse(_is_grey(vacation_cell))
+
+    def test_core_sheet_attaches_day_comments(self):
+        workbook, ws, base_style = self._blank_sheet()
+
+        employee = SimpleNamespace(id=uuid.uuid4(), passport_id='P-400', full_name='Bob Roe')
+        matrix = {str(employee.id): {1: 8.0}}
+        comment_matrix = {str(employee.id): {1: 'check start time'}}
+
+        _populate_template_core_sheet(
+            ws=ws,
+            employees=[employee],
+            matrix=matrix,
+            month_date=date(2026, 2, 1),
+            style_header=base_style,
+            style_body=base_style,
+            style_total=base_style,
+            comment_matrix=comment_matrix,
+        )
+
+        # Employee column 2, day 1 = row 3.
+        commented = ws.cell(row=3, column=2)
+        self.assertIsNotNone(commented.comment)
+        self.assertEqual(commented.comment.text, 'check start time')
+        # A different day (row 4) has no comment.
+        self.assertIsNone(ws.cell(row=4, column=2).comment)
 
 
 if __name__ == '__main__':

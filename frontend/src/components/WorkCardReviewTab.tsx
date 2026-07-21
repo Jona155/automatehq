@@ -9,6 +9,7 @@ import { getFirstName } from '../utils/nameUtils';
 import MonthPicker from './MonthPicker';
 import { useToast } from '../hooks/useToast';
 import { useAuth } from '../context/AuthContext';
+import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import Modal from './Modal';
 import BulkDayUpdatePanel from './BulkDayUpdatePanel';
 import MonthlyHoursPanel from './MonthlyHoursPanel';
@@ -119,6 +120,7 @@ interface DayEntryRow {
   total_hours: string;
   day_status: DayStatus | null;
   attributed_site_id: string | null;
+  comment: string;
   isDirty: boolean;
   // Display-only: the day sits in the approved zone. Still fully editable.
   isApproved: boolean;
@@ -258,6 +260,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [jumpToDay, setJumpToDay] = useState('');
   const [showBulkPanel, setShowBulkPanel] = useState(false);
   const [activeDay, setActiveDay] = useState<number | null>(null);
+  // Which day's comment popover is open (null = none). Only one open at a time.
+  const [openCommentDay, setOpenCommentDay] = useState<number | null>(null);
+  const commentPopoverRef = useRef<HTMLDivElement | null>(null);
   const [imageScale, setImageScale] = useState(1);
   const [imageRotation, setImageRotation] = useState(0);
   const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
@@ -763,6 +768,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         total_hours: existing?.total_hours?.toString() || '',
         day_status: existing?.day_status || null,
         attributed_site_id: existing?.attributed_site_id ?? null,
+        comment: existing?.comment ?? '',
         isDirty: false,
         isApproved: !!existing?.is_approved,
         isProtected: !!existing?.is_protected,
@@ -1247,6 +1253,19 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     });
   };
 
+  // Set the per-day free-text comment (exported as an Excel cell note). Unlike
+  // the field mutators above it does NOT clear day_status/hours — a comment can
+  // accompany any day.
+  const handleCommentChange = (dayIndex: number, value: string) => {
+    setDayEntries(prev => {
+      const updated = [...prev];
+      const entry = updated[dayIndex];
+      if (value === entry.comment) return prev;
+      updated[dayIndex] = { ...entry, comment: value, isDirty: true };
+      return updated;
+    });
+  };
+
   const handleBulkApply = (selectedDays: number[], values: {
     from_time?: string;
     to_time?: string;
@@ -1386,6 +1405,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     keepRowVisible(day);
   }, [keepRowVisible]);
 
+  // Close the day-comment popover when clicking outside it.
+  useOnClickOutside(commentPopoverRef, () => setOpenCommentDay(null), openCommentDay !== null);
+
   const handleJumpToDay = useCallback(() => {
     if (jumpDayValidationMessage || jumpDayNumber === null) return;
 
@@ -1496,6 +1518,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
         total_hours: e.total_hours ? parseFloat(e.total_hours) : null,
         day_status: e.day_status || null,
         attributed_site_id: e.attributed_site_id ?? null,
+        comment: e.comment?.trim() || null,
       }));
 
       const wasApproved = selectedCard.review_status === 'APPROVED';
@@ -2735,6 +2758,45 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                           קו
                                         </span>
                                       )}
+                                      <div className="relative flex items-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => setOpenCommentDay(prev => prev === entry.day_of_month ? null : entry.day_of_month)}
+                                          className={`material-symbols-outlined text-sm rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${entry.comment ? 'text-primary' : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400'}`}
+                                          style={entry.comment ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                                          title={entry.comment || 'הוסף הערה ליום זה'}
+                                          aria-label={entry.comment ? `ערוך הערה ליום ${entry.day_of_month}` : `הוסף הערה ליום ${entry.day_of_month}`}
+                                        >
+                                          comment
+                                        </button>
+                                        {openCommentDay === entry.day_of_month && (
+                                          <div
+                                            ref={commentPopoverRef}
+                                            className="absolute top-full right-0 z-30 mt-1 w-56 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg p-2 text-right"
+                                          >
+                                            <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                              הערה ליום {entry.day_of_month}
+                                            </div>
+                                            <textarea
+                                              autoFocus
+                                              value={entry.comment}
+                                              onChange={(e) => handleCommentChange(index, e.target.value)}
+                                              rows={3}
+                                              placeholder="הערה שתופיע על התא באקסל..."
+                                              className="w-full px-2 py-1.5 text-xs rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+                                            />
+                                            <div className="flex justify-end mt-1">
+                                              <button
+                                                type="button"
+                                                onClick={() => setOpenCommentDay(null)}
+                                                className="px-2 py-0.5 rounded bg-primary text-white text-[11px] font-semibold hover:bg-primary/90"
+                                              >
+                                                סגור
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
                                     </div>
                                     <span className={`text-[11px] leading-none ${isSaturday ? 'text-teal-600 dark:text-teal-400 font-semibold' : 'text-slate-400 dark:text-slate-500'}`}>
                                       {HEBREW_DAY_NAMES[dayIndex]}
