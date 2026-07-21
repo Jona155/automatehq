@@ -13,6 +13,7 @@ import Modal from './Modal';
 import BulkDayUpdatePanel from './BulkDayUpdatePanel';
 import MonthlyHoursPanel from './MonthlyHoursPanel';
 import SearchableSelect from './SearchableSelect';
+import WorkCardCommentSuggestionModal from './WorkCardCommentSuggestionModal';
 
 interface WorkCardReviewTabProps {
   siteId: string;
@@ -126,7 +127,7 @@ interface DayEntryRow {
 
 // One reference image in the employee-month strip. Manual ghost cards carry no
 // image (url stays null → placeholder tile); image cards get a blob object URL.
-interface GroupImage {
+export interface GroupImage {
   cardId: string;
   url: string | null;
   filename: string | null;
@@ -225,6 +226,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [isSaving, setIsSaving] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  // Suggest-comment modal: shown on approve when the employee's hours are split
+  // across more than one site, prompting a comment on the relevant card image(s).
+  const [showCommentModal, setShowCommentModal] = useState(false);
   // "Send to WhatsApp" modal — forward the active card image + a note to a group.
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [waGroups, setWaGroups] = useState<WhatsAppGroup[]>([]);
@@ -446,6 +450,19 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   }, [selectedGroup]);
 
   const activeImage = groupImages[activeImageIndex] ?? null;
+
+  // Image-bearing cards in the group (manual ghost cards have no image to comment on).
+  const imageCards = useMemo(() => groupImages.filter((g) => g.hasFile), [groupImages]);
+
+  // Approve-time suggestion trigger: at least one day is attributed to a site other
+  // than the one being reviewed (siteId). `attributed_site_id` is null for the
+  // default site, so any non-null value means the hours span more than one site.
+  const shouldSuggestComments = useMemo(
+    () =>
+      imageCards.length > 0 &&
+      dayEntries.some((e) => e.attributed_site_id && e.attributed_site_id !== siteId),
+    [imageCards, dayEntries, siteId]
+  );
 
   const isFocusMode = reviewMode === 'focus';
 
@@ -1569,6 +1586,54 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       const saved = await saveDayEntries({ showNoChangesToast: false, showSuccessToast: false });
       if (!saved) return;
     }
+    // If the employee's hours are split across sites, suggest adding a comment to
+    // the relevant card image(s) before approving. Approval proceeds from the modal.
+    if (shouldSuggestComments) {
+      setShowCommentModal(true);
+      return;
+    }
+    await handleApprove();
+  };
+
+  // Persist per-image comments (into each card's `notes`) for cards whose draft
+  // changed, then close the modal and approve. On failure keep the modal open.
+  const handleSaveCommentsAndApprove = async (comments: Record<string, string>) => {
+    const changed = imageCards.filter((g) => {
+      const saved = selectedGroup?.cards.find((c) => c.id === g.cardId)?.notes ?? '';
+      return (comments[g.cardId] ?? '').trim() !== saved.trim();
+    });
+    if (changed.length > 0) {
+      setIsSavingNote(true);
+      try {
+        const results = await Promise.all(
+          changed.map(async (g) => {
+            const value = (comments[g.cardId] ?? '').trim();
+            const updated = await updateWorkCard(g.cardId, { notes: value });
+            return { cardId: g.cardId, notes: updated.notes ?? null };
+          })
+        );
+        const notesById = new Map(results.map((r) => [r.cardId, r.notes]));
+        setWorkCards((prev) =>
+          prev.map((c) => (notesById.has(c.id) ? { ...c, notes: notesById.get(c.id) ?? null } : c))
+        );
+        setSelectedCard((prev) =>
+          prev && notesById.has(prev.id) ? { ...prev, notes: notesById.get(prev.id) ?? null } : prev
+        );
+        showToast('ההערות נשמרו', 'success');
+      } catch (err) {
+        console.error('Failed to save work card comments:', err);
+        showToast('שגיאה בשמירת ההערות', 'error');
+        return;
+      } finally {
+        setIsSavingNote(false);
+      }
+    }
+    setShowCommentModal(false);
+    await handleApprove();
+  };
+
+  const handleApproveWithoutComment = async () => {
+    setShowCommentModal(false);
     await handleApprove();
   };
 
@@ -2775,6 +2840,24 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
           )}
         </div>
       </div>
+      {showCommentModal && (
+        <WorkCardCommentSuggestionModal
+          isOpen={showCommentModal}
+          onClose={() => setShowCommentModal(false)}
+          images={imageCards}
+          siteNameByCardId={Object.fromEntries(
+            (selectedGroup?.cards ?? [])
+              .filter((c) => c.site?.site_name)
+              .map((c) => [c.id, c.site!.site_name])
+          )}
+          initialComments={Object.fromEntries(
+            (selectedGroup?.cards ?? []).map((c) => [c.id, c.notes ?? ''])
+          )}
+          isSaving={isSavingNote}
+          onSaveAndApprove={handleSaveCommentsAndApprove}
+          onApproveWithoutComment={handleApproveWithoutComment}
+        />
+      )}
       <Modal
         isOpen={showRejectModal}
         onClose={() => setShowRejectModal(false)}
