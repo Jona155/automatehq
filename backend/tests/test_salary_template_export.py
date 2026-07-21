@@ -7,11 +7,16 @@ from types import SimpleNamespace
 from openpyxl import load_workbook
 
 from backend.app.api.sites import (
+    LONG_DAY_FILL,
     _extract_salary_day_columns_map,
     _find_salary_instruction_row,
     _populate_salary_template_sheet,
     _resolve_salary_template_path,
 )
+
+
+def _is_grey(cell):
+    return cell.fill is not None and cell.fill.fgColor.rgb == LONG_DAY_FILL.fgColor.rgb
 
 
 class SalaryTemplateExportTests(unittest.TestCase):
@@ -105,6 +110,37 @@ class SalaryTemplateExportTests(unittest.TestCase):
 
         # Numeric hours should override fallback Saturday text
         self.assertEqual(ws.cell(row=2, column=30).value, 8.0)  # day 29
+
+    def test_populate_sheet_marks_long_days_grey(self):
+        _, ws = self._load_template_sheet()
+        day_columns = _extract_salary_day_columns_map(ws, date(2026, 2, 1))
+
+        employee = SimpleNamespace(id=uuid.uuid4(), passport_id='P-200')
+        # Days 1-3 of Feb 2026 are Sun/Mon/Tue (not Saturday fallbacks).
+        matrix = {
+            str(employee.id): {1: 11.5, 2: 12.0, 3: 12.5},
+        }
+        status_matrix = {
+            str(employee.id): {4: 'VACATION'},
+        }
+
+        _populate_salary_template_sheet(
+            ws=ws,
+            employees=[employee],
+            matrix=matrix,
+            month_date=date(2026, 2, 1),
+            status_matrix=status_matrix,
+        )
+
+        # Below threshold: not marked.
+        self.assertFalse(_is_grey(ws.cell(row=2, column=day_columns[1])))
+        # At and above threshold (>= 12): marked grey.
+        self.assertTrue(_is_grey(ws.cell(row=2, column=day_columns[2])))
+        self.assertTrue(_is_grey(ws.cell(row=2, column=day_columns[3])))
+        # Status-label day is not a numeric hours cell: not marked.
+        vacation_cell = ws.cell(row=2, column=day_columns[4])
+        self.assertEqual(vacation_cell.value, 'חופשה')
+        self.assertFalse(_is_grey(vacation_cell))
 
 
 if __name__ == '__main__':

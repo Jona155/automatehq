@@ -15,6 +15,7 @@ from pathlib import Path
 from copy import copy
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
+from openpyxl.styles import PatternFill
 from sqlalchemy import and_, or_, func, case
 from sqlalchemy.orm import joinedload
 from twilio.rest import Client
@@ -69,6 +70,16 @@ STATUS_DAY_LABELS = {
     'INTERNATIONAL_VISA': 'ויזה בינלאומית',
     'HOLIDAY': 'חג',
 }
+
+# Israeli labor law requires special notice for workdays of 12+ hours.
+# Per-day hours cells at or above this threshold are shaded grey in exports.
+LONG_DAY_HOURS_THRESHOLD = 12
+LONG_DAY_FILL = PatternFill('solid', fgColor='D9D9D9')  # grey
+
+
+def _is_long_day(value):
+    return isinstance(value, (int, float)) and float(value) >= LONG_DAY_HOURS_THRESHOLD
+
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
 
@@ -388,7 +399,10 @@ def _populate_salary_template_sheet(ws, employees, matrix, month_date, status_ma
                     is_saturday = day <= days_in_month and datetime(month_date.year, month_date.month, day).weekday() == 5
                     cell.value = 'שבת' if is_saturday else None
                 else:
-                    cell.value = round(float(hours), 2)
+                    numeric = round(float(hours), 2)
+                    cell.value = numeric
+                    if _is_long_day(numeric):
+                        cell.fill = LONG_DAY_FILL
 
     for row_index in range(employee_start_row + needed_rows, instruction_row):
         clear_row(row_index)
@@ -481,7 +495,10 @@ def _populate_template_core_sheet(
                 value = employee_days.get(day)
                 if value is None:
                     value = _day_fallback_value(month_date.year, month_date.month, day, days_in_month)
-            ws.cell(row=row, column=idx, value=value)._style = copy(style_body)
+            cell = ws.cell(row=row, column=idx, value=value)
+            cell._style = copy(style_body)
+            if not status and _is_long_day(value):
+                cell.fill = LONG_DAY_FILL
 
     # Clear template styling for any excess rows (e.g. days 29-31 when month has 28 days)
     for excess_day in range(days_in_month + 1, 32):
