@@ -2,6 +2,9 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
+import AnalyticsScorecardPage from './pages/AnalyticsScorecardPage';
+import AnalyticsSiteDetailPage from './pages/AnalyticsSiteDetailPage';
+import AnalyticsEmployeeDetailPage from './pages/AnalyticsEmployeeDetailPage';
 import EmployeesPage from './pages/EmployeesPage';
 import SitesPage from './pages/SitesPage';
 import SiteDetailsPage from './pages/SiteDetailsPage';
@@ -44,6 +47,9 @@ function App() {
             <Route element={<TenantGuard />}>
               <Route element={<Layout />}>
                 <Route path="/:businessCode/dashboard" element={<DashboardPage />} />
+                <Route path="/:businessCode/analytics" element={<AnalyticsScorecardPage />} />
+                <Route path="/:businessCode/analytics/sites/:siteId" element={<AnalyticsSiteDetailPage />} />
+                <Route path="/:businessCode/analytics/sites/:siteId/employees/:employeeId" element={<AnalyticsEmployeeDetailPage />} />
                 <Route path="/:businessCode/employees" element={<EmployeesPage />} />
                 <Route path="/:businessCode/sites" element={<SitesPage />} />
                 <Route path="/:businessCode/sites/:siteId" element={<SiteDetailsPage />} />

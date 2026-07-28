@@ -6,8 +6,12 @@ export function usePermissions() {
   const isOperatorManager = user?.role === 'OPERATOR_MANAGER';
   const isApplicationManager = user?.role === 'APPLICATION_MANAGER';
 
+  const isFieldManager = user?.role === 'FIELD_MANAGER';
+
   return {
     isAdmin,
+    isOperatorManager,
+    isFieldManager,
     isApplicationManager,
     canUpload: true,
     canEditHours: isAdmin,

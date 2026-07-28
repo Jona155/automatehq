@@ -76,11 +76,15 @@ def create_user():
         if not data.get('full_name'):
             return api_response(status_code=400, message="Full Name is required", error="Bad Request")
 
-        # Field managers don't log in: they require name + phone only.
+        # Field managers may be phone-only (site attribution by phone, no login)
+        # OR login-capable (email + password). They need at least one identity,
+        # and a password is only usable with an email (login is email-based).
         # All other roles require email + password.
         if is_field_manager:
-            if not data.get('phone_number'):
-                return api_response(status_code=400, message="Phone number is required for field managers", error="Bad Request")
+            if not data.get('phone_number') and not data.get('email'):
+                return api_response(status_code=400, message="Phone number or email is required for field managers", error="Bad Request")
+            if data.get('password') and not data.get('email'):
+                return api_response(status_code=400, message="Email is required to set a password", error="Bad Request")
         else:
             if not data.get('email'):
                 return api_response(status_code=400, message="Email is required", error="Bad Request")
@@ -180,8 +184,17 @@ def update_user(user_id):
             if existing and str(existing.id) != str(user_id):
                 return api_response(status_code=409, message="User with this phone number already exists", error="Conflict")
 
-        # Don't persist an empty password
-        if 'password' in data and not data.get('password'):
+        # Hash a supplied password into password_hash (the User model has no
+        # `password` column, so a raw `password` kwarg would be silently dropped
+        # by the repository). An empty/blank password means "leave unchanged".
+        if data.get('password'):
+            # A password is only usable with an email (login is email-based);
+            # reject setting one on a user that has neither an existing nor a
+            # new email.
+            if not data.get('email') and not user.email:
+                return api_response(status_code=400, message="Email is required to set a password", error="Bad Request")
+            data['password_hash'] = generate_password_hash(data.pop('password'), method='pbkdf2:sha256')
+        else:
             data.pop('password', None)
 
         updated_user = repo.update(user_id, **data)
