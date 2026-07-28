@@ -15,7 +15,9 @@ export default function LoginPage() {
       if (user?.role === 'APPLICATION_MANAGER') {
         navigate('/starter/businesses', { replace: true });
       } else if (business) {
-        navigate(`/${business.code}/dashboard`, { replace: true });
+        // Field managers land directly on their performance analytics.
+        const landing = user?.role === 'FIELD_MANAGER' ? 'analytics' : 'dashboard';
+        navigate(`/${business.code}/${landing}`, { replace: true });
       }
     }
   }, [isAuthenticated, business, user, navigate]);
@@ -44,7 +46,9 @@ export default function LoginPage() {
         setIsLoading(false);
         return;
       }
-      navigate(`/${businessCode}/dashboard`);
+      // Field managers land directly on their performance analytics.
+      const landing = loggedInUser.role === 'FIELD_MANAGER' ? 'analytics' : 'dashboard';
+      navigate(`/${businessCode}/${landing}`);
     } catch (err: any) {
       console.error(err);
       // Extract error message from API response if available

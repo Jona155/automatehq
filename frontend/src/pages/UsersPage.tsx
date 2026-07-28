@@ -114,8 +114,12 @@ export default function UsersPage() {
   const validateForm = () => {
     if (!formData.full_name.trim()) return 'שם מלא הוא שדה חובה';
     if (isFieldManager) {
-      // Field managers don't log in: name + phone only.
-      if (!formData.phone_number.trim()) return 'מספר טלפון הוא שדה חובה';
+      // Field managers may be phone-only (no login) or login-capable
+      // (email + password). Require at least one identity; a password is only
+      // usable with an email (login is email-based).
+      if (!formData.phone_number.trim() && !formData.email.trim()) return 'יש להזין מספר טלפון או אימייל';
+      if (formData.password.trim() && !formData.email.trim()) return 'נדרש אימייל כדי להגדיר סיסמה';
+      if (formData.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) return 'כתובת אימייל לא תקינה';
       return null;
     }
     if (!formData.email.trim()) return 'אימייל הוא שדה חובה';
@@ -139,7 +143,11 @@ export default function UsersPage() {
       if (editingUser) {
         const payload: UpdateUserPayload = {
           full_name: formData.full_name,
-          ...(isFieldManager ? {} : { email: formData.email }),
+          // Field managers can now carry login credentials. Send email for
+          // non-FMs always (required) and for FMs only when set; send password
+          // only when the admin typed one (blank = keep current).
+          ...(isFieldManager ? (formData.email ? { email: formData.email } : {}) : { email: formData.email }),
+          ...(isFieldManager && formData.password ? { password: formData.password } : {}),
           ...(formData.phone_number ? { phone_number: formData.phone_number } : {}),
           ...(editingUser.id !== currentUser?.id ? { role: formData.role } : {}),
           ...(isFieldManager ? { site_ids: siteIds } : {}),
@@ -149,7 +157,9 @@ export default function UsersPage() {
         const payload: CreateUserPayload = {
           full_name: formData.full_name,
           role: formData.role,
-          ...(isFieldManager ? {} : { email: formData.email, password: formData.password }),
+          ...(isFieldManager
+            ? { ...(formData.email ? { email: formData.email } : {}), ...(formData.password ? { password: formData.password } : {}) }
+            : { email: formData.email, password: formData.password }),
           ...(formData.phone_number ? { phone_number: formData.phone_number } : {}),
           ...(isFieldManager ? { site_ids: siteIds } : {}),
         };
@@ -323,20 +333,18 @@ export default function UsersPage() {
                   placeholder="ישראל ישראלי"
                 />
               </div>
-              {!isFieldManager && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    אימייל (שם משתמש)
-                  </label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
-                    placeholder="email@example.com"
-                  />
-                </div>
-              )}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  אימייל (שם משתמש){isFieldManager ? ' – אופציונלי, לכניסה למערכת' : ''}
+                </label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
+                  placeholder="email@example.com"
+                />
+              </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                   מספר טלפון
@@ -353,6 +361,20 @@ export default function UsersPage() {
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     סיסמה
+                  </label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none transition-all"
+                    placeholder="******"
+                  />
+                </div>
+              )}
+              {isFieldManager && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    סיסמה{editingUser ? ' (השאר ריק כדי לא לשנות)' : ' – אופציונלי'}
                   </label>
                   <input
                     type="password"

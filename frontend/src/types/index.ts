@@ -462,3 +462,117 @@ export interface TelegramLogsResponse {
   limit: number;
   offset: number;
 }
+
+// ─── Performance analytics (Employee Performance Analytics) ───
+
+export type Band = 'HIGH' | 'MID' | 'LOW';
+
+export interface TrendPoint {
+  month: string;            // 'YYYY-MM'
+  utilization: number | null;
+}
+
+export interface BandDistribution {
+  HIGH: number;
+  MID: number;
+  LOW: number;
+}
+
+export interface Spread {
+  stddev: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+export interface ScorecardSite {
+  site_id: string;
+  site_name: string | null;
+  avg_utilization: number | null;
+  avg_hours: number | null;
+  band: Band | null;
+  employee_count: number;
+  low_performer_count: number;
+  spread: Spread;
+  band_distribution: BandDistribution;
+  trend: TrendPoint[];
+}
+
+export interface ScorecardSummary {
+  total_sites: number;
+  sites_meeting_criteria: number;   // avg utilization >= 70%
+  total_employees: number;
+  employees_below_average: number;
+  employees_above_average: number;
+  overall_avg_utilization: number | null;
+  overall_avg_hours: number | null;
+}
+
+export interface SiteScorecard {
+  period: string;
+  months: string[];
+  target_hours: number;
+  company_avg_utilization: number | null;
+  summary: ScorecardSummary;
+  sites: ScorecardSite[];
+}
+
+export interface SiteWorked {
+  site_id: string;
+  site_name: string | null;
+  hours: number;
+}
+
+export interface LeaderboardEmployee {
+  employee_id: string;
+  full_name: string;
+  utilization_pct: number;
+  band: Band;
+  hours_at_site: number;
+  total_hours: number;
+  delta_vs_site_avg: number | null;
+  delta_hours_vs_site_avg: number | null;
+  is_multi_site: boolean;
+  sites_worked: SiteWorked[];
+  trend: TrendPoint[];
+}
+
+export interface SiteHealth {
+  avg_utilization: number | null;
+  avg_hours: number | null;
+  band: Band | null;
+  employee_count: number;
+  low_performer_count: number;
+  spread: Spread;
+  band_distribution: BandDistribution;
+  trend: TrendPoint[];
+}
+
+export interface EmployeeAnalyticsDetail {
+  period: string;
+  months: string[];
+  site_id: string;
+  site_name: string | null;
+  employee_id: string;
+  full_name: string;
+  utilization_pct: number;
+  band: Band;
+  total_hours: number;
+  hours_at_site: number;
+  target_hours: number;
+  n_months: number;
+  site_avg_utilization: number | null;
+  company_avg_utilization: number | null;
+  trend: TrendPoint[];
+  sites_worked: SiteWorked[];
+}
+
+export interface SiteAnalyticsDetail {
+  period: string;
+  months: string[];
+  site_id: string;
+  site_name: string | null;
+  target_hours: number;
+  n_months: number;
+  site_health: SiteHealth;
+  employees: LeaderboardEmployee[];
+}

@@ -98,7 +98,7 @@ function SectionHeader({ title, open, onToggle }: SectionHeaderProps) {
 export default function Sidebar() {
   const { logout, business, selectedBusiness, user } = useAuth();
   const { collapsed, toggle } = useSidebar();
-  const { isAdmin, isApplicationManager } = usePermissions();
+  const { isAdmin, isApplicationManager, isOperatorManager, isFieldManager } = usePermissions();
   const location = useLocation();
 
   const base = `/${business?.code || selectedBusiness?.code || 'default'}`;
@@ -124,6 +124,7 @@ export default function Sidebar() {
   const userName = user?.full_name || 'משתמש';
   const userRole = ROLE_LABEL[user?.role || ''] || '';
   const showAdminSection = isAdmin || isApplicationManager;
+  const showAnalytics = isAdmin || isOperatorManager || isFieldManager;
 
   return (
     <aside
@@ -170,6 +171,9 @@ export default function Sidebar() {
         {(collapsed || sectionsOpen.ops) && (
           <div className="space-y-0.5">
             <NavRow to={`${base}/dashboard`} icon="dashboard" label="לוח בקרה" collapsed={collapsed} />
+            {showAnalytics && (
+              <NavRow to={`${base}/analytics`} icon="monitoring" label="ביצועים" collapsed={collapsed} />
+            )}
 
             {/* Work cards parent + sub-items */}
             {collapsed ? (

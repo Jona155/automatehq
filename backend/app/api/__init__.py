@@ -13,6 +13,7 @@ from .whatsapp_settings import whatsapp_settings_bp
 from .site_tariff_import import site_tariff_import_bp
 from .site_hours_import import site_hours_import_bp
 from .missing_cards import missing_cards_bp
+from .analytics import analytics_bp
 
 def register_blueprints(app: Flask):
     """Register all API blueprints."""
@@ -30,3 +31,4 @@ def register_blueprints(app: Flask):
     app.register_blueprint(site_tariff_import_bp)
     app.register_blueprint(site_hours_import_bp)
     app.register_blueprint(missing_cards_bp)
+    app.register_blueprint(analytics_bp)
