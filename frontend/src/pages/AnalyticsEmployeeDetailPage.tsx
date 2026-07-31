@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getEmployeeAnalytics } from '../api/analytics';
 import type { EmployeeAnalyticsDetail } from '../types';
-import { bandStyle, formatPct } from '../components/analytics/bands';
+import { bandStyle, formatPct, perMonthHours } from '../components/analytics/bands';
 import UtilizationBar from '../components/analytics/UtilizationBar';
 import BandBadge from '../components/analytics/BandBadge';
+import HoursHeadline from '../components/analytics/HoursHeadline';
+import GapLabel from '../components/analytics/GapLabel';
 import PeriodToggle, { usePersistedPeriod } from '../components/analytics/PeriodToggle';
 import Sparkline from '../components/analytics/Sparkline';
 import LoadingIndicator from '../components/LoadingIndicator';
@@ -108,24 +110,38 @@ export default function AnalyticsEmployeeDetailPage() {
             <PeriodToggle value={period} onChange={setPeriod} />
           </div>
 
-          {/* Hero: utilization vs target */}
+          {/* Hero: worked hours vs target (hours-first) */}
           <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-5 shadow-sm border border-slate-200 dark:border-slate-700">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-slate-500 dark:text-slate-400">ניצולת</p>
-                <p className="text-4xl font-bold mt-1 tabular-nums" style={{ color: bandStyle(data.band).hex }}>
-                  {formatPct(data.utilization_pct)}
-                </p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex flex-col gap-1">
+                <p className="text-sm text-slate-500 dark:text-slate-400">שעות בפועל</p>
+                <HoursHeadline
+                  hours={data.total_hours}
+                  target={data.target_hours}
+                  pct={data.utilization_pct}
+                  band={data.band}
+                  size="lg"
+                />
               </div>
               <BandBadge band={data.band} />
             </div>
             <div className="mt-3">
-              <UtilizationBar pct={data.utilization_pct} band={data.band} showValue={false} />
+              <UtilizationBar
+                pct={data.utilization_pct}
+                band={data.band}
+                hours={data.total_hours}
+                showValue={false}
+                showMarker
+              />
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 tabular-nums">
-              {formatNumber(Math.round(data.total_hours))} מתוך {formatNumber(data.target_hours)} שעות
-              {data.n_months > 1 && ` (${data.n_months} חודשים)`}
-            </p>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <GapLabel hours={data.total_hours} target={data.target_hours} />
+              {data.n_months > 1 && (
+                <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                  {data.n_months} חודשים
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Comparisons */}
@@ -147,13 +163,16 @@ export default function AnalyticsEmployeeDetailPage() {
           {data.sites_worked.length > 0 && (
             <div className="bg-white dark:bg-[#1a2a35] rounded-xl p-5 shadow-sm border border-slate-200 dark:border-slate-700">
               <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">
-                שעות לפי אתר{data.sites_worked.length > 1 ? ' (רב-אתרי)' : ''}
+                {data.n_months > 1 ? 'ממוצע חודשי לפי אתר' : 'שעות לפי אתר'}
+                {data.sites_worked.length > 1 ? ' (רב-אתרי)' : ''}
               </h2>
               <div className="space-y-1">
                 {data.sites_worked.map((s) => (
                   <div key={s.site_id} className="flex items-center justify-between text-sm text-slate-600 dark:text-slate-300">
                     <span className="truncate">{s.site_name || '—'}</span>
-                    <span className="tabular-nums shrink-0 ps-2">{formatNumber(Math.round(s.hours))} ש'</span>
+                    <span className="tabular-nums shrink-0 ps-2">
+                      {formatNumber(Math.round(perMonthHours(s.hours, data.target_hours) ?? 0))} ש'
+                    </span>
                   </div>
                 ))}
               </div>

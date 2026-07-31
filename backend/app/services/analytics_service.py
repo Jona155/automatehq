@@ -263,6 +263,21 @@ def build_site_scorecards(business_id, months, allowed_site_ids, bust=False):
     sites_meeting = sum(
         1 for c in cards if c['avg_utilization'] is not None and c['avg_utilization'] >= BAND_MID_MIN
     )
+
+    # Company-wide monthly trend — a FIXED last-6-months lookback, independent of
+    # the selected period, so the hero always shows context. Per-month membership
+    # dedupes multi-site workers (counted once per month). Null in an empty month.
+    trend_payloads = _collect_month_payloads(business_id, resolve_period('last_6_months'), bust=bust)
+    allowed_strs = [str(s) for s in allowed_site_ids]
+    overall_trend = []
+    for label, payload in trend_payloads:
+        members = set()
+        for s in allowed_strs:
+            members.update(payload.get('site_members', {}).get(s, []))
+        emps = payload['employees']
+        utils = [emps[e]['utilization_pct'] for e in members if e in emps]
+        overall_trend.append({'month': label, 'utilization': (sum(utils) / len(utils)) if utils else None})
+
     summary = {
         'total_sites': len(cards),
         'sites_meeting_criteria': sites_meeting,       # avg utilization >= 70%
@@ -277,6 +292,7 @@ def build_site_scorecards(business_id, months, allowed_site_ids, bust=False):
         'target_hours': agg['target_hours'],
         'n_months': agg['n_months'],
         'company_avg_utilization': overall_avg,        # kept for compat; now scoped
+        'trend': overall_trend,                         # company-wide monthly trend
         'summary': summary,
         'sites': cards,
         'any_cache_hit': agg['any_cache_hit'],
@@ -326,11 +342,16 @@ def build_site_detail(business_id, months, site_id, bust=False):
 
     rows.sort(key=lambda r: r['utilization_pct'])  # worst-first
 
+    # Fixed last-6-months trend for the hero (independent of the selected period).
+    trend_payloads = _collect_month_payloads(business_id, resolve_period('last_6_months'), bust=bust)
+    site_trend_6m = _site_trend(trend_payloads, site_str)
+
     return {
         'site_id': site_str,
         'site_name': names.get(site_str),
         'target_hours': agg['target_hours'],
         'n_months': agg['n_months'],
+        'trend': site_trend_6m,          # 6-month lookback for the hero chart
         'site_health': health,
         'employees': rows,
         'any_cache_hit': agg['any_cache_hit'],
