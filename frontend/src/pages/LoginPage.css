@@ -1,0 +1,326 @@
+/* Login page (design: "Login - V2"). Namespaced under .lg-page so nothing here
+   leaks into the rest of the app. Values mirror the design file 1:1. */
+
+.lg-page {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(420px, 44%) 1fr;
+  font-family: 'Heebo', 'Noto Sans Hebrew', system-ui, sans-serif;
+  color: #0f172a;
+  background: #f6f8fb;
+  -webkit-font-smoothing: antialiased;
+}
+.lg-page a {
+  color: #3b6fe0;
+  text-decoration: none;
+}
+.lg-page a:hover {
+  color: #2f5fcc;
+  text-decoration: underline;
+}
+.lg-page button,
+.lg-page input {
+  font-family: inherit;
+}
+
+/* ---------- form side ---------- */
+.lg-pane {
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  padding: 40px 56px;
+  position: relative;
+}
+.lg-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+.lg-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(140deg, #3b6fe0, #1e3a8a);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 4px 12px rgba(59, 111, 224, 0.28);
+  flex: none;
+}
+.lg-mark i {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border: 2.5px solid #fff;
+  border-radius: 3px;
+}
+.lg-form-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 400px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 48px 0;
+}
+.lg-form-wrap h1 {
+  font-size: 34px;
+  line-height: 1.15;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+}
+.lg-sub {
+  color: #64748b;
+  font-size: 15px;
+  margin: 0 0 30px;
+}
+.lg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 16px;
+}
+.lg-field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+.lg-field input {
+  height: 46px;
+  border: 1px solid #e5e9f0;
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 0 14px;
+  font-size: 15px;
+  color: #0f172a;
+  outline: none;
+  transition: 0.15s;
+  width: 100%;
+}
+.lg-field input::placeholder {
+  color: #94a3b8;
+}
+.lg-field input:focus {
+  border-color: #3b6fe0;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(59, 111, 224, 0.16);
+}
+.lg-error {
+  color: #dc2626;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: center;
+  margin: 0 0 14px;
+}
+.lg-btn {
+  height: 48px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #4a7bea, #2f5fcc);
+  color: #fff;
+  font-size: 15.5px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(47, 95, 204, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: 0.15s;
+  margin-top: 6px;
+}
+.lg-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow: 0 8px 20px rgba(47, 95, 204, 0.34);
+}
+.lg-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.lg-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.lg-btn .lg-arrow {
+  font-size: 17px;
+  line-height: 1;
+}
+.lg-foot {
+  font-size: 12.5px;
+  color: #94a3b8;
+  text-align: center;
+  margin: 0;
+}
+
+/* ---------- canvas side ---------- */
+.lg-canvas {
+  position: relative;
+  overflow: auto;
+  background: radial-gradient(120% 100% at 100% 0%, #17265a 0%, #0f172a 55%, #0b1120 100%);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 34px;
+  padding: 44px 52px;
+}
+.lg-canvas:before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(90% 80% at 60% 45%, #000 30%, transparent 100%);
+  mask-image: radial-gradient(90% 80% at 60% 45%, #000 30%, transparent 100%);
+}
+.lg-canvas > * {
+  position: relative;
+}
+.lg-feat-head h2 {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+  line-height: 1.25;
+}
+.lg-feat-head p {
+  margin: 0;
+  color: #93a4c4;
+  font-size: 14.5px;
+  max-width: 430px;
+}
+.lg-feats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 470px;
+}
+.lg-feat {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  backdrop-filter: blur(6px);
+  border-radius: 13px;
+  padding: 14px 16px;
+  animation: lg-rise 0.7s both;
+}
+.lg-feat .lg-ico {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-size: 15px;
+}
+.lg-feat .lg-txt {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.lg-feat .lg-t {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.lg-feat .lg-d {
+  display: block;
+  font-size: 12.5px;
+  color: #93a4c4;
+  margin-top: 3px;
+  line-height: 1.4;
+}
+@keyframes lg-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.lg-f1 { animation-delay: 0.05s; }
+.lg-f2 { animation-delay: 0.16s; }
+.lg-f3 { animation-delay: 0.27s; }
+.lg-f4 { animation-delay: 0.38s; }
+.lg-tagline {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+  max-width: 430px;
+  margin: 0;
+}
+.lg-tagline em {
+  font-style: normal;
+  color: #8fb4ff;
+}
+
+.lg-m-brand {
+  display: none;
+}
+
+@media (max-height: 760px) {
+  .lg-canvas { padding: 30px 44px; gap: 20px; }
+  .lg-feat-head h2 { font-size: 22px; }
+  .lg-feat { padding: 11px 14px; }
+  .lg-feat .lg-d { font-size: 12px; }
+  .lg-tagline { font-size: 17px; }
+}
+
+@media (max-width: 900px) {
+  .lg-page {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    min-height: 100vh;
+  }
+  .lg-canvas {
+    order: -1;
+    padding: 22px 22px 26px;
+    gap: 14px;
+    border-radius: 0 0 22px 22px;
+  }
+  .lg-m-brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-weight: 800;
+    font-size: 15.5px;
+    color: #fff;
+  }
+  .lg-m-brand .lg-mark {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+  }
+  .lg-feat-head h2 { font-size: 20px; margin: 0; }
+  .lg-feat-head p { font-size: 13.5px; margin-top: 6px; }
+  .lg-feats { gap: 8px; max-width: none; }
+  .lg-feat { padding: 10px 12px; gap: 10px; border-radius: 11px; }
+  .lg-feat .lg-ico { width: 28px; height: 28px; border-radius: 8px; font-size: 13px; }
+  .lg-feat .lg-t { font-size: 13px; }
+  .lg-feat .lg-d { display: none; }
+  .lg-tagline { display: none; }
+  .lg-pane .lg-brand { display: none; }
+  .lg-pane { padding: 26px 22px 30px; }
+  .lg-form-wrap { padding: 0; max-width: none; justify-content: flex-start; }
+  .lg-form-wrap h1 { font-size: 25px; }
+  .lg-sub { font-size: 14px; margin-bottom: 24px; }
+  .lg-field input,
+  .lg-btn { height: 50px; }
+  .lg-foot { margin-top: 26px; }
+}
+
+@media (max-width: 560px) {
+  .lg-feats { display: grid; grid-template-columns: 1fr 1fr; }
+  .lg-feat { flex-direction: column; align-items: flex-start; gap: 8px; }
+}
