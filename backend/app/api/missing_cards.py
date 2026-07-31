@@ -4,6 +4,11 @@ Missing work-cards API.
 Pivotable view of employees still missing work cards for a month (by field
 manager or by site), plus per-manager Excel export and WhatsApp delivery,
 and a one-click broadcast that sends every field manager their own report.
+
+Role scoping (mirrors analytics.py):
+  - ADMIN         -> the whole business, plus WhatsApp send/broadcast
+  - FIELD_MANAGER -> read-only, limited to sites where Site.field_manager_id
+                     == them (and their own per-manager export)
 """
 import logging
 from datetime import datetime, date
@@ -14,6 +19,7 @@ from uuid import UUID
 from ..auth_utils import token_required, role_required
 from ..extensions import db
 from ..models.business import Business
+from ..models.sites import Site
 from ..models.users import User
 from .utils import api_response
 from ..services import missing_cards_service as mcs
@@ -32,6 +38,37 @@ missing_cards_bp = Blueprint('missing_cards', __name__, url_prefix='/api/missing
 
 XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
+_READ_ROLES = ('ADMIN', 'FIELD_MANAGER')
+
+
+def _scoped_site_ids():
+    """Site ids the caller may see, or None for "no restriction" (ADMIN).
+
+    A FIELD_MANAGER with no assigned sites gets an empty list — callers must
+    treat that as "nothing visible" and NOT pass it to compute_missing(), whose
+    falsy-check would otherwise widen the query to the whole business.
+    """
+    if g.current_user.role != 'FIELD_MANAGER':
+        return None
+    rows = (
+        db.session.query(Site.id)
+        .filter(
+            Site.business_id == g.business_id,
+            Site.is_active.is_(True),
+            Site.field_manager_id == g.current_user.id,
+        )
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+def _scoped_rows(month):
+    """compute_missing() rows the caller may see (empty list if nothing)."""
+    site_ids = _scoped_site_ids()
+    if site_ids is not None and not site_ids:
+        return []
+    return mcs.compute_missing(g.business_id, month, site_ids=site_ids)
+
 
 def _parse_month(raw):
     """Parse YYYY-MM or YYYY-MM-DD into a month-start date, or (None, error)."""
@@ -49,11 +86,12 @@ def _parse_month(raw):
 
 @missing_cards_bp.route('', methods=['GET'])
 @token_required
-@role_required('ADMIN')
+@role_required(*_READ_ROLES)
 def get_missing_cards():
     """Pivoted missing-cards data.
 
     Query params: month=YYYY-MM[-DD] (required), group_by=field_manager|site.
+    A field manager sees only the sites they are responsible for.
     """
     month, err = _parse_month(request.args.get('month'))
     if err:
@@ -64,7 +102,7 @@ def get_missing_cards():
         return api_response(status_code=400, message="group_by must be field_manager or site", error="Bad Request")
 
     try:
-        rows = mcs.compute_missing(g.business_id, month)
+        rows = _scoped_rows(month)
         summary = mcs._bucket_counts(rows)
         gaps = [r for r in rows if r['status'] != mcs.STATUS_COMPLETE]
         summary['sites_with_gaps'] = len({r['site_id'] for r in gaps})
@@ -103,12 +141,18 @@ def _manager_rows(business_id, month, user_id):
 
 @missing_cards_bp.route('/managers/<uuid:user_id>/export', methods=['GET'])
 @token_required
-@role_required('ADMIN')
+@role_required(*_READ_ROLES)
 def export_manager_report(user_id):
-    """Download the missing-cards XLSX for one field manager."""
+    """Download the missing-cards XLSX for one field manager.
+
+    A field manager may only download their own report.
+    """
     month, err = _parse_month(request.args.get('month'))
     if err:
         return api_response(status_code=400, message=err, error="Bad Request")
+
+    if g.current_user.role == 'FIELD_MANAGER' and str(g.current_user.id) != str(user_id):
+        return api_response(status_code=404, message="Field manager not found", error="Not Found")
 
     manager, rows = _manager_rows(g.business_id, month, user_id)
     if manager is None:
@@ -126,17 +170,25 @@ def export_manager_report(user_id):
 
 @missing_cards_bp.route('/export', methods=['GET'])
 @token_required
-@role_required('ADMIN')
+@role_required(*_READ_ROLES)
 def export_company_report():
-    """Download a single missing-cards XLSX covering the entire company."""
+    """Download a single missing-cards XLSX covering everything the caller sees.
+
+    ADMIN gets the whole company; a field manager gets only their own sites.
+    """
     month, err = _parse_month(request.args.get('month'))
     if err:
         return api_response(status_code=400, message=err, error="Bad Request")
 
-    rows = mcs.compute_missing(g.business_id, month)
+    rows = _scoped_rows(month)
     gap_rows = [r for r in rows if r['status'] != mcs.STATUS_COMPLETE]
+    scope_label = (
+        g.current_user.full_name or 'מנהל שטח'
+        if g.current_user.role == 'FIELD_MANAGER'
+        else 'כל החברה'
+    )
     output = mcs.generate_missing_cards_xlsx(
-        'כל החברה', gap_rows, month, include_manager_column=True
+        scope_label, gap_rows, month, include_manager_column=True
     )
     filename = f"missing_cards_all_{month.strftime('%Y-%m')}.xlsx"
     return send_file(
