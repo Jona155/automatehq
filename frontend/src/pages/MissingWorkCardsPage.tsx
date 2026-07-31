@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { usePermissions } from '../hooks/usePermissions';
 import MonthPicker from '../components/MonthPicker';
 import PageBanner from '../components/PageBanner';
 import Modal from '../components/Modal';
@@ -85,10 +86,16 @@ function EmployeeTable({ rows }: { rows: MissingEmployeeRow[] }) {
 }
 
 export default function MissingWorkCardsPage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+  const { isFieldManager } = usePermissions();
   const { showToast, ToastContainer } = useToast();
 
-  const [mode, setMode] = useState<PivotMode>('field_manager');
+  // Field managers only ever see their own sites, so the manager pivot collapses
+  // to a single group — default them to the site pivot instead. `modeOverride`
+  // stays null until the user picks a pivot themselves.
+  const [modeOverride, setModeOverride] = useState<PivotMode | null>(null);
+  const mode: PivotMode = modeOverride ?? (isFieldManager ? 'site' : 'field_manager');
+  const setMode = setModeOverride;
   const [selectedMonth, setSelectedMonth] = useState<string>(() =>
     getDefaultMonth(REPORTING_CUTOFF_DAY),
   );
@@ -98,7 +105,7 @@ export default function MissingWorkCardsPage() {
   const [siteGroups, setSiteGroups] = useState<SiteGroup[]>([]);
   const [summary, setSummary] = useState<MissingSummary>(EMPTY_SUMMARY);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<'forbidden' | 'generic' | null>(null);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
@@ -120,9 +127,9 @@ export default function MissingWorkCardsPage() {
         setSiteGroups(data.groups);
         setSummary(data.summary);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to fetch missing cards:', err);
-      setError('שגיאה בטעינת הנתונים');
+      setError(err?.response?.status === 403 ? 'forbidden' : 'generic');
     } finally {
       setIsLoading(false);
     }
@@ -233,9 +240,15 @@ export default function MissingWorkCardsPage() {
       <Chip label="עובדים חסרים" value={summary.missing} tone="red" />
       <Chip label="כרטיס ראשון בלבד" value={summary.partial} tone="amber" />
       <Chip label="אתרים עם פערים" value={summary.sites_with_gaps} tone="slate" />
-      <Chip label="מנהלים עם פערים" value={summary.managers_with_gaps} tone="slate" />
+      {!isFieldManager && (
+        <Chip label="מנהלים עם פערים" value={summary.managers_with_gaps} tone="slate" />
+      )}
     </div>
   );
+
+  // A field manager with no sites assigned gets no rows at all — say so
+  // explicitly instead of the celebratory "no gaps" empty state.
+  const hasNoScope = isFieldManager && !isLoading && !error && summary.total_employees === 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -245,7 +258,9 @@ export default function MissingWorkCardsPage() {
         <div>
           <h2 className="text-[#111518] dark:text-white text-3xl font-bold">כרטיסי עבודה חסרים</h2>
           <p className="text-[#617989] dark:text-slate-400 mt-1">
-            עובדים פעילים שטרם הוגשו עבורם כל כרטיסי העבודה החודשיים, מקובצים לפי מנהל שטח או אתר
+            {isFieldManager
+              ? 'עובדים פעילים באתרים שבאחריותך שטרם הוגשו עבורם כל כרטיסי העבודה החודשיים'
+              : 'עובדים פעילים שטרם הוגשו עבורם כל כרטיסי העבודה החודשיים, מקובצים לפי מנהל שטח או אתר'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -254,15 +269,17 @@ export default function MissingWorkCardsPage() {
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold transition-colors"
           >
             <span className="material-symbols-outlined text-base">download</span>
-            הורד אקסל לכל החברה
+            {isFieldManager ? 'הורד אקסל לאתרים שלי' : 'הורד אקסל לכל החברה'}
           </button>
-          <button
-            onClick={() => { setBroadcastResult(null); setBroadcastOpen(true); }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-lg transition-colors"
-          >
-            <span className="material-symbols-outlined text-base">send</span>
-            שלח לכל מנהלי השטח
-          </button>
+          {!isFieldManager && (
+            <button
+              onClick={() => { setBroadcastResult(null); setBroadcastOpen(true); }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-lg transition-colors"
+            >
+              <span className="material-symbols-outlined text-base">send</span>
+              שלח לכל מנהלי השטח
+            </button>
+          )}
         </div>
       </div>
 
@@ -278,9 +295,15 @@ export default function MissingWorkCardsPage() {
         }
         details={
           <ul className="list-disc list-inside space-y-1">
-            <li>קבצו לפי מנהל שטח כדי לשלוח לכל מנהל את רשימת העובדים החסרים שלו.</li>
+            {isFieldManager ? (
+              <li>התצוגה מוגבלת לאתרים שאתם מוגדרים כמנהלי השטח שלהם.</li>
+            ) : (
+              <li>קבצו לפי מנהל שטח כדי לשלוח לכל מנהל את רשימת העובדים החסרים שלו.</li>
+            )}
             <li>קבצו לפי אתר כדי לראות גם אתרים שלא הועלה עבורם אף כרטיס.</li>
-            <li>השתמשו בכפתור "שלח לכל מנהלי השטח" כדי לשלוח לכל מנהל קובץ Excel בוואטסאפ אוטומטית.</li>
+            {!isFieldManager && (
+              <li>השתמשו בכפתור "שלח לכל מנהלי השטח" כדי לשלוח לכל מנהל קובץ Excel בוואטסאפ אוטומטית.</li>
+            )}
             <li>סטטוס "כרטיס ראשון בלבד" מציין שהתקבל רק חלק מהכרטיסים הצפויים.</li>
           </ul>
         }
@@ -328,7 +351,26 @@ export default function MissingWorkCardsPage() {
       {isLoading ? (
         <div className="p-8 text-center text-slate-500">טוען נתונים...</div>
       ) : error ? (
-        <div className="p-8 text-center text-red-500">{error}</div>
+        <EmptyCard
+          icon={error === 'forbidden' ? 'lock' : 'error'}
+          title={error === 'forbidden' ? 'אין לך הרשאה לצפות בדף זה' : 'שגיאה בטעינת הנתונים'}
+          body={
+            error === 'forbidden'
+              ? 'הדף זמין למנהלי מערכת ולמנהלי שטח. פנו למנהל המערכת אם לדעתכם נדרשת לכם גישה.'
+              : 'לא הצלחנו לטעון את רשימת הכרטיסים החסרים. נסו שוב או בחרו חודש אחר.'
+          }
+          action={
+            error === 'generic'
+              ? { label: 'נסה שוב', onClick: () => { void fetchData(); } }
+              : undefined
+          }
+        />
+      ) : hasNoScope ? (
+        <EmptyCard
+          icon="apartment"
+          title="לא שויכו אליך אתרים"
+          body={`לא נמצאו אתרים שבהם ${user?.full_name || 'המשתמש'} מוגדר כמנהל שטח, ולכן אין נתונים להצגה. פנו למנהל המערכת כדי לשייך אתרים.`}
+        />
       ) : mode === 'field_manager' ? (
         <div className="flex flex-col gap-4">
           {filteredManagerGroups.length === 0 && (
@@ -368,7 +410,7 @@ export default function MissingWorkCardsPage() {
                         Excel
                       </button>
                     )}
-                    {g.field_manager_id && (
+                    {g.field_manager_id && !isFieldManager && (
                       <button
                         onClick={() => handleSend(g.field_manager_id!, g.manager_name)}
                         disabled={!canSend || sendingId === g.field_manager_id}
@@ -461,6 +503,35 @@ export default function MissingWorkCardsPage() {
           </div>
         )}
       </Modal>
+    </div>
+  );
+}
+
+function EmptyCard({
+  icon,
+  title,
+  body,
+  action,
+}: {
+  icon: string;
+  title: string;
+  body: string;
+  action?: { label: string; onClick: () => void };
+}) {
+  return (
+    <div className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 p-10 flex flex-col items-center text-center gap-3">
+      <span className="material-symbols-outlined text-4xl text-slate-400 dark:text-slate-500">{icon}</span>
+      <h3 className="text-lg font-bold text-[#111518] dark:text-white">{title}</h3>
+      <p className="text-sm text-[#617989] dark:text-slate-400 max-w-md">{body}</p>
+      {action && (
+        <button
+          onClick={action.onClick}
+          className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white font-semibold hover:bg-primary/90 transition-colors"
+        >
+          <span className="material-symbols-outlined text-base">refresh</span>
+          {action.label}
+        </button>
+      )}
     </div>
   );
 }
