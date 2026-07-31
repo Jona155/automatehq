@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import './LoginPage.css';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -28,7 +29,7 @@ export default function LoginPage() {
     setIsLoading(true);
 
     if (!email || !password) {
-      setError('Please fill in all fields');
+      setError('נא למלא את כל השדות');
       setIsLoading(false);
       return;
     }
@@ -42,7 +43,7 @@ export default function LoginPage() {
       // Redirect to business dashboard using the business code
       const businessCode = loggedInUser.business?.code;
       if (!businessCode) {
-        setError('No business associated with this account');
+        setError('לא משויך עסק לחשבון הזה');
         setIsLoading(false);
         return;
       }
@@ -52,7 +53,7 @@ export default function LoginPage() {
     } catch (err: any) {
       console.error(err);
       // Extract error message from API response if available
-      const message = err.response?.data?.message || 'Invalid email or password';
+      const message = err.response?.data?.message || 'אימייל או סיסמה שגויים';
       setError(message);
     } finally {
       setIsLoading(false);
@@ -60,83 +61,100 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col font-display bg-background-light dark:bg-background-dark text-slate-900 dark:text-white">
-      {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 md:px-12 bg-transparent">
-        <div className="flex items-center gap-3">
-          <div className="size-8 text-primary">
-            <svg fill="none" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-              <path clipRule="evenodd" d="M24 18.4228L42 11.475V34.3663C42 34.7796 41.7457 35.1504 41.3601 35.2992L24 42V18.4228Z" fill="currentColor" fillRule="evenodd"></path>
-              <path clipRule="evenodd" d="M24 8.18819L33.4123 11.574L24 15.2071L14.5877 11.574L24 8.18819ZM9 15.8487L21 20.4805V37.6263L9 32.9945V15.8487ZM27 37.6263V20.4805L39 15.8487V32.9945L27 37.6263ZM25.354 2.29885C24.4788 1.98402 23.5212 1.98402 22.646 2.29885L4.98454 8.65208C3.7939 9.08038 3 10.2097 3 11.475V34.3663C3 36.0196 4.01719 37.5026 5.55962 38.098L22.9197 44.7987C23.6149 45.0671 24.3851 45.0671 25.0803 44.7987L42.4404 38.098C43.9828 37.5026 45 36.0196 45 34.3663V11.475C45 10.2097 44.2061 9.08038 43.0155 8.65208L25.354 2.29885Z" fill="currentColor" fillRule="evenodd"></path>
-            </svg>
-          </div>
-          <h1 className="text-xl font-bold tracking-tight">AutomateHQ</h1>
+    <div className="lg-page">
+      <main className="lg-pane">
+        <div className="lg-brand">
+          <span className="lg-mark"><i></i></span>AutomateHQ
         </div>
-      </header>
 
-      {/* Main Content */}
-      <main className="flex-1 flex items-center justify-center p-6 bg-gradient-to-br from-[#f8fafc] via-[#f1f5f9] to-[#e2e8f0] dark:from-[#101a22] dark:to-[#1a2a35]">
-        <div className="w-full max-w-[460px] bg-white dark:bg-[#1a2a35] rounded-xl shadow-2xl overflow-hidden border border-slate-200/50 dark:border-slate-700/50">
-          <div className="p-8 md:p-10">
-            <div className="text-center mb-8">
-              <h2 className="text-3xl font-bold leading-tight pb-2">Welcome Back</h2>
-              <p className="text-[#617989] dark:text-slate-400 text-base font-normal">Sign in to your account</p>
+        <div className="lg-form-wrap">
+          <h1>ברוכים השבים</h1>
+          <p className="lg-sub">התחברו כדי לנהל את התהליכים והאוטומציות שלכם</p>
+
+          <form onSubmit={handleSubmit}>
+            <div className="lg-field">
+              <label htmlFor="email">אימייל</label>
+              <input
+                id="email"
+                type="email"
+                placeholder="name@company.com"
+                dir="ltr"
+                style={{ textAlign: 'right' }}
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-semibold leading-normal" htmlFor="email">Email</label>
-                <input
-                  id="email"
-                  type="email"
-                  className="block w-full rounded-lg border border-[#dbe1e6] dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary focus:border-primary h-14 px-4 text-base font-normal transition-all"
-                  placeholder="name@company.com"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
+            <div className="lg-field">
+              <label htmlFor="password">סיסמה</label>
+              <input
+                id="password"
+                type="password"
+                placeholder="הזינו סיסמה"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
 
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-semibold leading-normal" htmlFor="password">Password</label>
-                <div className="relative">
-                  <input
-                    id="password"
-                    type="password"
-                    className="block w-full rounded-lg border border-[#dbe1e6] dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary focus:border-primary h-14 px-4 text-base font-normal transition-all"
-                    placeholder="Enter your password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-              </div>
+            {error && <p className="lg-error">{error}</p>}
 
-              {error && (
-                <div className="text-red-500 text-sm text-center font-medium">
-                  {error}
-                </div>
+            <button className="lg-btn" type="submit" disabled={isLoading}>
+              {isLoading ? 'מתחברים...' : (
+                <>
+                  כניסה למערכת <span className="lg-arrow">←</span>
+                </>
               )}
-
-              <div className="pt-4">
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full bg-primary hover:bg-primary/90 text-white font-bold py-4 rounded-lg shadow-lg shadow-primary/30 transition-all flex items-center justify-center gap-2 text-lg disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  {isLoading ? 'Signing in...' : 'Sign in'}
-                </button>
-              </div>
-            </form>
-          </div>
+            </button>
+          </form>
         </div>
+
+        <p className="lg-foot">© 2026 AutomateHQ. כל הזכויות שמורות.</p>
       </main>
 
-      <footer className="py-6 text-center bg-transparent">
-        <p className="text-xs text-[#617989] dark:text-slate-500 font-medium">
-          © 2026 AutomateHQ. All rights reserved.
+      <aside className="lg-canvas">
+        <div className="lg-m-brand">
+          <span className="lg-mark"><i></i></span>AutomateHQ
+        </div>
+        <div className="lg-feat-head">
+          <h2>הפלטפורמה שמריצה את השטח</h2>
+          <p>מכרטיס עבודה כתוב ביד ועד דוח מוכן — בלי הקלדה, בלי טעויות.</p>
+        </div>
+        <div className="lg-feats">
+          <div className="lg-feat lg-f1">
+            <span className="lg-ico" style={{ background: 'rgba(110,168,255,.16)', color: '#8FB4FF' }}>◆</span>
+            <span className="lg-txt">
+              <span className="lg-t">חילוץ שעות בבינה מלאכותית</span>
+              <span className="lg-d">קריאה אוטומטית של כרטיסי עבודה בכתב יד</span>
+            </span>
+          </div>
+          <div className="lg-feat lg-f2">
+            <span className="lg-ico" style={{ background: 'rgba(74,222,128,.16)', color: '#4ADE80' }}>▣</span>
+            <span className="lg-txt">
+              <span className="lg-t">הפקת דוחות אוטומטית</span>
+              <span className="lg-d">דוחות חודשיים ופרויקטליים נוצרים לבד</span>
+            </span>
+          </div>
+          <div className="lg-feat lg-f3">
+            <span className="lg-ico" style={{ background: 'rgba(245,158,11,.16)', color: '#FBBF24' }}>◇</span>
+            <span className="lg-txt">
+              <span className="lg-t">אינטגרציית וואטסאפ ואימייל</span>
+              <span className="lg-d">תקשורת רציפה עם העובדים והלקוחות</span>
+            </span>
+          </div>
+          <div className="lg-feat lg-f4">
+            <span className="lg-ico" style={{ background: 'rgba(255,255,255,.1)', color: '#CBD5E1' }}>●</span>
+            <span className="lg-txt">
+              <span className="lg-t">אנליטיקות ביצועי עובדים</span>
+              <span className="lg-d">תמונת מצב מדויקת לכל צוות ואתר</span>
+            </span>
+          </div>
+        </div>
+        <p className="lg-tagline">
+          כל התהליך במקום אחד — <em>מהיר, מדויק, ובלי עבודה ידנית.</em>
         </p>
-      </footer>
+      </aside>
     </div>
   );
 }
