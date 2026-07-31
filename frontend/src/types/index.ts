@@ -512,6 +512,7 @@ export interface SiteScorecard {
   months: string[];
   target_hours: number;
   company_avg_utilization: number | null;
+  trend: TrendPoint[];              // company-wide monthly utilization trend
   summary: ScorecardSummary;
   sites: ScorecardSite[];
 }
@@ -573,6 +574,7 @@ export interface SiteAnalyticsDetail {
   site_name: string | null;
   target_hours: number;
   n_months: number;
+  trend: TrendPoint[];              // fixed 6-month lookback for the hero chart
   site_health: SiteHealth;
   employees: LeaderboardEmployee[];
 }

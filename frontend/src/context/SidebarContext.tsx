@@ -2,6 +2,10 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 
 const STORAGE_KEY = 'automatehq-sidebar-collapsed';
 
+// Below this width the sidebar starts collapsed so it doesn't eat the narrow
+// viewport. Matches Tailwind's `md` breakpoint.
+const MOBILE_MAX_WIDTH = 767;
+
 interface SidebarContextType {
   collapsed: boolean;
   toggle: () => void;
@@ -9,6 +13,10 @@ interface SidebarContextType {
 }
 
 const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
+
+function isMobileViewport(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia(`(max-width: ${MOBILE_MAX_WIDTH}px)`).matches;
+}
 
 function readStored(): boolean {
   try {
@@ -19,10 +27,20 @@ function readStored(): boolean {
   }
 }
 
+// On phones the sidebar is minimized by default regardless of a saved desktop
+// preference; on wider screens the persisted choice wins.
+function initialCollapsed(): boolean {
+  if (isMobileViewport()) return true;
+  return readStored();
+}
+
 export function SidebarProvider({ children }: { children: ReactNode }) {
-  const [collapsed, setCollapsed] = useState(readStored);
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
 
   useEffect(() => {
+    // Don't let a forced-collapsed mobile session overwrite the desktop
+    // preference — only persist explicit choices made on wider screens.
+    if (isMobileViewport()) return;
     try {
       localStorage.setItem(STORAGE_KEY, String(collapsed));
     } catch {
