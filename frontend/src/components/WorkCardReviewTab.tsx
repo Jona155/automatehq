@@ -99,6 +99,12 @@ const formatDate = (iso: string) => {
   return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
 };
 
+// selectedMonth arrives as 'YYYY-MM' or a full ISO date — render it as MM/YYYY.
+const formatMonthLabel = (month: string) => {
+  const m = /^(\d{4})-(\d{2})/.exec(month || '');
+  return m ? `${m[2]}/${m[1]}` : month;
+};
+
 const sourceLabel = (source: string) => (({
   ADMIN_SINGLE: 'העלאה ידנית', ADMIN_BATCH: 'העלאה קבוצתית',
   PUBLIC_PORTAL: 'פורטל ציבורי', WHATSAPP: 'וואטסאפ', TELEGRAM: 'טלגרם',
@@ -248,6 +254,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
   const [missingEmployees, setMissingEmployees] = useState<Employee[]>([]);
   const [isCreatingManualCard, setIsCreatingManualCard] = useState(false);
+  // Employee awaiting confirmation before a manual ghost card is created for them.
+  // Clicking a "no work card" row only stages the candidate — creation needs an
+  // explicit confirm, so a stray click can't silently spawn a card.
+  const [manualCardCandidate, setManualCardCandidate] = useState<Employee | null>(null);
   const [monthlyTotalInput, setMonthlyTotalInput] = useState<string>('');
   const [noteInput, setNoteInput] = useState<string>('');
   const [isSavingNote, setIsSavingNote] = useState(false);
@@ -688,6 +698,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       // Select the new card's employee group (it now owns the editable table).
       setSelectedGroupKey(`emp:${employee.id}`);
       setMissingEmployees(prev => prev.filter(e => e.id !== employee.id));
+      setManualCardCandidate(null);
       showToast('נוצר כרטיס ידני לעובד', 'success');
     } catch (err) {
       console.error('Failed to create manual work card:', err);
@@ -1974,7 +1985,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
               )}
 
               {/* Section: employees with no work card identified.
-                  Click to spin up a manual ghost card and start filling hours. */}
+                  The row itself is inert — creating a manual ghost card requires the
+                  explicit action button plus a confirmation, so a misclick on the
+                  wrong employee can't silently create a card. */}
               {visibleMissingEmployees.length > 0 && (
                 <div className="border-t border-slate-200 dark:border-slate-700">
                   <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/50">
@@ -1983,13 +1996,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                   {visibleMissingEmployees.map((emp) => {
                     const initials = (emp.full_name || '').split(' ').map(w => w[0]).join('').slice(0, 2);
                     return (
-                      <button
+                      <div
                         key={emp.id}
-                        type="button"
-                        disabled={isCreatingManualCard}
-                        onClick={() => handleCreateManualCard(emp)}
-                        className="w-full px-4 py-3 text-right flex items-center gap-3 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 border-b border-slate-100 dark:border-slate-800"
-                        title="צור כרטיס ידני לעובד זה"
+                        className="w-full px-4 py-3 text-right flex items-center gap-3 border-b border-slate-100 dark:border-slate-800"
                       >
                         <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs uppercase shrink-0 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
                           {initials || <span className="material-symbols-outlined text-lg">person</span>}
@@ -2001,14 +2010,20 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
                             {emp.passport_id ? `ת.ז/דרכון: ${emp.passport_id}` : 'ת.ז/דרכון לא הוזנו'}
                           </div>
-                          <div className="mt-1">
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                          <div className="mt-1.5">
+                            <button
+                              type="button"
+                              disabled={isCreatingManualCard}
+                              onClick={() => setManualCardCandidate(emp)}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                              title="יצירת כרטיס ידני לעובד זה"
+                            >
                               <span className="material-symbols-outlined text-xs">edit_note</span>
-                              מילוי ידני
-                            </span>
+                              צור כרטיס ידני
+                            </button>
                           </div>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -2947,6 +2962,44 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
             >
               <span className="material-symbols-outlined text-lg">delete</span>
               <span>דחה ומחק</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={manualCardCandidate !== null}
+        onClose={() => { if (!isCreatingManualCard) setManualCardCandidate(null); }}
+        title="יצירת כרטיס ידני"
+        maxWidth="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-slate-600 dark:text-slate-300">
+            האם ליצור כרטיס עבודה ידני (ללא תמונה) עבור{' '}
+            <span className="font-semibold text-slate-900 dark:text-white">
+              {manualCardCandidate?.full_name || 'עובד ללא שם'}
+            </span>
+            {manualCardCandidate?.passport_id ? ` (${manualCardCandidate.passport_id})` : ''}
+            {' '}לחודש {formatMonthLabel(selectedMonth)}?
+          </p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            הכרטיס ייווצר ריק ויהיה עליכם למלא את השעות ידנית. אם נוצר בטעות, ניתן למחוק אותו דרך "דחיית כרטיס".
+          </p>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              onClick={() => setManualCardCandidate(null)}
+              disabled={isCreatingManualCard}
+              className="px-4 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors font-medium text-sm disabled:opacity-50"
+            >
+              ביטול
+            </button>
+            <button
+              onClick={() => { if (manualCardCandidate) handleCreateManualCard(manualCardCandidate); }}
+              disabled={isCreatingManualCard}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex items-center gap-2 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-lg">edit_note</span>
+              <span>{isCreatingManualCard ? 'יוצר…' : 'צור כרטיס ידני'}</span>
             </button>
           </div>
         </div>
