@@ -48,10 +48,19 @@ worker/     Background extraction worker (Python)
 | `/api/sites` | `api/sites.py` | Site management |
 | `/api/employees` | `api/employees.py` | Employee CRUD + bulk import |
 | `/api/users` | `api/users.py` | Admin user management |
-| `/api/work-cards` | `api/work_cards.py` | Work card lifecycle |
+| `/api/work_cards` | `api/work_cards.py` | Work card lifecycle (note: **underscore**, unlike every other multi-word prefix) |
 | `/api/dashboard` | `api/dashboard.py` | Metrics/summaries |
 | `/api/employee-imports` | `api/employee_imports.py` | Import history |
-| `/api/public-portal` | `api/public_portal.py` | Guest upload via token |
+| `/api/public` | `api/public_portal.py` | Guest upload via token |
+| `/api/analytics` | `api/analytics.py` | Scorecards, site/employee drill-downs |
+| `/api/missing-cards` | `api/missing_cards.py` | Missing work card reports |
+| `/api/telegram` | `api/telegram_settings.py` | Telegram integration settings |
+| `/api/whatsapp` | `api/whatsapp_settings.py` | WhatsApp integration settings |
+| `/api/sites/tariff-import` | `api/site_tariff_import.py` | Site tariff bulk import |
+| `/api/sites` | `api/site_hours_import.py` | Site hours bulk import (shares the `sites` prefix) |
+
+Prefixes above are read from the `Blueprint(...)` declarations in `backend/app/api/`.
+`work_cards` is the one that uses an underscore — assuming a hyphen there yields a 404.
 
 ### Worker (`worker/`)
 - **run.py** — polling loop; picks up `PENDING` extractions, orchestrates pipeline
