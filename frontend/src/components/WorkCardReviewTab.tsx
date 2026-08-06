@@ -2763,16 +2763,6 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                                           {Math.round(zone.confidence * 100)}%
                                         </span>
                                       )}
-                                      {isReviewRequired && (
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" title={dayQuality?.reasons?.join(', ') || 'Requires review'}>
-                                          בדיקה
-                                        </span>
-                                      )}
-                                      {isOffMark && !isReviewRequired && (
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" title="Marked as off-day line/strike">
-                                          קו
-                                        </span>
-                                      )}
                                       <div className="relative flex items-center">
                                         <button
                                           type="button"

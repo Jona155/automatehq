@@ -96,8 +96,9 @@ def _aggregate_period(business_id, months, bust=False):
     """Aggregate per-employee hours across the period's months.
 
     Returns dict:
-        employees: {emp_str: {employee_id, full_name, total_hours,
-                              utilization_pct, band, per_site: {site_str: hours}}}
+        employees: {emp_str: {employee_id, full_name, external_employee_id,
+                              total_hours, utilization_pct, band,
+                              per_site: {site_str: hours}}}
         site_members: {site_str: [emp_str, ...]}  (union across months)
         n_months, target_hours, any_cache_hit
     """
@@ -116,6 +117,7 @@ def _aggregate_period(business_id, months, bust=False):
                 acc = employees[emp_str] = {
                     'employee_id': emp['employee_id'],
                     'full_name': emp['full_name'],
+                    'external_employee_id': emp.get('external_employee_id'),
                     'total_hours': 0.0,
                     'per_site': {},
                 }
@@ -329,6 +331,7 @@ def build_site_detail(business_id, months, site_id, bust=False):
         rows.append({
             'employee_id': emp_str,
             'full_name': emp['full_name'],
+            'external_employee_id': emp.get('external_employee_id'),
             'utilization_pct': emp['utilization_pct'],
             'band': emp['band'],
             'hours_at_site': emp['per_site'].get(site_str, 0.0),
@@ -393,6 +396,7 @@ def build_employee_detail(business_id, months, site_id, employee_id, bust=False)
         'site_name': names.get(site_str),
         'employee_id': emp_str,
         'full_name': emp['full_name'],
+        'external_employee_id': emp.get('external_employee_id'),
         'utilization_pct': emp['utilization_pct'],
         'band': emp['band'],
         'total_hours': emp['total_hours'],

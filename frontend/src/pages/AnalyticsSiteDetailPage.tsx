@@ -16,6 +16,7 @@ import Sparkline from '../components/analytics/Sparkline';
 import TrendBars from '../components/analytics/TrendBars';
 import LoadingIndicator from '../components/LoadingIndicator';
 import { formatNumber } from '../utils/formatNumber';
+import { getFirstName } from '../utils/nameUtils';
 
 function monthLabel(months: string[]): string {
   if (!months.length) return '';
@@ -45,6 +46,20 @@ function HoursDelta({ delta }: { delta: number | null }) {
   );
 }
 
+// Serial number ('מספר סידורי') from the employee import. Shown next to the
+// first-name-only label so same-first-name workers stay tellable apart.
+function SerialBadge({ serial }: { serial: string | null }) {
+  if (!serial) return null;
+  return (
+    <span
+      className="text-[11px] font-medium tabular-nums text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 rounded-md shrink-0"
+      title="מספר סידורי"
+    >
+      {serial}
+    </span>
+  );
+}
+
 function EmployeeRow({ emp, target, onOpen }: { emp: LeaderboardEmployee; target: number; onOpen: () => void }) {
   const [showSites, setShowSites] = useState(false);
   const style = rowStyle(emp.band, emp.total_hours);
@@ -62,7 +77,10 @@ function EmployeeRow({ emp, target, onOpen }: { emp: LeaderboardEmployee; target
         <div className="min-w-0 flex-1 flex items-start gap-2">
           <span className="w-2.5 h-2.5 rounded-sm mt-1.5 shrink-0" style={{ backgroundColor: style.hex }} />
           <div className="min-w-0 flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-slate-900 dark:text-white truncate">{emp.full_name}</span>
+            <span className="font-medium text-slate-900 dark:text-white truncate" title={emp.full_name}>
+              {getFirstName(emp.full_name)}
+            </span>
+            <SerialBadge serial={emp.external_employee_id} />
             {emp.is_multi_site && (
               <button
                 type="button"
@@ -158,8 +176,10 @@ export default function AnalyticsSiteDetailPage() {
   const target = data?.target_hours ?? 0;
 
   const filters = useUtilizationFilters(employees, {
-    name: (e) => e.full_name,
-    searchText: (e) => e.full_name,
+    // Sort by the displayed label (first name) so the visible order matches it;
+    // search still spans the full name and the serial number.
+    name: (e) => getFirstName(e.full_name),
+    searchText: (e) => `${e.full_name} ${e.external_employee_id ?? ''}`,
     band: (e) => e.band,
     hours: (e) => e.total_hours,
     multi: (e) => e.is_multi_site,
@@ -312,8 +332,14 @@ export default function AnalyticsSiteDetailPage() {
                     onClick={() => navigate(`/${businessCode}/analytics/sites/${siteId}/employees/${emp.employee_id}`)}
                     className="flex items-center justify-between gap-3 px-4 py-3 text-start bg-white dark:bg-[#1a2a35] border-b border-slate-100 dark:border-slate-700/60 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
                   >
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
-                      {emp.full_name}
+                    <span className="min-w-0 flex items-center gap-2">
+                      <span
+                        className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate"
+                        title={emp.full_name}
+                      >
+                        {getFirstName(emp.full_name)}
+                      </span>
+                      <SerialBadge serial={emp.external_employee_id} />
                     </span>
                     <span className="text-xs font-semibold text-red-600 dark:text-red-400 shrink-0">0 ש'</span>
                   </button>

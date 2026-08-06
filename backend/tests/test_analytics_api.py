@@ -74,14 +74,19 @@ class AnalyticsApiTests(unittest.TestCase):
         # emp_split: managed at A, days split A/B -> 236h total, multi-site.
         # emp_zero: home A, no card -> 0h.
         # emp_b: home B, 118h -> 50%.
+        # emp_split intentionally has no serial number (the import column is
+        # optional), so the payloads are covered for the null case too.
         self.emp_a = Employee(business_id=self.business.id, site_id=self.site_a.id,
-                              full_name='Emp A', passport_id=f'PA{suffix}', is_active=True)
+                              full_name='Emp A', passport_id=f'PA{suffix}', is_active=True,
+                              external_employee_id='SN-A')
         self.emp_split = Employee(business_id=self.business.id, site_id=self.site_a.id,
                                   full_name='Emp Split', passport_id=f'PS{suffix}', is_active=True)
         self.emp_zero = Employee(business_id=self.business.id, site_id=self.site_a.id,
-                                 full_name='Emp Zero', passport_id=f'PZ{suffix}', is_active=True)
+                                 full_name='Emp Zero', passport_id=f'PZ{suffix}', is_active=True,
+                                 external_employee_id='SN-Z')
         self.emp_b = Employee(business_id=self.business.id, site_id=self.site_b.id,
-                              full_name='Emp B', passport_id=f'PB{suffix}', is_active=True)
+                              full_name='Emp B', passport_id=f'PB{suffix}', is_active=True,
+                              external_employee_id='SN-B')
         db.session.add_all([self.emp_a, self.emp_split, self.emp_zero, self.emp_b])
         db.session.flush()
 
@@ -185,6 +190,26 @@ class AnalyticsApiTests(unittest.TestCase):
         self.assertEqual(worked_site_ids, {str(self.site_a.id), str(self.site_b.id)})
         self.assertEqual(split['hours_at_site'], 118.0)       # only site A's share
         self.assertEqual(split['total_hours'], 236.0)
+
+    # ---- serial number (מספר סידורי) -----------------------------------
+    def test_detail_leaderboard_exposes_serial_number(self):
+        """The UI labels rows with first name only, so it needs the serial to
+        disambiguate same-first-name workers."""
+        resp = self.client.get(f'/api/analytics/sites/{self.site_a.id}', headers=self.admin_headers)
+        emps = {e['full_name']: e for e in resp.get_json()['data']['employees']}
+        self.assertEqual(emps['Emp A']['external_employee_id'], 'SN-A')
+        self.assertEqual(emps['Emp Zero']['external_employee_id'], 'SN-Z')
+        self.assertIsNone(emps['Emp Split']['external_employee_id'])
+
+    def test_employee_detail_exposes_serial_number(self):
+        resp = self.client.get(f'/api/analytics/sites/{self.site_a.id}/employees/{self.emp_a.id}',
+                               headers=self.admin_headers)
+        self.assertEqual(resp.get_json()['data']['external_employee_id'], 'SN-A')
+
+    def test_employee_detail_serial_number_null_when_unset(self):
+        resp = self.client.get(f'/api/analytics/sites/{self.site_a.id}/employees/{self.emp_split.id}',
+                               headers=self.admin_headers)
+        self.assertIsNone(resp.get_json()['data']['external_employee_id'])
 
     # ---- period --------------------------------------------------------
     def test_period_param_shapes_month_list(self):

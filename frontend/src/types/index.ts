@@ -526,6 +526,8 @@ export interface SiteWorked {
 export interface LeaderboardEmployee {
   employee_id: string;
   full_name: string;
+  /** Serial number from the employee Excel import ('מספר סידורי'). */
+  external_employee_id: string | null;
   utilization_pct: number;
   band: Band;
   hours_at_site: number;
@@ -555,6 +557,8 @@ export interface EmployeeAnalyticsDetail {
   site_name: string | null;
   employee_id: string;
   full_name: string;
+  /** Serial number from the employee Excel import ('מספר סידורי'). */
+  external_employee_id: string | null;
   utilization_pct: number;
   band: Band;
   total_hours: number;
