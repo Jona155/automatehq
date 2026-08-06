@@ -102,7 +102,18 @@ export default function AnalyticsEmployeeDetailPage() {
         <>
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div className="flex flex-col gap-1">
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{data.full_name}</h1>
+              {/* Full name here (the site leaderboard shows first names only). */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{data.full_name}</h1>
+                {data.external_employee_id && (
+                  <span
+                    className="text-xs font-medium tabular-nums text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 rounded-md"
+                    title="מספר סידורי"
+                  >
+                    מס' סידורי {data.external_employee_id}
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-slate-500 dark:text-slate-400">
                 {data.site_name || '—'} · {monthLabel(data.months)}
               </p>

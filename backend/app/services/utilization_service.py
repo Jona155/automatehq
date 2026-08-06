@@ -34,8 +34,8 @@ def compute_utilization(business_id, month):
         dict with:
           - ``target_hours``: the MONTHLY_TARGET_HOURS used.
           - ``employees``: dict keyed by ``str(employee_id)`` ->
-                {employee_id, full_name, hours, utilization_pct, band,
-                 per_site: {str(site_id): hours}}.
+                {employee_id, full_name, external_employee_id, hours,
+                 utilization_pct, band, per_site: {str(site_id): hours}}.
           - ``site_members``: dict ``{str(site_id): [str(employee_id), ...]}`` —
                 every employee surfaced at a site (home + visiting), INCLUDING
                 zero-hour home employees, so site-level views can count them.
@@ -102,6 +102,9 @@ def compute_utilization(business_id, month):
         employees_out[emp_str] = {
             'employee_id': emp.id,
             'full_name': emp.full_name,
+            # Serial number from the employee Excel import ('מספר סידורי') — the
+            # UI shows it alongside first-name-only labels to disambiguate.
+            'external_employee_id': emp.external_employee_id,
             'hours': hours,
             'utilization_pct': utilization_pct,
             'band': classify_band(utilization_pct),
