@@ -17,6 +17,7 @@ load_dotenv()
 from backend.app import create_app, db
 from backend.app.models.business import Business
 from backend.app.models.sites import Site, Employee
+from backend.app.models.users import User
 from backend.app.models.work_cards import WorkCard
 from backend.app.services import missing_cards_service as mcs
 
@@ -51,6 +52,8 @@ class MissingCardsExemptionDBTests(unittest.TestCase):
         try:
             WorkCard.query.filter_by(business_id=self.business.id).delete()
             Employee.query.filter_by(business_id=self.business.id).delete()
+            Site.query.filter_by(business_id=self.business.id).update({'field_manager_id': None})
+            User.query.filter_by(business_id=self.business.id).delete()
             Site.query.filter_by(business_id=self.business.id).delete()
             db.session.delete(db.session.get(Business, self.business.id))
             db.session.commit()
@@ -72,15 +75,17 @@ class MissingCardsExemptionDBTests(unittest.TestCase):
         return emp
 
     def _card(self, emp, created_at, *, source='ADMIN_SINGLE',
-              review_status='NEEDS_REVIEW', approved_through_day=None):
+              review_status='NEEDS_REVIEW', approved_through_day=None,
+              completes_month=False, processing_month=MONTH):
         card = WorkCard(
             business_id=self.business.id,
             site_id=self.site.id,
             employee_id=emp.id,
-            processing_month=MONTH,
+            processing_month=processing_month,
             source=source,
             review_status=review_status,
             approved_through_day=approved_through_day,
+            completes_month=completes_month,
             created_at=created_at,
         )
         db.session.add(card)
@@ -154,6 +159,80 @@ class MissingCardsExemptionDBTests(unittest.TestCase):
         emp = self._employee()
         db.session.commit()
         self.assertEqual(self._status(emp), mcs.STATUS_NONE)
+
+    # ---- Rule 3: user marked the received cards as the full submission ----
+    def test_marked_complete_single_card_is_complete(self):
+        emp = self._employee()
+        # Mid-month card would otherwise be PARTIAL (Rule 1 doesn't reach it).
+        self._card(emp, _utc(2026, 6, 15), completes_month=True)
+        db.session.commit()
+        self.assertEqual(self._status(emp), mcs.STATUS_COMPLETE)
+
+    def test_marked_complete_does_not_require_approval(self):
+        emp = self._employee()
+        self._card(emp, _utc(2026, 6, 15), review_status='NEEDS_REVIEW', completes_month=True)
+        db.session.commit()
+        self.assertEqual(self._status(emp), mcs.STATUS_COMPLETE)
+
+    def test_marked_complete_on_one_of_several_cards_settles_the_month(self):
+        emp = self._employee()
+        self._card(emp, _utc(2026, 6, 15))
+        self._card(emp, _utc(2026, 6, 16), completes_month=True)
+        db.session.commit()
+        self.assertEqual(self._status(emp), mcs.STATUS_COMPLETE)
+
+    def test_marked_complete_does_not_leak_into_another_month(self):
+        emp = self._employee()
+        self._card(emp, _utc(2026, 5, 15), completes_month=True,
+                   processing_month=date(2026, 5, 1))
+        self._card(emp, _utc(2026, 6, 15))
+        db.session.commit()
+        # June has its own un-flagged card -> still a gap.
+        self.assertEqual(self._status(emp), mcs.STATUS_PARTIAL)
+
+    def test_marked_complete_row_is_flagged_and_counted_separately(self):
+        emp = self._employee()
+        self._card(emp, _utc(2026, 6, 15), completes_month=True)
+        gap = self._employee()
+        self._card(gap, _utc(2026, 6, 15))
+        db.session.commit()
+
+        rows = mcs.compute_missing(self.business.id, MONTH, today=AFTER_MONTH_END)
+        by_id = {r['employee_id']: r for r in rows}
+        self.assertTrue(by_id[str(emp.id)]['is_exempt'])
+        self.assertFalse(by_id[str(gap.id)]['is_exempt'])
+
+        counts = mcs._bucket_counts(rows)
+        self.assertEqual(counts['exempt'], 1)
+        self.assertEqual(counts['missing'], 1)
+
+        grp = mcs.group_by_site(rows)[0]
+        self.assertEqual([e['employee_id'] for e in grp['employees']], [str(gap.id)])
+        self.assertEqual([e['employee_id'] for e in grp['exempt_employees']], [str(emp.id)])
+        self.assertEqual(grp['exempt_count'], 1)
+
+    def test_manager_group_survives_when_every_gap_is_ignored(self):
+        # Otherwise the group vanishes and the ignore can never be undone.
+        manager = User(
+            business_id=self.business.id,
+            full_name='Mgr',
+            email=f'mgr-{uuid.uuid4().hex[:8]}@example.com',
+            password_hash='x',
+            role='FIELD_MANAGER',
+        )
+        db.session.add(manager)
+        db.session.flush()
+        self.site.field_manager_id = manager.id
+
+        emp = self._employee()
+        self._card(emp, _utc(2026, 6, 15), completes_month=True)
+        db.session.commit()
+
+        rows = mcs.compute_missing(self.business.id, MONTH, today=AFTER_MONTH_END)
+        groups = mcs.group_by_field_manager(rows)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]['missing_count'], 0)
+        self.assertEqual(groups[0]['exempt_count'], 1)
 
     # ---- report / bucket wiring reflects the exemption ----
     def test_exempted_employee_dropped_from_report_and_counts(self):
