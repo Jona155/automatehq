@@ -7,13 +7,15 @@ and a one-click broadcast that sends every field manager their own report.
 
 Role scoping (mirrors analytics.py):
   - ADMIN         -> the whole business, plus WhatsApp send/broadcast
-  - FIELD_MANAGER -> read-only, limited to sites where Site.field_manager_id
-                     == them (and their own per-manager export)
+  - FIELD_MANAGER -> read-only, limited to sites whose *effective* manager is
+                     them — Site.field_manager_id, or Site.report_manager_id for
+                     a site nobody owns (and their own per-manager export)
 """
 import logging
 from datetime import datetime, date
 
 from flask import Blueprint, g, request, send_file
+from sqlalchemy import func
 from uuid import UUID
 
 from ..auth_utils import token_required, role_required
@@ -48,6 +50,11 @@ def _scoped_site_ids():
     A FIELD_MANAGER with no assigned sites gets an empty list — callers must
     treat that as "nothing visible" and NOT pass it to compute_missing(), whose
     falsy-check would otherwise widen the query to the whole business.
+
+    Report-routed sites are included: their employees appear in this manager's
+    Excel and WhatsApp report, so the page must show them the same list. The
+    widening is deliberately local to the missing-cards report — everywhere else
+    a routed site is still unowned.
     """
     if g.current_user.role != 'FIELD_MANAGER':
         return None
@@ -56,7 +63,7 @@ def _scoped_site_ids():
         .filter(
             Site.business_id == g.business_id,
             Site.is_active.is_(True),
-            Site.field_manager_id == g.current_user.id,
+            func.coalesce(Site.field_manager_id, Site.report_manager_id) == g.current_user.id,
         )
         .all()
     )

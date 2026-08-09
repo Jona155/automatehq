@@ -15,6 +15,8 @@ export interface MissingEmployeeRow {
   field_manager_id: string | null;
   manager_name: string | null;
   manager_phone: string | null;
+  /** The manager above owns this row only via the site's report routing, not a real assignment. */
+  is_report_routed: boolean;
   cards_count: number;
   expected: number;
   status: MissingStatus;
@@ -54,6 +56,8 @@ export interface SiteGroup {
   field_manager_id: string | null;
   manager_name: string | null;
   manager_phone: string | null;
+  /** The site has no real field manager — the manager above comes from report routing. */
+  is_report_routed: boolean;
   total_employees: number;
   complete_count: number;
   none_count: number;

@@ -22,6 +22,16 @@ class Site(db.Model):
         db.ForeignKey('users.id', ondelete='SET NULL'),
         nullable=True
     )
+    # Report-only routing: when a site has no real field_manager_id (e.g. a new
+    # site nobody owns yet), the missing-cards report attributes its employees
+    # to this manager so somebody chases them. Deliberately NOT a real
+    # assignment — it grants no scope anywhere else in the app, and
+    # field_manager_id always takes precedence over it.
+    report_manager_id = db.Column(
+        UUID(as_uuid=True),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True
+    )
     hourly_tariff = db.Column(db.Numeric(10, 2), nullable=True)
     # Per-site override for the expected work cards per employee per month.
     # NULL => fall back to the business-level default.
@@ -36,6 +46,7 @@ class Site(db.Model):
         Index('ix_sites_business_id', 'business_id'),
         Index('ix_sites_responsible_employee_id', 'responsible_employee_id'),
         Index('ix_sites_field_manager_id', 'field_manager_id'),
+        Index('ix_sites_report_manager_id', 'report_manager_id'),
         db.UniqueConstraint('business_id', 'site_name', name='uq_sites_business_name'),
     )
 

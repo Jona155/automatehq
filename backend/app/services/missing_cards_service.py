@@ -48,7 +48,8 @@ _LOCAL_TZ = ZoneInfo('Asia/Jerusalem')
 # the *following* month still counts as the complete month submission.
 GRACE_WINDOW_END_DAY = 5
 
-# Hebrew label for the "no field manager assigned" bucket.
+# Hebrew label for the "no field manager assigned" bucket — reached only when a
+# site has neither a real manager nor a report-only routing (or has no site).
 NO_MANAGER_LABEL = 'ללא מנהל שטח'
 
 
@@ -188,6 +189,11 @@ def compute_missing(
     ends the full expected count is required. ``expected`` always carries the
     configured monthly target so the UI/report can show the real goal.
 
+    ``field_manager_id``/``manager_name``/``manager_phone`` carry the *effective*
+    manager: a site's real ``field_manager_id`` when it has one, otherwise its
+    report-only ``report_manager_id``. ``is_report_routed`` flags the latter case
+    so callers can tell ownership from routing.
+
     Three exemptions then override a gap to COMPLETE (see ``_apply_exemptions``):
     a single card uploaded within the month-end grace window (Rule 1), a manual
     card whose approval covers the whole month (Rule 2), or a card a user flagged
@@ -249,6 +255,7 @@ def compute_missing(
             Site.id.label('site_id'),
             Site.site_name.label('site_name'),
             Site.expected_work_cards_per_month.label('site_expected'),
+            Site.field_manager_id.label('site_field_manager_id'),
             User.id.label('field_manager_id'),
             User.full_name.label('manager_name'),
             User.phone_number.label('manager_phone'),
@@ -258,7 +265,9 @@ def compute_missing(
             func.coalesce(cards_sub.c.marked_complete, 0).label('marked_complete'),
         )
         .outerjoin(Site, Site.id == Employee.site_id)
-        .outerjoin(User, User.id == Site.field_manager_id)
+        # Effective manager: the real owner if there is one, otherwise the
+        # report-only routing an admin picked for an unassigned site.
+        .outerjoin(User, User.id == func.coalesce(Site.field_manager_id, Site.report_manager_id))
         .outerjoin(cards_sub, cards_sub.c.employee_id == Employee.id)
         .filter(
             Employee.business_id == business_id,
@@ -295,6 +304,9 @@ def compute_missing(
             'field_manager_id': str(r.field_manager_id) if r.field_manager_id else None,
             'manager_name': r.manager_name,
             'manager_phone': r.manager_phone,
+            # True when the manager above owns this employee's report only
+            # because of the site's report-only routing, not a real assignment.
+            'is_report_routed': r.site_field_manager_id is None and r.field_manager_id is not None,
             'cards_count': cards_count,
             'expected': expected,
             'status': status,
@@ -329,7 +341,10 @@ def _bucket_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def group_by_field_manager(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Group employees under their site's field manager, listing only the gaps.
+    """Group employees under their site's effective field manager, listing only the gaps.
+
+    "Effective" means a report-routed site's employees land under the manager the
+    admin picked for it, exactly as if they were assigned (see ``compute_missing``).
 
     Coverage counts (``total_employees``/``complete_count``) span ALL of the
     manager's employees so the UI can show compliance, while ``employees`` lists
@@ -387,6 +402,9 @@ def group_by_site(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 'field_manager_id': row['field_manager_id'],
                 'manager_name': row['manager_name'],
                 'manager_phone': row['manager_phone'],
+                # Routing is a property of the site, so every row in the group
+                # agrees — take it from the first one, like the manager fields.
+                'is_report_routed': row['is_report_routed'],
                 'all_employees': [],
             }
         groups[key]['all_employees'].append(row)

@@ -833,6 +833,8 @@ def get_sites():
         def _with_field_manager_name(site_dict):
             fm_id = site_dict.get('field_manager_id')
             site_dict['field_manager_name'] = managers_by_id.get(str(fm_id)) if fm_id else None
+            rm_id = site_dict.get('report_manager_id')
+            site_dict['report_manager_name'] = managers_by_id.get(str(rm_id)) if rm_id else None
             return site_dict
 
         if include_counts:
@@ -1006,6 +1008,25 @@ def update_site(site_id):
                     return api_response(status_code=404, message="Field manager not found for this business", error="Not Found")
 
                 data['field_manager_id'] = field_manager_uuid
+
+        # Report-only routing for sites with no field manager: the missing-cards
+        # report attributes their employees to this manager. Same validation as a
+        # real assignment, but it grants no scope anywhere else in the app.
+        if 'report_manager_id' in data:
+            report_manager_id = data.get('report_manager_id')
+            if not report_manager_id:
+                data['report_manager_id'] = None
+            else:
+                try:
+                    report_manager_uuid = uuid.UUID(str(report_manager_id))
+                except ValueError:
+                    return api_response(status_code=400, message="Invalid report_manager_id format", error="Bad Request")
+
+                manager = user_repo.get_by_id(report_manager_uuid)
+                if not manager or manager.business_id != g.business_id or manager.role != 'FIELD_MANAGER':
+                    return api_response(status_code=404, message="Field manager not found for this business", error="Not Found")
+
+                data['report_manager_id'] = report_manager_uuid
 
         err = _coerce_expected_cards(data)
         if err:
