@@ -135,15 +135,19 @@ def _apply_exemptions(
     first_uploaded_at: Optional[datetime],
     has_full_manual_approval: bool,
     month: date,
+    marked_complete: bool = False,
 ) -> str:
     """Override a threshold-based status to COMPLETE when an exemption applies.
 
-    Rule 1 (late single card) and Rule 2 (month approved via manual card) both
-    mean the employee's month is settled even though the raw card count would
-    otherwise flag them. Only downgrades a gap to COMPLETE — never the reverse.
+    Rule 1 (late single card), Rule 2 (month approved via manual card) and Rule 3
+    (a user marked the received cards as the full submission) all mean the
+    employee's month is settled even though the raw card count would otherwise
+    flag them. Only downgrades a gap to COMPLETE — never the reverse.
     """
     if base_status == STATUS_COMPLETE:
         return base_status
+    if marked_complete:
+        return STATUS_COMPLETE
     if has_full_manual_approval:
         return STATUS_COMPLETE
     if _late_single_card_exempt(cards_count, first_uploaded_at, month):
@@ -184,9 +188,10 @@ def compute_missing(
     ends the full expected count is required. ``expected`` always carries the
     configured monthly target so the UI/report can show the real goal.
 
-    Two exemptions then override a gap to COMPLETE (see ``_apply_exemptions``):
-    a single card uploaded within the month-end grace window (Rule 1), or a
-    manual card whose approval covers the whole month (Rule 2).
+    Three exemptions then override a gap to COMPLETE (see ``_apply_exemptions``):
+    a single card uploaded within the month-end grace window (Rule 1), a manual
+    card whose approval covers the whole month (Rule 2), or a card a user flagged
+    as this month's full submission (Rule 3, ``completes_month``).
     """
     business = db.session.query(Business).filter(Business.id == business_id).first()
     business_default = (
@@ -199,7 +204,8 @@ def compute_missing(
 
     # Cards per employee for the month (assigned cards only). ``full_manual``
     # flags a manual "ghost" card whose approval settles the whole month, so the
-    # employee is exempt from the missing list even without an image card.
+    # employee is exempt from the missing list even without an image card;
+    # ``marked_complete`` is the user's explicit "these cards are enough" flag.
     cards_sub = (
         db.session.query(
             WorkCard.employee_id.label('employee_id'),
@@ -218,6 +224,11 @@ def compute_missing(
                     else_=0,
                 )
             ).label('full_manual'),
+            # Rule 3: any card in the employee-month flagged by a user as the
+            # complete submission settles the whole month.
+            func.max(
+                case((WorkCard.completes_month.is_(True), 1), else_=0)
+            ).label('marked_complete'),
         )
         .filter(
             WorkCard.business_id == business_id,
@@ -244,6 +255,7 @@ def compute_missing(
             func.coalesce(cards_sub.c.cards_count, 0).label('cards_count'),
             cards_sub.c.first_uploaded_at.label('first_uploaded_at'),
             func.coalesce(cards_sub.c.full_manual, 0).label('full_manual'),
+            func.coalesce(cards_sub.c.marked_complete, 0).label('marked_complete'),
         )
         .outerjoin(Site, Site.id == Employee.site_id)
         .outerjoin(User, User.id == Site.field_manager_id)
@@ -263,12 +275,14 @@ def compute_missing(
         expected = int(r.site_expected) if r.site_expected else int(business_default)
         threshold = effective_threshold(month, expected, today)
         cards_count = int(r.cards_count or 0)
+        marked_complete = bool(r.marked_complete)
         status = _apply_exemptions(
             _classify(cards_count, threshold),
             cards_count,
             r.first_uploaded_at,
             bool(r.full_manual),
             month,
+            marked_complete,
         )
         rows.append({
             'employee_id': str(r.employee_id),
@@ -284,6 +298,7 @@ def compute_missing(
             'cards_count': cards_count,
             'expected': expected,
             'status': status,
+            'is_exempt': marked_complete,
             'first_uploaded_at': r.first_uploaded_at.isoformat() if r.first_uploaded_at else None,
         })
     return rows
@@ -291,6 +306,10 @@ def compute_missing(
 
 def _is_gap(row: Dict[str, Any]) -> bool:
     return row['status'] != STATUS_COMPLETE
+
+
+def _is_exempt(row: Dict[str, Any]) -> bool:
+    return bool(row.get('is_exempt'))
 
 
 def _bucket_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -303,6 +322,9 @@ def _bucket_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
         'partial': partial,
         'complete': complete,
         'missing': none + partial,
+        # Manually ignored employees count as complete above; surfaced separately
+        # so the UI can say how much of the compliance is a human decision.
+        'exempt': sum(1 for r in rows if _is_exempt(r)),
     }
 
 
@@ -331,7 +353,7 @@ def group_by_field_manager(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for grp in groups.values():
         all_emps = grp.pop('all_employees')
         counts = _bucket_counts(all_emps)
-        if counts['missing'] == 0:
+        if counts['missing'] == 0 and counts['exempt'] == 0:
             continue  # manager has no missing cards -> not shown here
         result.append({
             **grp,
@@ -340,7 +362,9 @@ def group_by_field_manager(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             'none_count': counts['none'],
             'partial_count': counts['partial'],
             'missing_count': counts['missing'],
+            'exempt_count': counts['exempt'],
             'employees': [r for r in all_emps if _is_gap(r)],
+            'exempt_employees': [r for r in all_emps if _is_exempt(r)],
         })
     # Real managers first (alpha), managerless bucket last.
     result.sort(key=lambda g: (g['field_manager_id'] is None, (g['manager_name'] or '')))
@@ -378,8 +402,10 @@ def group_by_site(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             'none_count': counts['none'],
             'partial_count': counts['partial'],
             'missing_count': counts['missing'],
+            'exempt_count': counts['exempt'],
             # Only employees with gaps are listed for action.
             'employees': [r for r in all_emps if _is_gap(r)],
+            'exempt_employees': [r for r in all_emps if _is_exempt(r)],
         })
     # Sites with the most gaps first.
     result.sort(key=lambda g: g['missing_count'], reverse=True)

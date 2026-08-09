@@ -18,6 +18,8 @@ export interface MissingEmployeeRow {
   cards_count: number;
   expected: number;
   status: MissingStatus;
+  /** A user marked the received cards as this month's full submission. */
+  is_exempt: boolean;
   first_uploaded_at: string | null;
 }
 
@@ -27,6 +29,7 @@ export interface MissingSummary {
   partial: number;
   complete: number;
   missing: number;
+  exempt: number;
   sites_with_gaps: number;
   managers_with_gaps: number;
 }
@@ -40,7 +43,9 @@ export interface ManagerGroup {
   none_count: number;
   partial_count: number;
   missing_count: number;
+  exempt_count: number;
   employees: MissingEmployeeRow[];
+  exempt_employees: MissingEmployeeRow[];
 }
 
 export interface SiteGroup {
@@ -54,7 +59,9 @@ export interface SiteGroup {
   none_count: number;
   partial_count: number;
   missing_count: number;
+  exempt_count: number;
   employees: MissingEmployeeRow[];
+  exempt_employees: MissingEmployeeRow[];
 }
 
 export interface MissingCardsResponse<G> {
@@ -110,6 +117,26 @@ export const sendManagerWhatsapp = async (
 export const broadcastWhatsapp = async (month: string): Promise<BroadcastResult> => {
   const response = await client.post<{ data: BroadcastResult }>('/missing-cards/whatsapp/broadcast', {
     processing_month: normalizeMonth(month),
+  });
+  return response.data.data;
+};
+
+export interface SetExemptionsResult {
+  updated: number;
+  /** Employees with no card for the month — nothing to flag, so they were left alone. */
+  skipped_no_card: string[];
+  exempt: boolean;
+}
+
+export const setExemptions = async (
+  month: string,
+  employeeIds: string[],
+  exempt: boolean,
+): Promise<SetExemptionsResult> => {
+  const response = await client.post<{ data: SetExemptionsResult }>('/missing-cards/exemptions', {
+    processing_month: normalizeMonth(month),
+    employee_ids: employeeIds,
+    exempt,
   });
   return response.data.data;
 };

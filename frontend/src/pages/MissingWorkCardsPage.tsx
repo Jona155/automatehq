@@ -13,6 +13,7 @@ import {
   broadcastWhatsapp,
   downloadManagerReport,
   downloadCompanyReport,
+  setExemptions,
   type ManagerGroup,
   type SiteGroup,
   type MissingSummary,
@@ -34,11 +35,23 @@ const EMPTY_SUMMARY: MissingSummary = {
   partial: 0,
   complete: 0,
   missing: 0,
+  exempt: 0,
   sites_with_gaps: 0,
   managers_with_gaps: 0,
 };
 
+// Ignoring an employee sets a flag on the cards they already sent, so someone
+// with no card at all has nothing to flag and cannot be ignored.
+const canBeIgnored = (row: MissingEmployeeRow) => row.status !== 'NONE';
+
 function StatusBadge({ row }: { row: MissingEmployeeRow }) {
+  if (row.is_exempt) {
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 dark:bg-slate-700/50 dark:text-slate-300">
+        הוחרג ידנית
+      </span>
+    );
+  }
   if (row.status === 'NONE') {
     return (
       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
@@ -53,8 +66,101 @@ function StatusBadge({ row }: { row: MissingEmployeeRow }) {
   );
 }
 
-function EmployeeTable({ rows }: { rows: MissingEmployeeRow[] }) {
-  if (rows.length === 0) {
+function EmployeeRow({
+  emp,
+  canManage,
+  selected,
+  onToggleRow,
+  onExempt,
+  onRevert,
+}: {
+  emp: MissingEmployeeRow;
+  canManage: boolean;
+  selected: boolean;
+  onToggleRow: (id: string) => void;
+  onExempt: (emp: MissingEmployeeRow) => void;
+  onRevert: (emp: MissingEmployeeRow) => void;
+}) {
+  const selectable = canBeIgnored(emp);
+  return (
+    <tr
+      className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/30 ${emp.is_exempt ? 'opacity-60' : ''}`}
+    >
+      {canManage && (
+        <td className="px-4 py-2.5 w-10">
+          {!emp.is_exempt && (
+            <input
+              type="checkbox"
+              checked={selected}
+              disabled={!selectable}
+              onChange={() => onToggleRow(emp.employee_id)}
+              title={selectable ? '' : 'לא ניתן להחריג עובד שלא התקבל עבורו אף כרטיס'}
+              className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary/50 disabled:opacity-40 disabled:cursor-not-allowed"
+            />
+          )}
+        </td>
+      )}
+      <td className="px-4 py-2.5 font-medium text-[#111518] dark:text-white">{emp.full_name}</td>
+      <td className="px-4 py-2.5 text-[#111518] dark:text-white">{emp.passport_id || '—'}</td>
+      <td className="px-4 py-2.5 text-[#617989] dark:text-slate-400">{emp.phone_number || '—'}</td>
+      <td className="px-4 py-2.5 text-[#617989] dark:text-slate-400">{emp.site_name || '—'}</td>
+      <td className="px-4 py-2.5"><StatusBadge row={emp} /></td>
+      {canManage && (
+        <td className="px-4 py-2.5">
+          {emp.is_exempt ? (
+            <button
+              onClick={() => onRevert(emp)}
+              className="inline-flex items-center whitespace-nowrap px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              בטל החרגה
+            </button>
+          ) : selectable ? (
+            <button
+              onClick={() => onExempt(emp)}
+              title="סמן שהכרטיסים שהתקבלו הם ההגשה המלאה לחודש זה"
+              className="inline-flex items-center whitespace-nowrap px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              החרג מהדוח
+            </button>
+          ) : (
+            // No card at all -> nothing to flag. A dash matches how the other
+            // columns render "no value" and avoids a permanently dead button.
+            <span
+              className="text-[#617989] dark:text-slate-500"
+              title="לא ניתן להחריג עובד שלא התקבל עבורו אף כרטיס"
+            >
+              —
+            </span>
+          )}
+        </td>
+      )}
+    </tr>
+  );
+}
+
+function EmployeeTable({
+  rows,
+  exemptRows,
+  canManage,
+  selected,
+  onToggleRow,
+  onToggleGroup,
+  onExempt,
+  onRevert,
+}: {
+  rows: MissingEmployeeRow[];
+  exemptRows: MissingEmployeeRow[];
+  canManage: boolean;
+  selected: Set<string>;
+  onToggleRow: (id: string) => void;
+  onToggleGroup: (ids: string[], select: boolean) => void;
+  onExempt: (emp: MissingEmployeeRow) => void;
+  onRevert: (emp: MissingEmployeeRow) => void;
+}) {
+  const selectableIds = rows.filter(canBeIgnored).map((r) => r.employee_id);
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+
+  if (rows.length === 0 && exemptRows.length === 0) {
     return <div className="px-6 py-4 text-sm text-slate-500">אין עובדים חסרים</div>;
   }
   return (
@@ -62,22 +168,48 @@ function EmployeeTable({ rows }: { rows: MissingEmployeeRow[] }) {
       <table className="w-full text-right border-collapse text-sm">
         <thead>
           <tr className="bg-slate-50 dark:bg-slate-800/50 border-y border-slate-200 dark:border-slate-700">
+            {canManage && (
+              <th className="px-4 py-2 w-10">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  disabled={selectableIds.length === 0}
+                  onChange={() => onToggleGroup(selectableIds, !allSelected)}
+                  title="בחר את כל העובדים בקבוצה"
+                  className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary/50 disabled:opacity-40"
+                />
+              </th>
+            )}
             <th className="px-4 py-2 font-bold text-[#111518] dark:text-slate-200">שם עובד</th>
             <th className="px-4 py-2 font-bold text-[#111518] dark:text-slate-200">ת.ז. / דרכון</th>
             <th className="px-4 py-2 font-bold text-[#111518] dark:text-slate-200">טלפון</th>
             <th className="px-4 py-2 font-bold text-[#111518] dark:text-slate-200">אתר</th>
             <th className="px-4 py-2 font-bold text-[#111518] dark:text-slate-200">סטטוס</th>
+            {canManage && <th className="px-4 py-2 font-bold text-[#111518] dark:text-slate-200">פעולות</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
           {rows.map((emp) => (
-            <tr key={emp.employee_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-              <td className="px-4 py-2.5 font-medium text-[#111518] dark:text-white">{emp.full_name}</td>
-              <td className="px-4 py-2.5 text-[#111518] dark:text-white">{emp.passport_id || '—'}</td>
-              <td className="px-4 py-2.5 text-[#617989] dark:text-slate-400">{emp.phone_number || '—'}</td>
-              <td className="px-4 py-2.5 text-[#617989] dark:text-slate-400">{emp.site_name || '—'}</td>
-              <td className="px-4 py-2.5"><StatusBadge row={emp} /></td>
-            </tr>
+            <EmployeeRow
+              key={emp.employee_id}
+              emp={emp}
+              canManage={canManage}
+              selected={selected.has(emp.employee_id)}
+              onToggleRow={onToggleRow}
+              onExempt={onExempt}
+              onRevert={onRevert}
+            />
+          ))}
+          {exemptRows.map((emp) => (
+            <EmployeeRow
+              key={emp.employee_id}
+              emp={emp}
+              canManage={canManage}
+              selected={false}
+              onToggleRow={onToggleRow}
+              onExempt={onExempt}
+              onRevert={onRevert}
+            />
           ))}
         </tbody>
       </table>
@@ -110,6 +242,16 @@ export default function MissingWorkCardsPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
 
+  // Only admins may ignore employees — field managers are the audience of the
+  // report, so they must not be able to shrink their own list (backend enforces).
+  const canManage = !isFieldManager;
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showExempt, setShowExempt] = useState(false);
+  // Employee ids awaiting confirmation — one row's id from the row action, or the
+  // whole selection from the bulk bar. Non-null means the confirm dialog is open.
+  const [pendingExempt, setPendingExempt] = useState<string[] | null>(null);
+  const [applyingExempt, setApplyingExempt] = useState(false);
+
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastResult, setBroadcastResult] = useState<BroadcastResult | null>(null);
@@ -117,6 +259,7 @@ export default function MissingWorkCardsPage() {
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+    setSelected(new Set());
     try {
       if (mode === 'field_manager') {
         const data = await getMissingCardsByManager(selectedMonth);
@@ -155,19 +298,81 @@ export default function MissingWorkCardsPage() {
     [searchQuery],
   );
 
+  // Ignored employees are only materialized when the user asks to see them, so
+  // the default view stays exactly the list of people who need chasing.
+  const visibleExempt = useCallback(
+    (rows: MissingEmployeeRow[]) => {
+      if (!showExempt) return [];
+      return searchQuery.trim() ? rows.filter(matchesSearch) : rows;
+    },
+    [showExempt, searchQuery, matchesSearch],
+  );
+
   const filteredManagerGroups = useMemo(() => {
-    if (!searchQuery.trim()) return managerGroups;
+    const q = searchQuery.trim();
     return managerGroups
-      .map((g) => ({ ...g, employees: g.employees.filter(matchesSearch) }))
-      .filter((g) => g.employees.length > 0);
-  }, [managerGroups, searchQuery, matchesSearch]);
+      .map((g) => ({
+        ...g,
+        employees: q ? g.employees.filter(matchesSearch) : g.employees,
+        exempt_employees: visibleExempt(g.exempt_employees),
+      }))
+      // A manager whose every gap was ignored comes back from the API with no
+      // gaps at all — hide them unless the user is looking at ignored rows.
+      .filter((g) => g.employees.length > 0 || g.exempt_employees.length > 0);
+  }, [managerGroups, searchQuery, matchesSearch, visibleExempt]);
 
   const filteredSiteGroups = useMemo(() => {
-    if (!searchQuery.trim()) return siteGroups;
-    return siteGroups
-      .map((g) => ({ ...g, employees: g.employees.filter(matchesSearch) }))
-      .filter((g) => g.employees.length > 0);
-  }, [siteGroups, searchQuery, matchesSearch]);
+    const q = searchQuery.trim();
+    const mapped = siteGroups.map((g) => ({
+      ...g,
+      employees: q ? g.employees.filter(matchesSearch) : g.employees,
+      exempt_employees: visibleExempt(g.exempt_employees),
+    }));
+    // Unsearched, every site is listed (including fully-covered ones) as before.
+    if (!q) return mapped;
+    return mapped.filter((g) => g.employees.length > 0 || g.exempt_employees.length > 0);
+  }, [siteGroups, searchQuery, matchesSearch, visibleExempt]);
+
+  const toggleRow = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleGroup = (ids: string[], select: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (select ? next.add(id) : next.delete(id)));
+      return next;
+    });
+
+  const applyExemption = async (employeeIds: string[], exempt: boolean) => {
+    setApplyingExempt(true);
+    try {
+      const res = await setExemptions(selectedMonth, employeeIds, exempt);
+      if (res.skipped_no_card.length > 0) {
+        showToast(
+          `${res.updated} עודכנו. ${res.skipped_no_card.length} דולגו — לא התקבל עבורם אף כרטיס`,
+          'info',
+        );
+      } else {
+        showToast(
+          exempt
+            ? `${res.updated} עובדים הוחרגו מהדוח לחודש זה`
+            : `ההחרגה בוטלה עבור ${res.updated} עובדים`,
+          'success',
+        );
+      }
+      setPendingExempt(null);
+      await fetchData();
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || 'שגיאה בעדכון ההחרגות', 'error');
+    } finally {
+      setApplyingExempt(false);
+    }
+  };
 
   const handleSend = async (managerId: string, managerName: string | null) => {
     setSendingId(managerId);
@@ -305,6 +510,12 @@ export default function MissingWorkCardsPage() {
               <li>השתמשו בכפתור "שלח לכל מנהלי השטח" כדי לשלוח לכל מנהל קובץ Excel בוואטסאפ אוטומטית.</li>
             )}
             <li>סטטוס "כרטיס ראשון בלבד" מציין שהתקבל רק חלק מהכרטיסים הצפויים.</li>
+            {canManage && (
+              <li>
+                אם ידוע לכם שהכרטיס שהתקבל מספיק (למשל העובדים סיימו בסוף החודש), סמנו אותם
+                והחריגו אותם מהדוח. ההחרגה תקפה לחודש הנבחר בלבד, וניתן לבטלה בכל עת.
+              </li>
+            )}
           </ul>
         }
       />
@@ -344,7 +555,42 @@ export default function MissingWorkCardsPage() {
             />
           </div>
         </div>
-        {!isLoading && summaryChips}
+        {!isLoading && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {summaryChips}
+            {canManage && (
+              <button
+                onClick={() => setShowExempt((v) => !v)}
+                disabled={summary.exempt === 0}
+                aria-pressed={showExempt}
+                title={
+                  summary.exempt === 0
+                    ? 'לא הוחרגו עובדים בחודש זה'
+                    : 'הצגה או הסתרה של העובדים שהוחרגו ידנית מהדוח'
+                }
+                className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  showExempt
+                    ? 'bg-primary border-primary text-white shadow-md'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 enabled:hover:bg-slate-100 dark:enabled:hover:bg-slate-800'
+                }`}
+              >
+                <span className="material-symbols-outlined text-lg leading-none">
+                  {showExempt ? 'visibility' : 'visibility_off'}
+                </span>
+                עובדים שהוחרגו ידנית
+                <span
+                  className={`inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-xs font-bold ${
+                    showExempt
+                      ? 'bg-white/25 text-white'
+                      : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  {summary.exempt}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Body */}
@@ -423,7 +669,18 @@ export default function MissingWorkCardsPage() {
                     )}
                   </div>
                 </div>
-                {isOpen && <EmployeeTable rows={g.employees} />}
+                {isOpen && (
+                  <EmployeeTable
+                    rows={g.employees}
+                    exemptRows={g.exempt_employees}
+                    canManage={canManage}
+                    selected={selected}
+                    onToggleRow={toggleRow}
+                    onToggleGroup={toggleGroup}
+                    onExempt={(emp) => setPendingExempt([emp.employee_id])}
+                    onRevert={(emp) => { void applyExemption([emp.employee_id], false); }}
+                  />
+                )}
               </div>
             );
           })}
@@ -457,12 +714,87 @@ export default function MissingWorkCardsPage() {
                     </span>
                   </div>
                 </button>
-                {isOpen && <EmployeeTable rows={g.employees} />}
+                {isOpen && (
+                  <EmployeeTable
+                    rows={g.employees}
+                    exemptRows={g.exempt_employees}
+                    canManage={canManage}
+                    selected={selected}
+                    onToggleRow={toggleRow}
+                    onToggleGroup={toggleGroup}
+                    onExempt={(emp) => setPendingExempt([emp.employee_id])}
+                    onRevert={(emp) => { void applyExemption([emp.employee_id], false); }}
+                  />
+                )}
               </div>
             );
           })}
         </div>
       )}
+
+      {/* Selection action bar */}
+      {canManage && selected.size > 0 && (
+        <div className="sticky bottom-4 z-10 mx-auto w-fit flex items-center gap-4 px-5 py-3 rounded-xl bg-[#111518] dark:bg-slate-700 text-white shadow-2xl">
+          <span className="text-sm font-semibold">{selected.size} עובדים נבחרו</span>
+          <button
+            onClick={() => setPendingExempt([...selected])}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-[#111518] hover:bg-slate-100 text-sm font-semibold transition-colors"
+          >
+            <span className="material-symbols-outlined text-sm">visibility_off</span>
+            החרג מהדוח
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="text-sm text-slate-300 hover:text-white transition-colors"
+          >
+            נקה בחירה
+          </button>
+        </div>
+      )}
+
+      {/* Exemption confirm */}
+      <Modal
+        isOpen={pendingExempt !== null}
+        onClose={() => setPendingExempt(null)}
+        title="החרגת עובדים מדוח החוסרים"
+        maxWidth="md"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-slate-700 dark:text-slate-300">
+            {pendingExempt?.length === 1 ? (
+              <>
+                העובד יסומן כאילו הכרטיסים שהתקבלו עבורו הם ההגשה המלאה לחודש{' '}
+                <strong>{selectedMonth}</strong>, וייעלם מהדף הזה ומהדוחות שנשלחים למנהלי השטח.
+              </>
+            ) : (
+              <>
+                <strong>{pendingExempt?.length ?? 0}</strong> עובדים יסומנו כאילו הכרטיסים שהתקבלו
+                עבורם הם ההגשה המלאה לחודש <strong>{selectedMonth}</strong>. הם ייעלמו מהדף הזה
+                ומהדוחות שנשלחים למנהלי השטח.
+              </>
+            )}
+          </p>
+          <p className="text-sm text-[#617989] dark:text-slate-400">
+            ההחרגה תקפה לחודש זה בלבד ואינה עוברת לחודשים הבאים. ניתן לבטל אותה בכל עת דרך כפתור
+            "עובדים שהוחרגו ידנית".
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setPendingExempt(null)}
+              className="px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              ביטול
+            </button>
+            <button
+              onClick={() => { if (pendingExempt) void applyExemption(pendingExempt, true); }}
+              disabled={applyingExempt}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white font-semibold hover:bg-primary/90 disabled:opacity-50"
+            >
+              {applyingExempt ? 'מעדכן...' : 'אשר החרגה'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Broadcast modal */}
       <Modal isOpen={broadcastOpen} onClose={() => setBroadcastOpen(false)} title="שליחה לכל מנהלי השטח" maxWidth="lg">

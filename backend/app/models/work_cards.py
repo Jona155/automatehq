@@ -34,6 +34,13 @@ class WorkCard(db.Model):
     # approval, including intentional mid-month days-off that carry no entry).
     # NULL means nothing has been approved yet. Set/extended on approval.
     approved_through_day = db.Column(db.SmallInteger, nullable=True)
+    # Manual override from the missing-cards view: the user has declared that the
+    # cards already received settle this employee-month, so the employee stops
+    # being reported as missing a card (e.g. the crew's last work day was the end
+    # of the month and the contractor sent a single card covering it). Scoped to
+    # this card's processing_month — it never carries into the next month.
+    # Unrelated to approved_through_day, which governs overwrite protection.
+    completes_month = db.Column(db.Boolean, nullable=False, server_default='false', default=False)
     # Set once a 'new card arrived' WhatsApp notification has been sent — dedups retries.
     whatsapp_notified_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)

@@ -21,6 +21,7 @@ from ..extensions import db
 from ..models.business import Business
 from ..models.sites import Site
 from ..models.users import User
+from ..models.work_cards import WorkCard
 from .utils import api_response
 from ..services import missing_cards_service as mcs
 from ..services.whatsapp_listener_client import (
@@ -122,6 +123,65 @@ def get_missing_cards():
     except Exception as e:
         logger.exception("Failed to compute missing cards")
         return api_response(status_code=500, message="Failed to compute missing cards", error=str(e))
+
+
+@missing_cards_bp.route('/exemptions', methods=['POST'])
+@token_required
+@role_required('ADMIN')
+def set_exemptions():
+    """Mark (or unmark) employees' received cards as the full submission for a month.
+
+    Body: {processing_month: YYYY-MM[-DD], employee_ids: [uuid], exempt: bool}
+
+    The flag lives on the employees' existing work cards for that month, so an
+    employee with no card at all cannot be ignored — those ids come back in
+    ``skipped_no_card`` instead of failing the whole request.
+    """
+    data = request.get_json() or {}
+    month, err = _parse_month(data.get('processing_month') or data.get('month'))
+    if err:
+        return api_response(status_code=400, message=err, error="Bad Request")
+
+    raw_ids = data.get('employee_ids') or []
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return api_response(status_code=400, message="employee_ids is required", error="Bad Request")
+    try:
+        employee_ids = [UUID(str(i)) for i in raw_ids]
+    except (ValueError, AttributeError, TypeError):
+        return api_response(status_code=400, message="Invalid employee id", error="Bad Request")
+
+    exempt = bool(data.get('exempt', True))
+
+    try:
+        cards = (
+            db.session.query(WorkCard)
+            .filter(
+                WorkCard.business_id == g.business_id,
+                WorkCard.processing_month == month,
+                WorkCard.employee_id.in_(employee_ids),
+            )
+            .all()
+        )
+        for card in cards:
+            card.completes_month = exempt
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to update missing-card exemptions")
+        return api_response(status_code=500, message="שגיאה בעדכון ההחרגות", error=str(e))
+
+    with_cards = {str(c.employee_id) for c in cards}
+    skipped = [str(i) for i in employee_ids if str(i) not in with_cards]
+    updated = len(with_cards)
+    message = (
+        f"{updated} עובדים הוחרגו מדוח החוסרים לחודש זה"
+        if exempt
+        else f"ההחרגה בוטלה עבור {updated} עובדים"
+    )
+    return api_response(
+        data={"updated": updated, "skipped_no_card": skipped, "exempt": exempt},
+        message=message,
+    )
 
 
 def _manager_rows(business_id, month, user_id):
