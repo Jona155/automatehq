@@ -31,6 +31,9 @@ export interface Site {
   responsible_employee_id?: string | null;
   field_manager_id?: string | null;
   field_manager_name?: string | null;
+  /** Report-only routing for a site with no field manager — missing-cards report only. */
+  report_manager_id?: string | null;
+  report_manager_name?: string | null;
   hourly_tariff?: number | null;
   contractor_emails?: string[] | null;
   contractor_phone_number?: string | null;

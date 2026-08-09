@@ -5,7 +5,7 @@ from backend.app.services import missing_cards_service as mcs
 
 
 def _row(emp, status, *, site_id='S1', site_name='Site 1', fm='M1', fm_name='Manager 1',
-         fm_phone='0501234567', cards=0, expected=2, first=None):
+         fm_phone='0501234567', cards=0, expected=2, first=None, routed=False):
     return {
         'employee_id': emp,
         'full_name': emp,
@@ -17,6 +17,7 @@ def _row(emp, status, *, site_id='S1', site_name='Site 1', fm='M1', fm_name='Man
         'field_manager_id': fm,
         'manager_name': fm_name,
         'manager_phone': fm_phone,
+        'is_report_routed': routed,
         'cards_count': cards,
         'expected': expected,
         'status': status,

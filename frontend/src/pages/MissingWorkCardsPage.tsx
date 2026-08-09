@@ -6,6 +6,9 @@ import PageBanner from '../components/PageBanner';
 import Modal from '../components/Modal';
 import { useToast } from '../hooks/useToast';
 import { getDefaultMonth } from '../utils/monthUtils';
+import { getUsers } from '../api/users';
+import { updateSite } from '../api/sites';
+import type { User } from '../types';
 import {
   getMissingCardsByManager,
   getMissingCardsBySite,
@@ -66,6 +69,61 @@ function StatusBadge({ row }: { row: MissingEmployeeRow }) {
   );
 }
 
+// Marks a row/site whose manager comes from the report-only routing rather than
+// a real assignment, so a manager reading their own group knows why it's there.
+function RoutedBadge() {
+  return (
+    <span
+      title="האתר אינו משויך למנהל שטח — הוא נכלל בדוח זה לפי בחירת מנהל המערכת"
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
+    >
+      שיוך לדוח בלבד
+    </span>
+  );
+}
+
+// Admin-only picker that routes one unassigned site into a field manager's
+// report. Persists via the site itself (PUT /api/sites), so it survives months.
+function ReportManagerSelect({
+  siteId,
+  currentId,
+  managers,
+  onSave,
+}: {
+  siteId: string;
+  currentId: string | null;
+  managers: User[];
+  onSave: (siteId: string, managerId: string | null) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  return (
+    <select
+      value={currentId ?? ''}
+      disabled={saving}
+      onClick={(e) => e.stopPropagation()}
+      onChange={async (e) => {
+        e.stopPropagation();
+        const value = e.target.value || null;
+        setSaving(true);
+        try {
+          await onSave(siteId, value);
+        } finally {
+          setSaving(false);
+        }
+      }}
+      title="בחרו לאיזה מנהל שטח יופיעו עובדי האתר הזה בדוח"
+      className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none disabled:opacity-50"
+    >
+      <option value="">ללא שיוך</option>
+      {managers.map((m) => (
+        <option key={m.id} value={m.id}>
+          {m.full_name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function EmployeeRow({
   emp,
   canManage,
@@ -103,7 +161,12 @@ function EmployeeRow({
       <td className="px-4 py-2.5 font-medium text-[#111518] dark:text-white">{emp.full_name}</td>
       <td className="px-4 py-2.5 text-[#111518] dark:text-white">{emp.passport_id || '—'}</td>
       <td className="px-4 py-2.5 text-[#617989] dark:text-slate-400">{emp.phone_number || '—'}</td>
-      <td className="px-4 py-2.5 text-[#617989] dark:text-slate-400">{emp.site_name || '—'}</td>
+      <td className="px-4 py-2.5 text-[#617989] dark:text-slate-400">
+        <span className="inline-flex items-center gap-2 flex-wrap">
+          {emp.site_name || '—'}
+          {emp.is_report_routed && <RoutedBadge />}
+        </span>
+      </td>
       <td className="px-4 py-2.5"><StatusBadge row={emp} /></td>
       {canManage && (
         <td className="px-4 py-2.5">
@@ -252,6 +315,14 @@ export default function MissingWorkCardsPage() {
   const [pendingExempt, setPendingExempt] = useState<string[] | null>(null);
   const [applyingExempt, setApplyingExempt] = useState(false);
 
+  // Field managers a site with no owner can be routed to. Loaded once for admins;
+  // field managers never see the picker, so they never need the list.
+  const [fieldManagers, setFieldManagers] = useState<User[]>([]);
+  // Snapshot of the unowned sites inside the "ללא מנהל שטח" group, taken when the
+  // routing modal opens so the list stays stable while the user works through it.
+  const [routingSites, setRoutingSites] = useState<{ id: string; name: string }[] | null>(null);
+  const [routingChoices, setRoutingChoices] = useState<Record<string, string | null>>({});
+
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastResult, setBroadcastResult] = useState<BroadcastResult | null>(null);
@@ -282,6 +353,13 @@ export default function MissingWorkCardsPage() {
     if (!isAuthenticated) return;
     fetchData();
   }, [isAuthenticated, fetchData]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !canManage) return;
+    getUsers({ active: true, role: 'FIELD_MANAGER' })
+      .then(setFieldManagers)
+      .catch((err) => console.error('Failed to load field managers:', err));
+  }, [isAuthenticated, canManage]);
 
   const toggle = (key: string) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
@@ -372,6 +450,29 @@ export default function MissingWorkCardsPage() {
     } finally {
       setApplyingExempt(false);
     }
+  };
+
+  // Routing lives on the site, not on the month, so it holds until changed. It is
+  // report-only: the site stays unassigned everywhere else in the app.
+  const handleRouteSite = async (siteId: string, managerId: string | null) => {
+    try {
+      await updateSite(siteId, { report_manager_id: managerId });
+      setRoutingChoices((prev) => ({ ...prev, [siteId]: managerId }));
+      showToast(managerId ? 'האתר שויך לדוח של מנהל השטח' : 'שיוך האתר לדוח בוטל', 'success');
+      await fetchData();
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || 'שגיאה בשיוך האתר לדוח', 'error');
+    }
+  };
+
+  // Distinct sites inside a manager group — used to offer routing for the
+  // "ללא מנהל שטח" bucket, whose employees may span several unowned sites.
+  const sitesOfGroup = (g: ManagerGroup) => {
+    const byId = new Map<string, string>();
+    [...g.employees, ...g.exempt_employees].forEach((e) => {
+      if (e.site_id && !byId.has(e.site_id)) byId.set(e.site_id, e.site_name || e.site_id);
+    });
+    return [...byId].map(([id, name]) => ({ id, name }));
   };
 
   const handleSend = async (managerId: string, managerName: string | null) => {
@@ -512,6 +613,13 @@ export default function MissingWorkCardsPage() {
             <li>סטטוס "כרטיס ראשון בלבד" מציין שהתקבל רק חלק מהכרטיסים הצפויים.</li>
             {canManage && (
               <li>
+                לאתר שטרם שויך אליו מנהל שטח ניתן לבחור לאיזה דוח יופיעו העובדים שלו — בתצוגה לפי אתר,
+                או דרך "שייך אתרים למנהל שטח" בקבוצת "ללא מנהל שטח". השיוך משפיע על דוח זה בלבד ונשמר
+                עד לשינויו.
+              </li>
+            )}
+            {canManage && (
+              <li>
                 אם ידוע לכם שהכרטיס שהתקבל מספיק (למשל העובדים סיימו בסוף החודש), סמנו אותם
                 והחריגו אותם מהדוח. ההחרגה תקפה לחודש הנבחר בלבד, וניתן לבטלה בכל עת.
               </li>
@@ -647,6 +755,19 @@ export default function MissingWorkCardsPage() {
                     </div>
                   </button>
                   <div className="flex items-center gap-2 shrink-0">
+                    {!g.field_manager_id && canManage && sitesOfGroup(g).length > 0 && (
+                      <button
+                        onClick={() => {
+                          setRoutingChoices({});
+                          setRoutingSites(sitesOfGroup(g));
+                        }}
+                        title="בחרו לאיזה מנהל שטח יופיעו עובדי האתרים הללו בדוח"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-sm">alt_route</span>
+                        שייך אתרים למנהל שטח
+                      </button>
+                    )}
                     {g.field_manager_id && (
                       <button
                         onClick={() => handleExport(g.field_manager_id!, g.manager_name)}
@@ -695,25 +816,43 @@ export default function MissingWorkCardsPage() {
           {filteredSiteGroups.map((g) => {
             const key = g.site_id ?? 'none';
             const isOpen = expanded[key] ?? false;
+            // A site with no real owner can be routed into a manager's report.
+            // `is_report_routed` means it already is, so its manager_name is the
+            // routed one rather than a real assignment.
+            const canRoute = canManage && !!g.site_id && (g.is_report_routed || !g.field_manager_id);
             return (
               <div key={key} className="bg-white dark:bg-[#1a2a35] rounded-xl shadow-xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
-                <button onClick={() => toggle(key)} className="w-full flex items-center justify-between gap-3 px-6 py-4 text-right">
-                  <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center justify-between gap-3 px-6 py-4">
+                  <button onClick={() => toggle(key)} className="flex items-center gap-3 min-w-0 flex-1 text-right">
                     <span className={`material-symbols-outlined text-slate-400 transition-transform ${isOpen ? 'rotate-90' : ''}`}>chevron_left</span>
                     <div className="min-w-0">
                       <div className="font-bold text-[#111518] dark:text-white truncate">{g.site_name || 'ללא אתר'}</div>
-                      <div className="text-sm text-[#617989] dark:text-slate-400">
-                        מנהל שטח: {g.manager_name || '—'} · כיסוי {g.complete_count}/{g.total_employees}
+                      <div className="text-sm text-[#617989] dark:text-slate-400 flex items-center gap-2 flex-wrap">
+                        <span>
+                          מנהל שטח: {g.manager_name || '—'} · כיסוי {g.complete_count}/{g.total_employees}
+                        </span>
+                        {g.is_report_routed && <RoutedBadge />}
                       </div>
                     </div>
-                  </div>
+                  </button>
                   <div className="flex items-center gap-2 shrink-0">
+                    {canRoute && (
+                      <label className="flex items-center gap-1.5 text-xs text-[#617989] dark:text-slate-400">
+                        שיוך לדוח:
+                        <ReportManagerSelect
+                          siteId={g.site_id!}
+                          currentId={g.is_report_routed ? g.field_manager_id : null}
+                          managers={fieldManagers}
+                          onSave={handleRouteSite}
+                        />
+                      </label>
+                    )}
                     <CompliantBadge complete={g.complete_count} total={g.total_employees} />
                     <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
                       {g.missing_count} חסרים
                     </span>
                   </div>
-                </button>
+                </div>
                 {isOpen && (
                   <EmployeeTable
                     rows={g.employees}
@@ -791,6 +930,46 @@ export default function MissingWorkCardsPage() {
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white font-semibold hover:bg-primary/90 disabled:opacity-50"
             >
               {applyingExempt ? 'מעדכן...' : 'אשר החרגה'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Route unowned sites into a manager's report */}
+      <Modal
+        isOpen={routingSites !== null}
+        onClose={() => setRoutingSites(null)}
+        title="שיוך אתרים ללא מנהל שטח"
+        maxWidth="lg"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-slate-700 dark:text-slate-300">
+            לאתרים הבאים לא מוגדר מנהל שטח, ולכן העובדים שלהם אינם נכללים באף דוח שנשלח למנהלי השטח.
+            בחרו לכל אתר את מנהל השטח שבדוח שלו הם יופיעו.
+          </p>
+          <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
+            {(routingSites ?? []).map((s) => (
+              <div key={s.id} className="flex items-center justify-between gap-3 py-2.5">
+                <span className="text-sm font-medium text-[#111518] dark:text-white truncate">{s.name}</span>
+                <ReportManagerSelect
+                  siteId={s.id}
+                  currentId={routingChoices[s.id] ?? null}
+                  managers={fieldManagers}
+                  onSave={handleRouteSite}
+                />
+              </div>
+            ))}
+          </div>
+          <p className="text-sm text-[#617989] dark:text-slate-400">
+            השיוך משפיע על דוח החוסרים בלבד — האתר נשאר ללא מנהל שטח בכל שאר המערכת. הוא נשמר לכל
+            החודשים עד לשינוי או ביטול.
+          </p>
+          <div className="flex justify-end">
+            <button
+              onClick={() => setRoutingSites(null)}
+              className="px-4 py-2 rounded-lg bg-primary text-white font-semibold hover:bg-primary/90"
+            >
+              סגור
             </button>
           </div>
         </div>
