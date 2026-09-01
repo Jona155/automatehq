@@ -1,7 +1,8 @@
 """Role scoping for /api/missing-cards.
 
-A FIELD_MANAGER may read the page, but only for the sites they own, and may not
-trigger any WhatsApp delivery. Mirrors test_analytics_api.py's fixture style.
+Reading is open to every role; a FIELD_MANAGER is still narrowed to the sites
+they own, and writes (exemptions, WhatsApp delivery) stay ADMIN-only. Mirrors
+test_analytics_api.py's fixture style.
 """
 import unittest
 import uuid
@@ -42,7 +43,9 @@ class MissingCardsScopingTests(unittest.TestCase):
         # Second field manager, deliberately with no sites assigned.
         self.fm_no_sites = User(business_id=self.business.id, full_name='Siteless Mgr',
                                 email=f'fm2_{suffix}@ex.com', role='FIELD_MANAGER')
-        db.session.add_all([self.admin, self.fm, self.fm_no_sites])
+        self.op = User(business_id=self.business.id, full_name='Ops Mgr',
+                       email=f'op_{suffix}@ex.com', role='OPERATOR_MANAGER')
+        db.session.add_all([self.admin, self.fm, self.fm_no_sites, self.op])
         db.session.flush()
 
         self.site_a = Site(business_id=self.business.id, site_name=f'SiteA {suffix}',
@@ -65,6 +68,7 @@ class MissingCardsScopingTests(unittest.TestCase):
         self.fm_no_sites_headers = {
             'Authorization': f'Bearer {encode_auth_token(str(self.fm_no_sites.id))}'
         }
+        self.op_headers = {'Authorization': f'Bearer {encode_auth_token(str(self.op.id))}'}
 
     def tearDown(self):
         try:
@@ -138,7 +142,47 @@ class MissingCardsScopingTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 404)
 
+    # ---- reads are open to every role ------------------------------------
+    def test_a_non_manager_role_may_read_the_whole_business(self):
+        resp = self.client.get(
+            f'/api/missing-cards?month={MONTH_PARAM}&group_by=site', headers=self.op_headers
+        )
+        self.assertEqual(resp.status_code, 200)
+        # Unscoped like an admin: both sites, not just the field manager's one.
+        names = {g['site_name'] for g in resp.get_json()['data']['groups']}
+        self.assertIn(self.site_a.site_name, names)
+        self.assertIn(self.site_b.site_name, names)
+
+    def test_a_non_manager_role_may_export(self):
+        resp = self.client.get(
+            f'/api/missing-cards/export?month={MONTH_PARAM}', headers=self.op_headers
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        resp = self.client.get(
+            f'/api/missing-cards/managers/{self.fm.id}/export?month={MONTH_PARAM}',
+            headers=self.op_headers,
+        )
+        self.assertEqual(resp.status_code, 200)
+
     # ---- writes stay admin-only -----------------------------------------
+    def test_a_non_admin_role_cannot_set_exemptions(self):
+        resp = self.client.post(
+            '/api/missing-cards/exemptions',
+            json={'processing_month': MONTH_PARAM,
+                  'employee_ids': [str(self.emp_a.id)], 'exempt': True},
+            headers=self.op_headers,
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_a_non_admin_role_cannot_broadcast(self):
+        resp = self.client.post(
+            '/api/missing-cards/whatsapp/broadcast',
+            json={'processing_month': MONTH_PARAM},
+            headers=self.op_headers,
+        )
+        self.assertEqual(resp.status_code, 403)
+
     def test_field_manager_cannot_send_whatsapp(self):
         resp = self.client.post(
             f'/api/missing-cards/managers/{self.fm.id}/whatsapp',
