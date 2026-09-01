@@ -282,7 +282,7 @@ function EmployeeTable({
 
 export default function MissingWorkCardsPage() {
   const { isAuthenticated, user } = useAuth();
-  const { isFieldManager } = usePermissions();
+  const { isAdmin, isFieldManager } = usePermissions();
   const { showToast, ToastContainer } = useToast();
 
   // Field managers only ever see their own sites, so the manager pivot collapses
@@ -305,9 +305,10 @@ export default function MissingWorkCardsPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
 
-  // Only admins may ignore employees — field managers are the audience of the
-  // report, so they must not be able to shrink their own list (backend enforces).
-  const canManage = !isFieldManager;
+  // Reading the report is open to every role, but only admins may change it:
+  // field managers are its audience and must not be able to shrink their own
+  // list, and no other role holds the write permission (backend enforces).
+  const canManage = isAdmin;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showExempt, setShowExempt] = useState(false);
   // Employee ids awaiting confirmation — one row's id from the row action, or the
@@ -577,7 +578,7 @@ export default function MissingWorkCardsPage() {
             <span className="material-symbols-outlined text-base">download</span>
             {isFieldManager ? 'הורד אקסל לאתרים שלי' : 'הורד אקסל לכל החברה'}
           </button>
-          {!isFieldManager && (
+          {isAdmin && (
             <button
               onClick={() => { setBroadcastResult(null); setBroadcastOpen(true); }}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-lg transition-colors"
@@ -607,7 +608,7 @@ export default function MissingWorkCardsPage() {
               <li>קבצו לפי מנהל שטח כדי לשלוח לכל מנהל את רשימת העובדים החסרים שלו.</li>
             )}
             <li>קבצו לפי אתר כדי לראות גם אתרים שלא הועלה עבורם אף כרטיס.</li>
-            {!isFieldManager && (
+            {isAdmin && (
               <li>השתמשו בכפתור "שלח לכל מנהלי השטח" כדי לשלוח לכל מנהל קובץ Excel בוואטסאפ אוטומטית.</li>
             )}
             <li>סטטוס "כרטיס ראשון בלבד" מציין שהתקבל רק חלק מהכרטיסים הצפויים.</li>
@@ -710,7 +711,7 @@ export default function MissingWorkCardsPage() {
           title={error === 'forbidden' ? 'אין לך הרשאה לצפות בדף זה' : 'שגיאה בטעינת הנתונים'}
           body={
             error === 'forbidden'
-              ? 'הדף זמין למנהלי מערכת ולמנהלי שטח. פנו למנהל המערכת אם לדעתכם נדרשת לכם גישה.'
+              ? 'פנו למנהל המערכת אם לדעתכם נדרשת לכם גישה.'
               : 'לא הצלחנו לטעון את רשימת הכרטיסים החסרים. נסו שוב או בחרו חודש אחר.'
           }
           action={
@@ -777,7 +778,7 @@ export default function MissingWorkCardsPage() {
                         Excel
                       </button>
                     )}
-                    {g.field_manager_id && !isFieldManager && (
+                    {g.field_manager_id && isAdmin && (
                       <button
                         onClick={() => handleSend(g.field_manager_id!, g.manager_name)}
                         disabled={!canSend || sendingId === g.field_manager_id}

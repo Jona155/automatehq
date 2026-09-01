@@ -5,11 +5,15 @@ Pivotable view of employees still missing work cards for a month (by field
 manager or by site), plus per-manager Excel export and WhatsApp delivery,
 and a one-click broadcast that sends every field manager their own report.
 
-Role scoping (mirrors analytics.py):
-  - ADMIN         -> the whole business, plus WhatsApp send/broadcast
-  - FIELD_MANAGER -> read-only, limited to sites whose *effective* manager is
-                     them — Site.field_manager_id, or Site.report_manager_id for
-                     a site nobody owns (and their own per-manager export)
+Role scoping:
+  - Reading (the pivot and both exports) is open to every authenticated user in
+    the business — the report is a chase-list of who still owes a card, not
+    payroll data, so any role may look at it.
+  - FIELD_MANAGER -> still narrowed to sites whose *effective* manager is them —
+                     Site.field_manager_id, or Site.report_manager_id for a site
+                     nobody owns (and their own per-manager export only)
+  - Every other role -> the whole business, read-only
+  - ADMIN         -> additionally the writes: exemptions, WhatsApp send/broadcast
 """
 import logging
 from datetime import datetime, date
@@ -40,8 +44,6 @@ logger = logging.getLogger(__name__)
 missing_cards_bp = Blueprint('missing_cards', __name__, url_prefix='/api/missing-cards')
 
 XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-
-_READ_ROLES = ('ADMIN', 'FIELD_MANAGER')
 
 
 def _scoped_site_ids():
@@ -94,7 +96,6 @@ def _parse_month(raw):
 
 @missing_cards_bp.route('', methods=['GET'])
 @token_required
-@role_required(*_READ_ROLES)
 def get_missing_cards():
     """Pivoted missing-cards data.
 
@@ -208,7 +209,6 @@ def _manager_rows(business_id, month, user_id):
 
 @missing_cards_bp.route('/managers/<uuid:user_id>/export', methods=['GET'])
 @token_required
-@role_required(*_READ_ROLES)
 def export_manager_report(user_id):
     """Download the missing-cards XLSX for one field manager.
 
@@ -237,11 +237,11 @@ def export_manager_report(user_id):
 
 @missing_cards_bp.route('/export', methods=['GET'])
 @token_required
-@role_required(*_READ_ROLES)
 def export_company_report():
     """Download a single missing-cards XLSX covering everything the caller sees.
 
-    ADMIN gets the whole company; a field manager gets only their own sites.
+    A field manager gets only their own sites; every other role gets the
+    whole company.
     """
     month, err = _parse_month(request.args.get('month'))
     if err:
