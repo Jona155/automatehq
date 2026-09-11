@@ -6,6 +6,7 @@ from .audit import ExportRun, AuditEvent
 from .upload_access import UploadAccessRequest
 from .telegram import TelegramBotConfig, TelegramIngestedFile, TelegramPollingState
 from .whatsapp import WhatsAppGroupConfig, WhatsAppIngestedMessage
+from .auth import AuthOtpChallenge
 
 __all__ = [
     'Business',
@@ -24,4 +25,5 @@ __all__ = [
     'TelegramPollingState',
     'WhatsAppGroupConfig',
     'WhatsAppIngestedMessage',
+    'AuthOtpChallenge',
 ]

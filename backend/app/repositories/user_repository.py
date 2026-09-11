@@ -1,7 +1,9 @@
 from typing import Optional, List
 from uuid import UUID
+from sqlalchemy import func
 from .base import BaseRepository
 from ..models.users import User
+from ..utils import normalize_phone
 
 
 class UserRepository(BaseRepository[User]):
@@ -43,6 +45,29 @@ class UserRepository(BaseRepository[User]):
         if business_id:
             query = query.filter_by(business_id=business_id)
         return query.first()
+
+    def get_by_normalized_phone(self, phone: str) -> Optional[User]:
+        """Find one user regardless of local/E.164 punctuation or formatting.
+
+        Returning ``None`` for ambiguous matches is deliberate: two records that
+        normalize to the same WhatsApp number must never authenticate each other.
+        """
+        normalized = normalize_phone(phone)
+        if not normalized:
+            return None
+
+        candidates = {normalized}
+        if normalized.startswith('0'):
+            candidates.add(f'972{normalized[1:]}')
+
+        digits_only = func.regexp_replace(User.phone_number, r'\D', '', 'g')
+        matches = (
+            self.session.query(User)
+            .filter(User.phone_number.isnot(None), digits_only.in_(candidates))
+            .limit(2)
+            .all()
+        )
+        return matches[0] if len(matches) == 1 else None
     
     def get_active_users(self, business_id: UUID) -> List[User]:
         """

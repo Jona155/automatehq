@@ -7,11 +7,21 @@ interface LoginCredentials {
   password: string;
 }
 
+export interface OtpChallenge {
+  challenge_id: string;
+  expires_at: string;
+  masked_phone: string;
+  resend_after_seconds: number;
+}
+
 interface AuthContextType {
   user: User | null;
   business: Business | null;
   token: string | null;
   login: (credentials: LoginCredentials) => Promise<User>;
+  requestOtp: (phoneNumber: string) => Promise<OtpChallenge>;
+  verifyOtp: (challengeId: string, code: string) => Promise<User>;
+  resendOtp: (challengeId: string) => Promise<OtpChallenge>;
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -73,6 +83,41 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const completeLogin = (response: { data: AuthResponse }) => {
+    if (!response.data.success) {
+      throw new Error(response.data.message || 'Login failed');
+    }
+    const { token: newToken, user: newUser } = response.data.data;
+    localStorage.setItem('token', newToken);
+    setToken(newToken);
+    setUser(newUser);
+    return newUser;
+  };
+
+  const requestOtp = async (phoneNumber: string) => {
+    const response = await client.post<{ success: boolean; message: string; data: OtpChallenge }>(
+      '/auth/otp/request',
+      { phone_number: phoneNumber },
+    );
+    return response.data.data;
+  };
+
+  const verifyOtp = async (challengeId: string, code: string) => {
+    const response = await client.post<AuthResponse>('/auth/otp/verify', {
+      challenge_id: challengeId,
+      code,
+    });
+    return completeLogin(response);
+  };
+
+  const resendOtp = async (challengeId: string) => {
+    const response = await client.post<{ success: boolean; message: string; data: OtpChallenge }>(
+      '/auth/otp/resend',
+      { challenge_id: challengeId },
+    );
+    return response.data.data;
+  };
+
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('selectedBusiness');
@@ -97,6 +142,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       business,
       token,
       login,
+      requestOtp,
+      verifyOtp,
+      resendOtp,
       logout,
       isAuthenticated: !!user,
       isLoading,
