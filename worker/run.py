@@ -43,6 +43,7 @@ from extractor import extract_from_image_bytes, PIPELINE_VERSION
 from matcher import match_employee, diagnose_identity_mismatch
 from app.services.pdf_splitter import split_pdf_to_card_images
 from app.services.work_card_notifier import maybe_notify_new_card
+from app.services.auth_otp_service import cleanup_old_otp_challenges, OTP_RETENTION_DAYS
 
 # Configure logging
 logging.basicConfig(
@@ -60,6 +61,7 @@ STALE_LOCK_MINUTES = int(os.environ.get("STALE_LOCK_MINUTES", "30"))
 ENABLE_NAME_SITE_MATCH_FALLBACK = os.environ.get("ENABLE_NAME_SITE_MATCH_FALLBACK", "false").lower() == "true"
 ENABLE_FUZZY_PASSPORT_MATCH = os.environ.get("ENABLE_FUZZY_PASSPORT_MATCH", "false").lower() == "true"
 ENABLE_FUZZY_NAME_FALLBACK = os.environ.get("ENABLE_FUZZY_NAME_FALLBACK", "false").lower() == "true"
+OTP_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 def create_worker_app() -> Flask:
@@ -602,9 +604,28 @@ def main_loop(app: Flask):
         day_entry_repo = WorkCardDayEntryRepository()
         work_card_repo = WorkCardRepository()
         employee_repo = EmployeeRepository()
+        next_otp_cleanup_at = 0.0
         
         while True:
             try:
+                # Run once on worker startup and then daily. A worker restart may
+                # run it early, which is harmless because the delete is idempotent.
+                monotonic_now = time.monotonic()
+                if monotonic_now >= next_otp_cleanup_at:
+                    try:
+                        deleted = cleanup_old_otp_challenges()
+                        logger.info(
+                            "OTP cleanup deleted %s challenge(s) expired for more than %s days",
+                            deleted,
+                            OTP_RETENTION_DAYS,
+                        )
+                    except Exception:
+                        # Cleanup must never prevent extraction jobs from running.
+                        db.session.rollback()
+                        logger.exception("OTP challenge cleanup failed")
+                    finally:
+                        next_otp_cleanup_at = time.monotonic() + OTP_CLEANUP_INTERVAL_SECONDS
+
                 # Recover any stale locks first
                 recovered = recover_stale_locks(extraction_repo, work_card_repo)
                 if recovered:

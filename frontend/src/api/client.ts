@@ -1,8 +1,8 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 
 // API base URL - direct to Flask in development, relative in production
-const API_BASE_URL = import.meta.env.DEV 
-  ? 'http://localhost:5000/api' 
+const API_BASE_URL = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000/api')
   : '/api';
 
 // Retry configuration
