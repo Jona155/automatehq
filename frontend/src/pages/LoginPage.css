@@ -133,6 +133,45 @@
   background: #fff;
   box-shadow: 0 0 0 3px rgba(59, 111, 224, 0.16);
 }
+.lg-password-wrap {
+  position: relative;
+}
+.lg-password-wrap input {
+  padding-left: 50px;
+}
+.lg-password-toggle {
+  position: absolute;
+  top: 50%;
+  left: 7px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  color: #64748b;
+  background: transparent;
+  cursor: pointer;
+}
+.lg-password-toggle:hover {
+  color: #334155;
+  background: #eef2f7;
+}
+.lg-password-toggle:focus-visible {
+  outline: 2px solid #3b6fe0;
+  outline-offset: 1px;
+}
+.lg-password-toggle svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .lg-error {
   color: #dc2626;
   font-size: 13.5px;
