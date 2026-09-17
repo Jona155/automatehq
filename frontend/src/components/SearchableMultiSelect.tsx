@@ -18,7 +18,8 @@ interface SearchableMultiSelectProps {
 interface DropdownPosition {
   left: number;
   width: number;
-  top: number;
+  top?: number;
+  bottom?: number;
   maxHeight: number;
 }
 
@@ -45,14 +46,26 @@ export default function SearchableMultiSelect({
     const rect = trigger.getBoundingClientRect();
     const gap = 4;
     const preferredHeight = 340;
-    const spaceBelow = window.innerHeight - rect.bottom - gap;
+    const minimumUsableHeight = 120;
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - gap);
+    const spaceAbove = Math.max(0, rect.top - gap);
+    const shouldOpenUpward = spaceBelow < minimumUsableHeight && spaceAbove > spaceBelow;
 
-    setDropdownPosition({
-      left: rect.left,
-      width: rect.width,
-      top: rect.bottom + gap,
-      maxHeight: Math.max(96, Math.min(preferredHeight, spaceBelow)),
-    });
+    if (shouldOpenUpward) {
+      setDropdownPosition({
+        left: rect.left,
+        width: rect.width,
+        bottom: window.innerHeight - rect.top + gap,
+        maxHeight: Math.min(preferredHeight, spaceAbove),
+      });
+    } else {
+      setDropdownPosition({
+        left: rect.left,
+        width: rect.width,
+        top: rect.bottom + gap,
+        maxHeight: Math.min(preferredHeight, spaceBelow),
+      });
+    }
   }, []);
 
   useLayoutEffect(() => {
