@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { useOnClickOutside } from '../hooks/useOnClickOutside';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface SelectOption {
   value: string;
@@ -15,6 +15,14 @@ interface SearchableMultiSelectProps {
   allLabel?: string;
 }
 
+interface DropdownPosition {
+  left: number;
+  width: number;
+  top?: number;
+  bottom?: number;
+  maxHeight: number;
+}
+
 export default function SearchableMultiSelect({
   options,
   selected,
@@ -25,19 +33,77 @@ export default function SearchableMultiSelect({
 }: SearchableMultiSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const updateDropdownPosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const gap = 4;
+    const preferredHeight = 340;
+    const minimumUsableHeight = 120;
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - gap);
+    const spaceAbove = Math.max(0, rect.top - gap);
+    const shouldOpenUpward = spaceBelow < minimumUsableHeight && spaceAbove > spaceBelow;
+
+    if (shouldOpenUpward) {
+      setDropdownPosition({
+        left: rect.left,
+        width: rect.width,
+        bottom: window.innerHeight - rect.top + gap,
+        maxHeight: Math.min(preferredHeight, spaceAbove),
+      });
+    } else {
+      setDropdownPosition({
+        left: rect.left,
+        width: rect.width,
+        top: rect.bottom + gap,
+        maxHeight: Math.min(preferredHeight, spaceBelow),
+      });
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+
+    updateDropdownPosition();
+    window.addEventListener('resize', updateDropdownPosition);
+    window.addEventListener('scroll', updateDropdownPosition, true);
+    return () => {
+      window.removeEventListener('resize', updateDropdownPosition);
+      window.removeEventListener('scroll', updateDropdownPosition, true);
+    };
+  }, [isOpen, updateDropdownPosition]);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && dropdownPosition) {
       requestAnimationFrame(() => searchInputRef.current?.focus());
-    } else {
+    } else if (!isOpen) {
       setSearch('');
+      setDropdownPosition(null);
     }
-  }, [isOpen]);
+  }, [isOpen, dropdownPosition]);
 
   const closeDropdown = useCallback(() => setIsOpen(false), []);
-  useOnClickOutside(containerRef, closeDropdown, isOpen);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
+        closeDropdown();
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [closeDropdown, isOpen]);
 
   const filteredOptions = useMemo(() => {
     if (!search.trim()) return options;
@@ -68,6 +134,7 @@ export default function SearchableMultiSelect({
     <div ref={containerRef} className="relative">
       {/* Trigger */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-sm text-right focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none"
@@ -84,8 +151,13 @@ export default function SearchableMultiSelect({
       </button>
 
       {/* Dropdown */}
-      {isOpen && (
-        <div className="absolute left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden">
+      {isOpen && dropdownPosition && createPortal(
+        <div
+          ref={dropdownRef}
+          dir="rtl"
+          className="fixed z-[100] flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden"
+          style={dropdownPosition}
+        >
           {/* Search */}
           <div className="p-2 border-b border-slate-200 dark:border-slate-700">
             <div className="relative">
@@ -117,7 +189,7 @@ export default function SearchableMultiSelect({
           )}
 
           {/* Options list */}
-          <div className="max-h-60 overflow-y-auto py-1">
+          <div className="min-h-0 flex-1 overflow-y-auto py-1">
             {filteredOptions.length === 0 ? (
               <div className="px-3 py-4 text-center text-sm text-slate-400">לא נמצאו תוצאות</div>
             ) : (
@@ -151,7 +223,8 @@ export default function SearchableMultiSelect({
               })
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

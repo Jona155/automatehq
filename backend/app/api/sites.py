@@ -1436,7 +1436,7 @@ def send_summary_whatsapp(site_id):
 @token_required
 @role_required('ADMIN')
 def export_monthly_summary_batch():
-    """Export monthly summary matrix for all sites in template format (one sheet per site)."""
+    """Export monthly summary matrices in template format (one sheet per site)."""
     processing_month = request.args.get('processing_month')
     if not processing_month:
         return api_response(status_code=400, message="processing_month is required", error="Bad Request")
@@ -1444,6 +1444,17 @@ def export_monthly_summary_batch():
     approved_only = request.args.get('approved_only', 'false').lower() == 'true'
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
     include_inactive_sites = request.args.get('include_inactive_sites', 'false').lower() == 'true'
+    site_ids_param = request.args.get('site_ids')
+
+    selected_site_ids = None
+    if site_ids_param is not None:
+        raw_site_ids = [value.strip() for value in site_ids_param.split(',') if value.strip()]
+        if not raw_site_ids:
+            return api_response(status_code=400, message="site_ids must contain at least one site", error="Bad Request")
+        try:
+            selected_site_ids = list(dict.fromkeys(uuid.UUID(value) for value in raw_site_ids))
+        except ValueError as e:
+            return api_response(status_code=400, message="Invalid site_ids format", error=str(e))
 
     try:
         month = datetime.strptime(processing_month, '%Y-%m-%d').date()
@@ -1453,7 +1464,16 @@ def export_monthly_summary_batch():
     started_at = time.perf_counter()
     total_employee_count = 0
     with QueryCounter(db.engine) as query_counter:
-        sites = repo.get_all_for_business(g.business_id)
+        if selected_site_ids is None:
+            sites = repo.get_all_for_business(g.business_id)
+        else:
+            sites = repo.get_by_ids_for_business(selected_site_ids, g.business_id)
+            if len(sites) != len(selected_site_ids):
+                return api_response(
+                    status_code=400,
+                    message="One or more selected sites are invalid",
+                    error="Bad Request",
+                )
         if not include_inactive_sites:
             sites = [site for site in sites if site.is_active]
         sites = sorted(
@@ -1552,7 +1572,8 @@ def export_monthly_summary_batch():
         }
     )
 
-    download_name = f"monthly_summary_all_sites_{month.strftime('%Y-%m')}.xlsx"
+    scope = 'selected_sites' if selected_site_ids is not None else 'all_sites'
+    download_name = f"monthly_summary_{scope}_{month.strftime('%Y-%m')}.xlsx"
     return send_file(
         output,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

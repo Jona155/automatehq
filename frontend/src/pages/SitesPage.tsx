@@ -17,6 +17,7 @@ import { downloadBlobFile } from '../utils/fileDownload';
 import BatchUploadModal from '../components/BatchUploadModal';
 import SiteTariffImportModal from '../components/SiteTariffImportModal';
 import AllSitesHoursImportModal from '../components/AllSitesHoursImportModal';
+import SearchableMultiSelect from '../components/SearchableMultiSelect';
 import { downloadSiteTariffsExport } from '../api/siteTariffImport';
 import { getDefaultMonth } from '../utils/monthUtils';
 
@@ -124,6 +125,7 @@ export default function SitesPage() {
   const [pageSize, setPageSize] = useState(25);
   const [summaryExportOpen, setSummaryExportOpen] = useState(false);
   const [summaryExportMonth, setSummaryExportMonth] = useState(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
+  const [summaryExportSiteIds, setSummaryExportSiteIds] = useState<string[]>([]);
   const [isSummaryExporting, setIsSummaryExporting] = useState(false);
   const [summaryExportError, setSummaryExportError] = useState<string | null>(null);
   const [salaryExportOpen, setSalaryExportOpen] = useState(false);
@@ -184,6 +186,13 @@ export default function SitesPage() {
     [sites]
   );
   const activePct = totalSitesAll > 0 ? Math.round((activeCount / totalSitesAll) * 100) : 0;
+  const summaryExportSiteOptions = useMemo(
+    () => sites
+      .filter((site) => site.is_active)
+      .sort((a, b) => a.site_name.localeCompare(b.site_name, 'he'))
+      .map((site) => ({ value: site.id, label: site.site_name })),
+    [sites]
+  );
 
   const filteredSites = useMemo(() => {
     return sites.filter((site) => {
@@ -260,6 +269,7 @@ export default function SitesPage() {
   const handleOpenSummaryExport = () => {
     setSummaryExportError(null);
     setSummaryExportMonth(getDefaultMonth(user?.business?.default_month_cutoff_day));
+    setSummaryExportSiteIds([]);
     setSummaryExportOpen(true);
   };
 
@@ -275,8 +285,10 @@ export default function SitesPage() {
         approved_only: false,
         include_inactive: false,
         include_inactive_sites: false,
+        site_ids: summaryExportSiteIds,
       });
-      downloadBlobFile(blob, `monthly_summary_all_sites_${summaryExportMonth}.xlsx`);
+      const scope = summaryExportSiteIds.length > 0 ? 'selected_sites' : 'all_sites';
+      downloadBlobFile(blob, `monthly_summary_${scope}_${summaryExportMonth}.xlsx`);
       setSummaryExportOpen(false);
     } catch (err: any) {
       console.error('Failed to export summary batch:', err);
@@ -807,6 +819,19 @@ export default function SitesPage() {
                     storageKey="sites_summary_export_month"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                  אתרים לייצוא
+                </label>
+                <SearchableMultiSelect
+                  options={summaryExportSiteOptions}
+                  selected={summaryExportSiteIds}
+                  onChange={setSummaryExportSiteIds}
+                  searchPlaceholder="חיפוש אתרים..."
+                  icon="apartment"
+                  allLabel="כל האתרים"
+                />
               </div>
               <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                 <button
