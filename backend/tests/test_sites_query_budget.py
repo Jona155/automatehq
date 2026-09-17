@@ -123,6 +123,17 @@ class TestSitesQueryBudget(unittest.TestCase):
             f'Summary export batch exceeded query budget: {query_count} > {self.SUMMARY_BATCH_QUERY_BUDGET}',
         )
 
+    def test_selected_summary_export_batch_query_budget(self):
+        response, query_count = self._get_with_query_count(
+            f'/api/sites/summary/export-batch?processing_month=2026-02-01&site_ids={self.site.id}'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(
+            query_count,
+            self.SUMMARY_BATCH_QUERY_BUDGET,
+            f'Selected summary export exceeded query budget: {query_count} > {self.SUMMARY_BATCH_QUERY_BUDGET}',
+        )
+
     def test_salary_template_export_batch_query_budget(self):
         response, query_count = self._get_with_query_count(
             '/api/sites/salary-template/export-batch?processing_month=2026-02-01'

@@ -108,7 +108,12 @@ export const sendSummaryWhatsapp = async (
 
 export const downloadMonthlySummaryBatch = async (
   processingMonth: string,
-  options?: { approved_only?: boolean; include_inactive?: boolean; include_inactive_sites?: boolean }
+  options?: {
+    approved_only?: boolean;
+    include_inactive?: boolean;
+    include_inactive_sites?: boolean;
+    site_ids?: string[];
+  }
 ) => {
   const response = await client.get('/sites/summary/export-batch', {
     params: {
@@ -116,6 +121,7 @@ export const downloadMonthlySummaryBatch = async (
       approved_only: options?.approved_only ? 'true' : 'false',
       include_inactive: options?.include_inactive ? 'true' : 'false',
       include_inactive_sites: options?.include_inactive_sites ? 'true' : 'false',
+      ...(options?.site_ids?.length ? { site_ids: options.site_ids.join(',') } : {}),
     },
     responseType: 'blob',
   });
