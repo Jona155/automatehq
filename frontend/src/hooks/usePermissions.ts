@@ -19,6 +19,7 @@ export function usePermissions() {
     canDelete: isAdmin,
     canExport: isAdmin,
     canManageSites: isAdmin,
+    canManageContractors: isAdmin,
     canManageEmployees: isAdmin,
     canManageUsers: isAdmin,
     canImportEmployees: isAdmin,

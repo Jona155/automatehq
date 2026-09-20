@@ -21,7 +21,7 @@ import SearchableMultiSelect from '../components/SearchableMultiSelect';
 import { downloadSiteTariffsExport } from '../api/siteTariffImport';
 import { getDefaultMonth } from '../utils/monthUtils';
 
-type SortField = 'site_name' | 'site_code' | 'employee_count' | 'is_active';
+type SortField = 'site_name' | 'site_code' | 'contractor_name' | 'employee_count' | 'is_active';
 type SortOrder = 'asc' | 'desc';
 type StatusFilter = 'all' | 'active' | 'inactive';
 
@@ -217,8 +217,16 @@ export default function SitesPage() {
         const bVal = b.is_active ? 1 : 0;
         comparison = aVal - bVal;
       } else {
-        const aVal = sortField === 'site_code' ? a.site_code || '' : a.site_name;
-        const bVal = sortField === 'site_code' ? b.site_code || '' : b.site_name;
+        const aVal = sortField === 'site_code'
+          ? a.site_code || ''
+          : sortField === 'contractor_name'
+            ? a.contractor_name || ''
+            : a.site_name;
+        const bVal = sortField === 'site_code'
+          ? b.site_code || ''
+          : sortField === 'contractor_name'
+            ? b.contractor_name || ''
+            : b.site_name;
         comparison = aVal.localeCompare(bVal, 'he');
       }
       return sortOrder === 'asc' ? comparison : -comparison;
@@ -638,6 +646,20 @@ export default function SitesPage() {
                       מנהל שדה
                     </th>
                     <th
+                      onClick={() => handleSort('contractor_name')}
+                      style={{ width: 180 }}
+                      className={`px-4 py-3 text-[11.5px] font-medium tracking-wide cursor-pointer select-none border-b border-slate-200 dark:border-slate-700/60 hover:bg-slate-100/60 dark:hover:bg-slate-800/80 transition-colors ${
+                        sortField === 'contractor_name'
+                          ? 'text-slate-900 dark:text-white'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        קבלן
+                        <SortIcon field="contractor_name" />
+                      </span>
+                    </th>
+                    <th
                       onClick={() => handleSort('employee_count')}
                       style={{ width: 130 }}
                       className={`px-4 py-3 text-[11.5px] font-medium tracking-wide cursor-pointer select-none border-b border-slate-200 dark:border-slate-700/60 hover:bg-slate-100/60 dark:hover:bg-slate-800/80 transition-colors ${
@@ -698,6 +720,18 @@ export default function SitesPage() {
                             <span className="text-slate-400 dark:text-slate-500 italic text-[12.5px]">לא הוגדר</span>
                           )}
                         </td>
+                        <td className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/40 text-[13.5px]">
+                          {site.contractor_name ? (
+                            <span title={site.contractor_name} className="flex min-w-0 items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                              <span className="material-symbols-outlined shrink-0 text-base text-slate-400 dark:text-slate-500">
+                                handshake
+                              </span>
+                              <span className="truncate">{site.contractor_name}</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 dark:text-slate-500 italic text-[12.5px]">לא משויך</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/40 tabular-nums">
                           <span className="inline-flex items-baseline gap-1">
                             <span
@@ -732,7 +766,7 @@ export default function SitesPage() {
                   })}
                   {sortedSites.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="p-12 text-center text-slate-500">
+                      <td colSpan={7} className="p-12 text-center text-slate-500">
                         {hasActiveFilter ? 'לא נמצאו אתרים התואמים את הסינון' : 'לא נמצאו אתרים'}
                       </td>
                     </tr>

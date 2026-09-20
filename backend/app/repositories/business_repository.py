@@ -75,6 +75,7 @@ class BusinessRepository(BaseRepository[Business]):
             WorkCard, WorkCardFile, WorkCardExtraction, WorkCardDayEntry,
         )
         from ..models.sites import Site, Employee
+        from ..models.contractors import Contractor
         from ..models.users import User
         from ..models.audit import ExportRun, AuditEvent
         from ..models.upload_access import UploadAccessRequest
@@ -116,6 +117,7 @@ class BusinessRepository(BaseRepository[Business]):
         # DELETE SET NULL, so the sites still standing get nulled automatically).
         wipe(Employee, Employee.business_id == business_id)
         wipe(Site, Site.business_id == business_id)
+        wipe(Contractor, Contractor.business_id == business_id)
         wipe(User, User.business_id == business_id)
 
         s.delete(business)

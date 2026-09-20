@@ -24,6 +24,7 @@ from ..repositories.site_repository import SiteRepository
 from ..repositories.employee_repository import EmployeeRepository
 from ..repositories.upload_access_request_repository import UploadAccessRequestRepository
 from ..repositories.business_repository import BusinessRepository
+from ..repositories.contractor_repository import ContractorRepository
 from ..repositories.user_repository import UserRepository
 from ..services.sites.hours_matrix_service import (
     build_employee_upload_status_map,
@@ -55,6 +56,7 @@ repo = SiteRepository()
 employee_repo = EmployeeRepository()
 access_repo = UploadAccessRequestRepository()
 business_repo = BusinessRepository()
+contractor_repo = ContractorRepository()
 user_repo = UserRepository()
 
 STATUS_LABELS = {
@@ -64,6 +66,18 @@ STATUS_LABELS = {
     'REJECTED': 'נדחה',
     'NO_UPLOAD': 'ללא העלאה',
 }
+
+
+def _site_to_dict_with_contractor(site):
+    """Serialize a site with its assigned contractor's display name."""
+    site_dict = model_to_dict(site)
+    contractor = site.contractor
+    site_dict['contractor_name'] = (
+        contractor.name
+        if contractor and contractor.business_id == site.business_id
+        else None
+    )
+    return site_dict
 
 STATUS_DAY_LABELS = {
     'VACATION': 'חופשה',
@@ -829,12 +843,15 @@ def get_sites():
         # Resolve assigned field-manager names so the sites table can show them
         # without an extra round-trip per row.
         managers_by_id = {str(u.id): u.full_name for u in user_repo.get_all_for_business(business_id)}
+        contractors_by_id = contractor_repo.get_name_map_for_business(business_id)
 
         def _with_field_manager_name(site_dict):
             fm_id = site_dict.get('field_manager_id')
             site_dict['field_manager_name'] = managers_by_id.get(str(fm_id)) if fm_id else None
             rm_id = site_dict.get('report_manager_id')
             site_dict['report_manager_name'] = managers_by_id.get(str(rm_id)) if rm_id else None
+            contractor_id = site_dict.get('contractor_id')
+            site_dict['contractor_name'] = contractors_by_id.get(contractor_id) if contractor_id else None
             return site_dict
 
         if include_counts:
@@ -887,6 +904,12 @@ def create_site():
     data = request.get_json()
     if not data:
         return api_response(status_code=400, message="No data provided", error="Bad Request")
+    if 'contractor_id' in data:
+        return api_response(
+            status_code=400,
+            message="Contractor assignments must be managed through the contractors API",
+            error="Bad Request",
+        )
         
     try:
         # Enforce tenant scoping
@@ -934,7 +957,7 @@ def get_site(site_id):
         if not site or site.business_id != g.business_id:
             return api_response(status_code=404, message="Site not found", error="Not Found")
             
-        return api_response(data=model_to_dict(site))
+        return api_response(data=_site_to_dict_with_contractor(site))
     except Exception as e:
         logger.exception(f"Failed to get site {site_id}")
         traceback.print_exc()
@@ -948,6 +971,12 @@ def update_site(site_id):
     data = request.get_json()
     if not data:
         return api_response(status_code=400, message="No data provided", error="Bad Request")
+    if 'contractor_id' in data:
+        return api_response(
+            status_code=400,
+            message="Contractor assignments must be managed through the contractors API",
+            error="Bad Request",
+        )
         
     try:
         # Verify site belongs to user's business
@@ -1037,7 +1066,7 @@ def update_site(site_id):
             return api_response(status_code=404, message="Site not found", error="Not Found")
 
         invalidate_business_cache(g.business_id)
-        return api_response(data=model_to_dict(updated_site), message="Site updated successfully")
+        return api_response(data=_site_to_dict_with_contractor(updated_site), message="Site updated successfully")
     except Exception as e:
         logger.exception(f"Failed to update site {site_id}")
         traceback.print_exc()

@@ -37,7 +37,31 @@ export interface Site {
   hourly_tariff?: number | null;
   contractor_emails?: string[] | null;
   contractor_phone_number?: string | null;
+  contractor_id?: string | null;
+  contractor_name?: string | null;
   expected_work_cards_per_month?: number | null;
+}
+
+export interface ContractorSite {
+  id: string;
+  site_name: string;
+  site_code?: string | null;
+  is_active: boolean;
+}
+
+export interface Contractor {
+  id: string;
+  business_id: string;
+  name: string;
+  email?: string | null;
+  phone_number?: string | null;
+  address?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  site_count: number;
+  employee_count: number;
+  sites: ContractorSite[];
 }
 
 export type EmployeeStatus = 'ACTIVE' | 'REPORTED_IN_SPARK' | 'REPORTED_RETURNED_FROM_ESCAPE';

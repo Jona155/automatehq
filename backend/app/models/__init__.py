@@ -1,6 +1,7 @@
 from .business import Business
 from .users import User
 from .sites import Site, Employee
+from .contractors import Contractor
 from .work_cards import WorkCard, WorkCardFile, WorkCardExtraction, WorkCardDayEntry
 from .audit import ExportRun, AuditEvent
 from .upload_access import UploadAccessRequest
@@ -13,6 +14,7 @@ __all__ = [
     'User',
     'Site',
     'Employee',
+    'Contractor',
     'WorkCard',
     'WorkCardFile',
     'WorkCardExtraction',

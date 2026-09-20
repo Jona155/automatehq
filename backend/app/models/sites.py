@@ -38,6 +38,11 @@ class Site(db.Model):
     expected_work_cards_per_month = db.Column(db.SmallInteger, nullable=True)
     contractor_emails = db.Column(JSONB, nullable=True, default=list)
     contractor_phone_number = db.Column(db.Text, nullable=True)
+    contractor_id = db.Column(
+        UUID(as_uuid=True),
+        db.ForeignKey('contractors.id', ondelete='SET NULL'),
+        nullable=True,
+    )
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -47,7 +52,14 @@ class Site(db.Model):
         Index('ix_sites_responsible_employee_id', 'responsible_employee_id'),
         Index('ix_sites_field_manager_id', 'field_manager_id'),
         Index('ix_sites_report_manager_id', 'report_manager_id'),
+        Index('ix_sites_contractor_id', 'contractor_id'),
         db.UniqueConstraint('business_id', 'site_name', name='uq_sites_business_name'),
+    )
+
+    contractor = db.relationship(
+        'Contractor',
+        back_populates='sites',
+        foreign_keys=[contractor_id],
     )
 
 

@@ -7,6 +7,7 @@ import AnalyticsSiteDetailPage from './pages/AnalyticsSiteDetailPage';
 import AnalyticsEmployeeDetailPage from './pages/AnalyticsEmployeeDetailPage';
 import EmployeesPage from './pages/EmployeesPage';
 import SitesPage from './pages/SitesPage';
+import ContractorsPage from './pages/ContractorsPage';
 import SiteDetailsPage from './pages/SiteDetailsPage';
 import SiteReviewPage from './pages/SiteReviewPage';
 import UsersPage from './pages/UsersPage';
@@ -52,6 +53,7 @@ function App() {
                 <Route path="/:businessCode/analytics/sites/:siteId/employees/:employeeId" element={<AnalyticsEmployeeDetailPage />} />
                 <Route path="/:businessCode/employees" element={<EmployeesPage />} />
                 <Route path="/:businessCode/sites" element={<SitesPage />} />
+                <Route path="/:businessCode/contractors" element={<ContractorsPage />} />
                 <Route path="/:businessCode/sites/:siteId" element={<SiteDetailsPage />} />
                 <Route path="/:businessCode/sites/:siteId/review" element={<SiteReviewPage />} />
                 <Route path="/:businessCode/missing-work-cards" element={<MissingWorkCardsPage />} />

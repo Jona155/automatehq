@@ -27,6 +27,7 @@ class Business(db.Model):
     # Relationships
     users = db.relationship('User', backref='business', lazy='dynamic')
     sites = db.relationship('Site', backref='business', lazy='dynamic')
+    contractors = db.relationship('Contractor', backref='business', lazy='dynamic')
     employees = db.relationship('Employee', backref='business', lazy='dynamic')
     work_cards = db.relationship('WorkCard', backref='business', lazy='dynamic')
     export_runs = db.relationship('ExportRun', backref='business', lazy='dynamic')

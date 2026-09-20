@@ -9,6 +9,7 @@ from backend.app import create_app, db
 from backend.app.models.business import Business
 from backend.app.models.users import User
 from backend.app.models.sites import Site, Employee
+from backend.app.models.contractors import Contractor
 from backend.app.models.work_cards import (
     WorkCard, WorkCardFile, WorkCardExtraction, WorkCardDayEntry,
 )
@@ -50,7 +51,9 @@ class BusinessHardDeleteTests(unittest.TestCase):
                     role='ADMIN', password_hash='x')
         s.add(user); s.flush()
         site = Site(business_id=biz.id, site_name=f"S {self.tag}", site_code=f"S{self.tag[:4]}")
-        s.add(site); s.flush()
+        contractor = Contractor(business_id=biz.id, name=f"C {self.tag}")
+        s.add_all([site, contractor]); s.flush()
+        site.contractor_id = contractor.id
         emp = Employee(business_id=biz.id, site_id=site.id, full_name='E', passport_id=f"P{self.tag}")
         s.add(emp); s.flush()
         # Exercise a populated sites.field_manager_id (a user FK, ON DELETE SET
@@ -92,6 +95,7 @@ class BusinessHardDeleteTests(unittest.TestCase):
         # Every dependent table scoped to the business/card is empty.
         self.assertEqual(User.query.filter_by(business_id=biz_id).count(), 0)
         self.assertEqual(Site.query.filter_by(business_id=biz_id).count(), 0)
+        self.assertEqual(Contractor.query.filter_by(business_id=biz_id).count(), 0)
         self.assertEqual(Employee.query.filter_by(business_id=biz_id).count(), 0)
         self.assertEqual(WorkCard.query.filter_by(business_id=biz_id).count(), 0)
         self.assertEqual(WorkCardDayEntry.query.filter_by(work_card_id=card_id).count(), 0)

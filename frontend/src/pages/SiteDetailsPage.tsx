@@ -380,9 +380,21 @@ export default function SiteDetailsPage() {
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
+        <div className="min-w-0">
           <h2 className="text-[#111518] dark:text-white text-3xl font-bold">{site.site_name}</h2>
-          <p className="text-[#617989] dark:text-slate-400 mt-1">קוד אתר: {site.site_code || 'לא הוגדר'}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2.5">
+            <p className="text-[#617989] dark:text-slate-400">קוד אתר: {site.site_code || 'לא הוגדר'}</p>
+            {site.contractor_name && (
+              <span
+                title={site.contractor_name}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-300"
+              >
+                <span className="material-symbols-outlined shrink-0 text-base">handshake</span>
+                <span className="shrink-0">קבלן:</span>
+                <span className="truncate">{site.contractor_name}</span>
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -1078,4 +1090,3 @@ export default function SiteDetailsPage() {
     </div>
   );
 }
-
