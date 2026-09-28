@@ -2092,6 +2092,11 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                             ת.ז {selectedCard.employee?.passport_id || extraction?.extracted_passport_id}
                           </span>
                         )}
+                        {selectedCard.employee?.external_employee_id && (
+                          <span className="text-xs text-slate-400 dark:text-slate-500 truncate">
+                            מס׳ סידורי {selectedCard.employee.external_employee_id}
+                          </span>
+                        )}
                         {selectedCard.source === 'MANUAL' && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200">
                             <span className="material-symbols-outlined" style={{ fontSize: '11px' }}>edit_note</span>
