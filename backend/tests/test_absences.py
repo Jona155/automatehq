@@ -14,7 +14,9 @@ load_dotenv()
 
 from backend.app import create_app, db
 from backend.app.auth_utils import encode_auth_token
-from backend.app.models.absences import AbsenceEmployeeExclusion, AbsenceMonthSettings
+from backend.app.models.absences import (
+    AbsenceEmployeeDaySettings, AbsenceEmployeeExclusion, AbsenceMonthSettings,
+)
 from backend.app.models.business import Business
 from backend.app.models.sites import Site, Employee
 from backend.app.models.users import User
@@ -90,6 +92,7 @@ class AbsencesDBTests(unittest.TestCase):
                 WorkCardDayEntry.query.filter(WorkCardDayEntry.work_card_id.in_(card_ids)).delete(
                     synchronize_session=False)
             AbsenceEmployeeExclusion.query.filter_by(business_id=biz_id).delete(synchronize_session=False)
+            AbsenceEmployeeDaySettings.query.filter_by(business_id=biz_id).delete(synchronize_session=False)
             AbsenceMonthSettings.query.filter_by(business_id=biz_id).delete(synchronize_session=False)
             WorkCard.query.filter_by(business_id=biz_id).delete(synchronize_session=False)
             Employee.query.filter_by(business_id=biz_id).delete(synchronize_session=False)
@@ -155,6 +158,30 @@ class AbsencesDBTests(unittest.TestCase):
         result = self._rows()
         self.assertIsNone(self._row(result, emp))
         self.assertEqual(result['settings']['ignored_days'], [8])
+
+    def test_employee_ignored_days_apply_only_to_that_employee(self):
+        late = self._employee('Started mid-month')
+        other = self._employee('Other')
+        # Started on the 10th: nothing reported before it.
+        self._card(late, worked=[d for d in ALL_WORKDAYS if d >= 10 and d != 22])
+        self._card(other, worked=[d for d in ALL_WORKDAYS if d >= 10])
+        db.session.add(AbsenceEmployeeDaySettings(business_id=self.business.id, processing_month=MONTH,
+                                                  employee_id=late.id, ignored_days=list(range(1, 10))))
+        result = self._rows()
+        late_row = self._row(result, late)
+        self.assertEqual(late_row['empty_days'], [22])
+        self.assertEqual(late_row['ignored_days'], list(range(1, 10)))
+        self.assertEqual(self._row(result, other)['empty_days'], [d for d in ALL_WORKDAYS if d < 10])
+        self.assertEqual([o['employee_id'] for o in result['employee_overrides']], [str(late.id)])
+
+    def test_employee_override_listed_even_without_absences(self):
+        emp = self._employee('Left early')
+        self._card(emp, worked=[d for d in ALL_WORKDAYS if d <= 20])
+        db.session.add(AbsenceEmployeeDaySettings(business_id=self.business.id, processing_month=MONTH,
+                                                  employee_id=emp.id, ignored_days=list(range(21, 31))))
+        result = self._rows()
+        self.assertIsNone(self._row(result, emp))
+        self.assertEqual(result['employee_overrides'][0]['ignored_days'], list(range(21, 31)))
 
     def test_employee_without_cards_is_hidden(self):
         self._employee('No card')
@@ -244,6 +271,32 @@ class AbsencesDBTests(unittest.TestCase):
         res = self.client.put('/api/absences/settings', headers=self.admin_headers,
                               json={'processing_month': MONTH_PARAM, 'ignored_days': [31]})
         self.assertEqual(res.status_code, 400)
+
+    def test_employee_days_upsert_clear_and_validation(self):
+        emp = self._employee('Worker')
+        db.session.commit()
+        url = '/api/absences/employee-days'
+        for days in ([1, 2], [3]):
+            res = self.client.put(url, headers=self.admin_headers, json={
+                'processing_month': MONTH_PARAM, 'employee_id': str(emp.id), 'ignored_days': days})
+            self.assertEqual(res.status_code, 200)
+        rows = AbsenceEmployeeDaySettings.query.filter_by(business_id=self.business.id).all()
+        self.assertEqual([r.ignored_days for r in rows], [[3]])
+
+        res = self.client.put(url, headers=self.admin_headers, json={
+            'processing_month': MONTH_PARAM, 'employee_id': str(emp.id), 'ignored_days': []})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(AbsenceEmployeeDaySettings.query.filter_by(business_id=self.business.id).count(), 0)
+
+        res = self.client.put(url, headers=self.admin_headers, json={
+            'processing_month': MONTH_PARAM, 'employee_id': str(emp.id), 'ignored_days': [31]})
+        self.assertEqual(res.status_code, 400)
+        res = self.client.put(url, headers=self.admin_headers, json={
+            'processing_month': MONTH_PARAM, 'employee_id': str(uuid.uuid4()), 'ignored_days': [1]})
+        self.assertEqual(res.status_code, 404)
+        res = self.client.put(url, headers=self.fm_headers, json={
+            'processing_month': MONTH_PARAM, 'employee_id': str(emp.id), 'ignored_days': [1]})
+        self.assertEqual(res.status_code, 403)
 
     def test_writes_are_admin_only(self):
         res = self.client.put('/api/absences/settings', headers=self.fm_headers,
