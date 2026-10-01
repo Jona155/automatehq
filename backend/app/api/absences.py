@@ -2,13 +2,14 @@
 Absences API.
 
 Per-month list of employees who missed Sunday–Friday workdays (sick leave or
-days with no value), with per-month settings (days to ignore) and per-month
-employee exclusions.
+days with no value), with per-month settings (days to ignore), per-employee
+days to ignore (e.g. before the employee started) and per-month employee
+exclusions.
 
 Role scoping mirrors missing-cards:
   - Reading (list, settings, export) is open to every authenticated user; a
     FIELD_MANAGER is narrowed to the sites they are responsible for.
-  - Writes (settings, exclusions) are ADMIN-only.
+  - Writes (settings, employee days, exclusions) are ADMIN-only.
 """
 import logging
 from uuid import UUID
@@ -17,7 +18,7 @@ from flask import Blueprint, g, request, send_file
 
 from ..auth_utils import token_required, role_required
 from ..extensions import db
-from ..models.absences import AbsenceEmployeeExclusion, AbsenceMonthSettings
+from ..models.absences import AbsenceEmployeeDaySettings, AbsenceEmployeeExclusion, AbsenceMonthSettings
 from ..models.sites import Employee
 from ..services import absences_service as svc
 from .missing_cards import _parse_month, _scoped_site_ids, XLSX_MIME
@@ -94,6 +95,63 @@ def save_settings():
     return api_response(
         data={'month': month.isoformat(), 'ignored_days': ignored_days},
         message="הגדרות החודש נשמרו",
+    )
+
+
+@absences_bp.route('/employee-days', methods=['PUT'])
+@token_required
+@role_required('ADMIN')
+def save_employee_days():
+    """Set one employee's own ignored days for a month (an empty list clears them).
+
+    Body: {processing_month: YYYY-MM[-DD], employee_id: uuid, ignored_days: [int]}
+    """
+    data = request.get_json() or {}
+    month, err = _parse_month(data.get('processing_month') or data.get('month'))
+    if err:
+        return api_response(status_code=400, message=err, error="Bad Request")
+
+    try:
+        employee_id = UUID(str(data.get('employee_id')))
+    except (ValueError, AttributeError, TypeError):
+        return api_response(status_code=400, message="Invalid employee id", error="Bad Request")
+
+    raw_days = data.get('ignored_days', [])
+    if not isinstance(raw_days, list):
+        return api_response(status_code=400, message="ignored_days must be a list", error="Bad Request")
+    try:
+        ignored_days = svc.normalize_ignored_days(month, raw_days)
+    except ValueError as e:
+        return api_response(status_code=400, message=str(e), error="Bad Request")
+
+    exists = db.session.query(Employee.id).filter(
+        Employee.business_id == g.business_id, Employee.id == employee_id,
+    ).first()
+    if exists is None:
+        return api_response(status_code=404, message="Employee not found", error="Not Found")
+
+    try:
+        settings = svc.get_employee_day_settings(g.business_id, month, employee_id)
+        if not ignored_days:
+            if settings is not None:
+                db.session.delete(settings)
+        else:
+            if settings is None:
+                settings = AbsenceEmployeeDaySettings(
+                    business_id=g.business_id, processing_month=month, employee_id=employee_id,
+                )
+                db.session.add(settings)
+            settings.ignored_days = ignored_days
+            settings.updated_by_user_id = g.current_user.id
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to save employee absence days")
+        return api_response(status_code=500, message="שגיאה בשמירת ימי העובד", error=str(e))
+
+    return api_response(
+        data={'month': month.isoformat(), 'employee_id': str(employee_id), 'ignored_days': ignored_days},
+        message="ימי העובד נשמרו",
     )
 
 

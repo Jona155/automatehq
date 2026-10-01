@@ -83,7 +83,9 @@ class BusinessRepository(BaseRepository[Business]):
             WhatsAppGroupConfig, WhatsAppNotificationSettings, WhatsAppIngestedMessage,
         )
         from ..models.telegram import TelegramBotConfig, TelegramIngestedFile
-        from ..models.absences import AbsenceMonthSettings, AbsenceEmployeeExclusion
+        from ..models.absences import (
+            AbsenceMonthSettings, AbsenceEmployeeExclusion, AbsenceEmployeeDaySettings,
+        )
 
         business = self.get_by_id(business_id)
         if not business:
@@ -111,6 +113,7 @@ class BusinessRepository(BaseRepository[Business]):
         wipe(ExportRun, ExportRun.business_id == business_id)
         wipe(UploadAccessRequest, UploadAccessRequest.business_id == business_id)
         wipe(AbsenceEmployeeExclusion, AbsenceEmployeeExclusion.business_id == business_id)
+        wipe(AbsenceEmployeeDaySettings, AbsenceEmployeeDaySettings.business_id == business_id)
         wipe(AbsenceMonthSettings, AbsenceMonthSettings.business_id == business_id)
         wipe(WorkCard, WorkCard.business_id == business_id)
         wipe(WhatsAppGroupConfig, WhatsAppGroupConfig.business_id == business_id)

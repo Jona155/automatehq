@@ -7,7 +7,8 @@ organization can chase doctor approvals for sick leave early.
 A *workday* is any Sunday–Friday day of the month (Saturday never counts) that
 is not in the month's ``ignored_days`` setting and is not in the future —
 during the current month only days up to and including today (Israel time)
-are counted.
+are counted. Each employee may additionally have their own ignored days for
+the month (e.g. before they started or after they left).
 
 On a workday an employee is counted as missed when their merged day entry is:
     SICK   -> ``day_status == 'SICK'``
@@ -30,7 +31,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from ..extensions import db
-from ..models.absences import AbsenceEmployeeExclusion, AbsenceMonthSettings
+from ..models.absences import AbsenceEmployeeDaySettings, AbsenceEmployeeExclusion, AbsenceMonthSettings
 from ..models.sites import Employee, Site
 from ..models.work_cards import WorkCard, WorkCardDayEntry, day_entry_has_data
 from .missing_cards_service import _LOCAL_TZ
@@ -105,6 +106,32 @@ def get_ignored_days(business_id: UUID, month: date) -> List[int]:
     return sorted(settings.ignored_days or []) if settings else []
 
 
+def get_employee_day_settings(
+    business_id: UUID, month: date, employee_id: UUID,
+) -> Optional[AbsenceEmployeeDaySettings]:
+    return (
+        db.session.query(AbsenceEmployeeDaySettings)
+        .filter(
+            AbsenceEmployeeDaySettings.business_id == business_id,
+            AbsenceEmployeeDaySettings.processing_month == month,
+            AbsenceEmployeeDaySettings.employee_id == employee_id,
+        )
+        .first()
+    )
+
+
+def get_employee_ignored_days(business_id: UUID, month: date) -> Dict[UUID, List[int]]:
+    """employee_id -> that employee's own ignored days for ``month``."""
+    return {
+        s.employee_id: sorted(s.ignored_days)
+        for s in db.session.query(AbsenceEmployeeDaySettings).filter(
+            AbsenceEmployeeDaySettings.business_id == business_id,
+            AbsenceEmployeeDaySettings.processing_month == month,
+        )
+        if s.ignored_days
+    }
+
+
 def _entry_outranks(candidate: Dict[str, Any], existing: Dict[str, Any]) -> bool:
     """Per-day preference when merging an employee's cards: an APPROVED card's
     value beats a non-approved one; within a tier a day with data beats a blank
@@ -146,6 +173,7 @@ def compute_absences(
     today = today or local_today()
     ignored_days = get_ignored_days(business_id, month)
     workdays = compute_workdays(month, ignored_days, today)
+    employee_ignored = get_employee_ignored_days(business_id, month)
 
     excluded = {
         ex.employee_id: ex
@@ -197,12 +225,24 @@ def compute_absences(
 
     rows: List[Dict[str, Any]] = []
     excluded_rows: List[Dict[str, Any]] = []
+    # Every in-scope employee with personal ignored days, including those who
+    # end up with no absences — so the UI can still show and undo them.
+    employee_overrides: List[Dict[str, Any]] = []
     skipped_no_day_data = 0
 
     for employee_id, emp_cards in cards_by_employee.items():
         emp = employees.get(employee_id)
         if emp is None:
             continue
+
+        own_ignored = employee_ignored.get(employee_id, [])
+        if own_ignored:
+            employee_overrides.append({
+                'employee_id': str(employee_id),
+                'full_name': emp.full_name,
+                'site_name': emp.site_name,
+                'ignored_days': own_ignored,
+            })
 
         merged: Dict[int, Dict[str, Any]] = {}
         for card in emp_cards:
@@ -224,7 +264,8 @@ def compute_absences(
             skipped_no_day_data += 1
             continue
 
-        classified = classify_days({d: c['entry'] for d, c in merged.items()}, workdays)
+        emp_workdays = [d for d in workdays if d not in own_ignored] if own_ignored else workdays
+        classified = classify_days({d: c['entry'] for d, c in merged.items()}, emp_workdays)
         missed_total = len(classified['sick_days']) + len(classified['empty_days'])
         if missed_total == 0:
             continue
@@ -245,6 +286,7 @@ def compute_absences(
             'sick_count': len(classified['sick_days']),
             'empty_count': len(classified['empty_days']),
             'missed_total': missed_total,
+            'ignored_days': own_ignored,
             # APPROVED only once every card is approved — an unreviewed card
             # means the month's data may still change.
             'card_status': CARD_APPROVED if all(c.review_status == 'APPROVED' for c in emp_cards) else CARD_PENDING,
@@ -263,6 +305,7 @@ def compute_absences(
     sort_key = lambda r: (-r['missed_total'], r['site_name'] or '', r['full_name'] or '')
     rows.sort(key=sort_key)
     excluded_rows.sort(key=sort_key)
+    employee_overrides.sort(key=lambda o: (o['site_name'] or '', o['full_name'] or ''))
 
     return {
         'month': month.isoformat(),
@@ -279,6 +322,7 @@ def compute_absences(
         },
         'rows': rows,
         'excluded_rows': excluded_rows,
+        'employee_overrides': employee_overrides,
     }
 
 

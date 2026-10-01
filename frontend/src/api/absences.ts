@@ -17,6 +17,8 @@ export interface AbsenceRow {
   sick_count: number;
   empty_count: number;
   missed_total: number;
+  /** The employee's own ignored days for the month (on top of the month-wide ones). */
+  ignored_days: number[];
   card_status: AbsenceCardStatus;
   card_ids: string[];
   review_card_id: string;
@@ -34,6 +36,13 @@ export interface AbsencesSummary {
   skipped_no_day_data: number;
 }
 
+export interface AbsenceEmployeeOverride {
+  employee_id: string;
+  full_name: string;
+  site_name: string | null;
+  ignored_days: number[];
+}
+
 export interface AbsencesResponse {
   month: string;
   settings: { ignored_days: number[] };
@@ -44,6 +53,8 @@ export interface AbsencesResponse {
   summary: AbsencesSummary;
   rows: AbsenceRow[];
   excluded_rows: AbsenceRow[];
+  /** Every in-scope employee with their own ignored days, even if they have no absences left. */
+  employee_overrides: AbsenceEmployeeOverride[];
 }
 
 export const getAbsences = async (month: string): Promise<AbsencesResponse> => {
@@ -61,6 +72,22 @@ export const saveAbsenceSettings = async (
     processing_month: normalizeMonth(month),
     ignored_days: ignoredDays,
   });
+  return response.data.data;
+};
+
+export const saveEmployeeAbsenceDays = async (
+  month: string,
+  employeeId: string,
+  ignoredDays: number[],
+): Promise<{ employee_id: string; ignored_days: number[] }> => {
+  const response = await client.put<{ data: { employee_id: string; ignored_days: number[] } }>(
+    '/absences/employee-days',
+    {
+      processing_month: normalizeMonth(month),
+      employee_id: employeeId,
+      ignored_days: ignoredDays,
+    },
+  );
   return response.data.data;
 };
 
