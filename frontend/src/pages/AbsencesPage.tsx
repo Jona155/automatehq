@@ -5,6 +5,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import MonthPicker from '../components/MonthPicker';
 import PageBanner from '../components/PageBanner';
 import Modal from '../components/Modal';
+import SearchableMultiSelect from '../components/SearchableMultiSelect';
 import { useToast } from '../hooks/useToast';
 import { getDefaultMonth } from '../utils/monthUtils';
 import { downloadBlobFile } from '../utils/fileDownload';
@@ -333,7 +334,7 @@ export default function AbsencesPage() {
   // Absences should be chased as early as possible, so default to the current month.
   const [selectedMonth, setSelectedMonth] = useState<string>(() => getDefaultMonth());
   const [searchQuery, setSearchQuery] = useState('');
-  const [siteFilter, setSiteFilter] = useState('');
+  const [siteFilter, setSiteFilter] = useState<string[]>([]);
   const [kind, setKind] = useState<KindFilter>('all');
 
   const [data, setData] = useState<AbsencesResponse | null>(null);
@@ -371,14 +372,16 @@ export default function AbsencesPage() {
     [...(data?.rows ?? []), ...(data?.excluded_rows ?? [])].forEach((r) => {
       if (r.site_name) names.add(r.site_name);
     });
-    return [...names].sort((a, b) => a.localeCompare(b, 'he'));
+    return [...names]
+      .sort((a, b) => a.localeCompare(b, 'he'))
+      .map((name) => ({ value: name, label: name }));
   }, [data]);
 
   const applyFilters = useCallback(
     (rows: AbsenceRow[]) => {
       const q = searchQuery.trim().toLowerCase();
       return rows.filter((r) => {
-        if (siteFilter && r.site_name !== siteFilter) return false;
+        if (siteFilter.length > 0 && !siteFilter.includes(r.site_name ?? '')) return false;
         if (kind === 'sick' && r.sick_count === 0) return false;
         if (kind === 'empty' && r.empty_count === 0) return false;
         if (!q) return true;
@@ -519,14 +522,14 @@ export default function AbsencesPage() {
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">אתר</label>
-            <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)} className={inputClass}>
-              <option value="">כל האתרים</option>
-              {siteOptions.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
+            <SearchableMultiSelect
+              options={siteOptions}
+              selected={siteFilter}
+              onChange={setSiteFilter}
+              searchPlaceholder="חיפוש אתרים..."
+              icon="apartment"
+              allLabel="כל האתרים"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">סוג היעדרות</label>
