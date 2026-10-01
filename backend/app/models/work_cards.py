@@ -140,3 +140,16 @@ class WorkCardDayEntry(db.Model):
         Index('ix_work_card_day_entries_work_card_id', 'work_card_id'),
         Index('ix_work_card_day_entries_attributed_site_id', 'attributed_site_id'),
     )
+
+
+def day_entry_has_data(entry) -> bool:
+    """Whether a day entry carries any real content (worked hours or a status).
+    A row with everything null is an intentional blank (a cleared day)."""
+    if entry is None:
+        return False
+    return (
+        entry.from_time is not None
+        or entry.to_time is not None
+        or entry.total_hours is not None
+        or entry.day_status is not None
+    )

@@ -15,6 +15,7 @@ import EmployeeImportPage from './pages/EmployeeImportPage';
 import PublicPortalPage from './pages/PublicPortalPage';
 import AdminPortalPage from './pages/AdminPortalPage';
 import MissingWorkCardsPage from './pages/MissingWorkCardsPage';
+import AbsencesPage from './pages/AbsencesPage';
 import UnassignedWorkCardsPage from './pages/UnassignedWorkCardsPage';
 import TelegramSettings from './pages/TelegramSettings';
 import WhatsAppSettings from './pages/WhatsAppSettings';
@@ -57,6 +58,7 @@ function App() {
                 <Route path="/:businessCode/sites/:siteId" element={<SiteDetailsPage />} />
                 <Route path="/:businessCode/sites/:siteId/review" element={<SiteReviewPage />} />
                 <Route path="/:businessCode/missing-work-cards" element={<MissingWorkCardsPage />} />
+                <Route path="/:businessCode/absences" element={<AbsencesPage />} />
                 <Route path="/:businessCode/unassigned-work-cards" element={<UnassignedWorkCardsPage />} />
                 <Route path="/:businessCode/settings/telegram" element={<TelegramSettings />} />
                 <Route path="/:businessCode/settings/whatsapp" element={<WhatsAppSettings />} />
