@@ -221,6 +221,7 @@ export default function Sidebar() {
               </>
             )}
 
+            <NavRow to={`${base}/absences`} icon="event_busy" label="היעדרויות" collapsed={collapsed} />
             <NavRow to={`${base}/employees`} icon="group" label="עובדים" collapsed={collapsed} />
             <NavRow to={`${base}/sites`} icon="apartment" label="אתרים" collapsed={collapsed} />
             <NavRow to={`${base}/contractors`} icon="handshake" label="קבלנים" collapsed={collapsed} />

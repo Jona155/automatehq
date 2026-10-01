@@ -17,7 +17,7 @@ from .utils import api_response, model_to_dict, models_to_list
 from ..auth_utils import token_required, role_required
 from ..extensions import db
 from ..models.sites import Site, Employee
-from ..models.work_cards import WorkCard
+from ..models.work_cards import WorkCard, day_entry_has_data
 from ..services.whatsapp_listener_client import (
     WhatsAppListenerClient,
     WhatsAppListenerError,
@@ -66,14 +66,7 @@ def _normalize_hours_value(value: Any) -> Optional[float]:
 def _entry_has_data(entry: Any) -> bool:
     """Whether a day entry carries any real content (worked hours or a status).
     A row with everything null is an intentional blank (a cleared day)."""
-    if entry is None:
-        return False
-    return (
-        entry.from_time is not None
-        or entry.to_time is not None
-        or entry.total_hours is not None
-        or entry.day_status is not None
-    )
+    return day_entry_has_data(entry)
 
 
 # A day entry written by the AI extraction worker. Anything else (a human save,

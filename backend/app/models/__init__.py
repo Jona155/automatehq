@@ -8,6 +8,7 @@ from .upload_access import UploadAccessRequest
 from .telegram import TelegramBotConfig, TelegramIngestedFile, TelegramPollingState
 from .whatsapp import WhatsAppGroupConfig, WhatsAppIngestedMessage
 from .auth import AuthOtpChallenge
+from .absences import AbsenceMonthSettings, AbsenceEmployeeExclusion
 
 __all__ = [
     'Business',
@@ -28,4 +29,6 @@ __all__ = [
     'WhatsAppGroupConfig',
     'WhatsAppIngestedMessage',
     'AuthOtpChallenge',
+    'AbsenceMonthSettings',
+    'AbsenceEmployeeExclusion',
 ]
