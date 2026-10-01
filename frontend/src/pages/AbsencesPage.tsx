@@ -7,6 +7,8 @@ import PageBanner from '../components/PageBanner';
 import Modal from '../components/Modal';
 import SearchableMultiSelect from '../components/SearchableMultiSelect';
 import { useToast } from '../hooks/useToast';
+import { getEmployees } from '../api/employees';
+import type { Employee } from '../types';
 import { getDefaultMonth } from '../utils/monthUtils';
 import { downloadBlobFile } from '../utils/fileDownload';
 import {
@@ -15,7 +17,6 @@ import {
   saveEmployeeAbsenceDays,
   setAbsenceExclusions,
   downloadAbsencesReport,
-  type AbsenceEmployeeOverride,
   type AbsenceRow,
   type AbsencesResponse,
 } from '../api/absences';
@@ -237,8 +238,8 @@ const EMPTY_DAYS: number[] = [];
 
 /**
  * Calendar for picking days that don't count as workdays. Used for the
- * month-wide setting and, with `lockedDays` + `showRangeHelpers`, for a single
- * employee's own days on top of it.
+ * month-wide setting and, with `lockedDays` + `showRangeHelpers`, for
+ * employees' own days on top of it.
  */
 function IgnoredDaysModal({
   isOpen,
@@ -248,6 +249,8 @@ function IgnoredDaysModal({
   initialIgnored,
   lockedDays = EMPTY_DAYS,
   showRangeHelpers = false,
+  header,
+  saveDisabled = false,
   onClose,
   onSave,
 }: {
@@ -259,6 +262,9 @@ function IgnoredDaysModal({
   /** Days already ignored for the whole month — shown, but not editable here. */
   lockedDays?: number[];
   showRangeHelpers?: boolean;
+  /** Rendered between the description and the calendar. */
+  header?: ReactNode;
+  saveDisabled?: boolean;
   onClose: () => void;
   onSave: (days: number[]) => Promise<void>;
 }) {
@@ -326,6 +332,7 @@ function IgnoredDaysModal({
     <Modal isOpen={isOpen} onClose={onClose} title={title} maxWidth="md">
       <div className="flex flex-col gap-4">
         <p className="text-sm text-[#617989] dark:text-slate-400">{description}</p>
+        {header}
         {showRangeHelpers && (
           <div className="grid grid-cols-2 gap-3">
             {(
@@ -405,7 +412,7 @@ function IgnoredDaysModal({
             </button>
             <button
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || saveDisabled}
               className="px-4 py-2 rounded-lg bg-primary text-white font-semibold hover:bg-primary/90 disabled:opacity-50"
             >
               {saving ? 'שומר...' : 'שמור'}
@@ -440,7 +447,10 @@ export default function AbsencesPage() {
   const [excludeReason, setExcludeReason] = useState('');
   const [applying, setApplying] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [employeeDaysTarget, setEmployeeDaysTarget] = useState<AbsenceEmployeeOverride | null>(null);
+  // Employees whose own days are being edited (one or many); null = editor closed.
+  const [daysEditorIds, setDaysEditorIds] = useState<string[] | null>(null);
+  const [daysEditorInitial, setDaysEditorInitial] = useState<number[]>(EMPTY_DAYS);
+  const [employees, setEmployees] = useState<Employee[] | null>(null);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -536,25 +546,73 @@ export default function AbsencesPage() {
     }
   };
 
-  const handleSaveEmployeeDays = async (days: number[]) => {
-    if (!employeeDaysTarget) return;
-    try {
-      await saveEmployeeAbsenceDays(selectedMonth, employeeDaysTarget.employee_id, days);
-      showToast(`הימים של ${employeeDaysTarget.full_name} נשמרו`, 'success');
-      setEmployeeDaysTarget(null);
-      await fetchData();
-    } catch {
-      showToast('שגיאה בשמירת ימי העובד', 'error');
+  const overrideDaysById = useMemo(
+    () => new Map((data?.employee_overrides ?? []).map((o) => [o.employee_id, o.ignored_days])),
+    [data],
+  );
+
+  const sameDays = (a: number[], b: number[]) => a.length === b.length && a.every((d, i) => d === b[i]);
+
+  const openDaysEditor = (ids: string[]) => {
+    // Prefill only when every chosen employee already has the same days.
+    const days = ids.map((id) => overrideDaysById.get(id) ?? EMPTY_DAYS);
+    setDaysEditorInitial(days.length > 0 && days.every((d) => sameDays(d, days[0])) ? days[0] : EMPTY_DAYS);
+    setDaysEditorIds(ids);
+    if (employees === null) {
+      getEmployees({ active: true })
+        .then(setEmployees)
+        .catch(() => {
+          setEmployees([]);
+          showToast('שגיאה בטעינת רשימת העובדים', 'error');
+        });
     }
   };
 
-  const editEmployeeDays = (row: AbsenceRow) =>
-    setEmployeeDaysTarget({
-      employee_id: row.employee_id,
-      full_name: row.full_name,
-      site_name: row.site_name,
-      ignored_days: row.ignored_days,
+  const handleSaveEmployeeDays = async (days: number[]) => {
+    if (!daysEditorIds?.length) return;
+    try {
+      await saveEmployeeAbsenceDays(selectedMonth, daysEditorIds, days);
+      showToast(
+        daysEditorIds.length === 1 ? 'ימי העובד נשמרו' : `הימים נשמרו עבור ${daysEditorIds.length} עובדים`,
+        'success',
+      );
+      setDaysEditorIds(null);
+      setSelected(new Set());
+      await fetchData();
+    } catch {
+      showToast('שגיאה בשמירת ימי העובדים', 'error');
+    }
+  };
+
+  // Searchable by number, name and passport — SearchableMultiSelect matches on the label.
+  const employeeOptions = useMemo(() => {
+    const label = (name: string, number?: string | null, passport?: string | null) =>
+      [name, number ? `#${number}` : '', passport ?? ''].filter(Boolean).join(' · ');
+    const options = (employees ?? []).map((e) => ({
+      value: e.id,
+      label: label(e.full_name, e.external_employee_id, e.passport_id),
+    }));
+    // Keep chosen employees that aren't in the active list (e.g. deactivated since) visible.
+    const known = new Set(options.map((o) => o.value));
+    [...(data?.rows ?? []), ...(data?.excluded_rows ?? [])].forEach((r) => {
+      if (!known.has(r.employee_id)) {
+        known.add(r.employee_id);
+        options.push({ value: r.employee_id, label: label(r.full_name, r.external_employee_id, r.passport_id) });
+      }
     });
+    (data?.employee_overrides ?? []).forEach((o) => {
+      if (!known.has(o.employee_id)) {
+        known.add(o.employee_id);
+        options.push({ value: o.employee_id, label: o.full_name });
+      }
+    });
+    return options.sort((a, b) => a.label.localeCompare(b.label, 'he'));
+  }, [employees, data]);
+
+  const daysEditorReplacing = (daysEditorIds ?? []).filter((id) => {
+    const days = overrideDaysById.get(id);
+    return days && !sameDays(days, daysEditorInitial);
+  }).length;
 
   const handleExport = async () => {
     try {
@@ -595,6 +653,16 @@ export default function AbsencesPage() {
           </button>
           {canManage && (
             <button
+              onClick={() => openDaysEditor([])}
+              disabled={!data}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold transition-colors disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-base">event_busy</span>
+              ימים לעובדים
+            </button>
+          )}
+          {canManage && (
+            <button
               onClick={() => setSettingsOpen(true)}
               disabled={!data}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary hover:bg-primary/90 text-white font-semibold shadow-lg transition-colors disabled:opacity-50"
@@ -625,8 +693,8 @@ export default function AbsencesPage() {
             {canManage && <li>ב"הגדרות חודש" ניתן לסמן ימים שאין לספור (למשל חגים).</li>}
             {canManage && (
               <li>
-                ב"ימים לעובד" ניתן לסמן ימים שאין לספור לעובד מסוים בלבד — למשל עובד שהתחיל לעבוד באמצע החודש או
-                שסיים לפני סופו.
+                ב"ימים לעובדים" ניתן לסמן ימים שאין לספור לעובדים מסוימים בלבד — למשל עובד שהתחיל לעבוד באמצע
+                החודש או שסיים לפני סופו. ניתן לחפש עובדים לפי שם, מספר עובד או דרכון, ולבחור כמה עובדים יחד.
               </li>
             )}
             {canManage && <li>ניתן להסיר עובדים מהתצוגה לחודש הנבחר בלבד, ולהחזיר אותם בכל עת.</li>}
@@ -730,7 +798,7 @@ export default function AbsencesPage() {
               return canManage ? (
                 <button
                   key={o.employee_id}
-                  onClick={() => setEmployeeDaysTarget(o)}
+                  onClick={() => openDaysEditor([o.employee_id])}
                   title={title}
                   className={`${chipClass} hover:bg-primary/20`}
                 >
@@ -803,7 +871,7 @@ export default function AbsencesPage() {
                 onToggleRow={toggleRow}
                 onToggleAll={toggleAll}
                 onAction={(row) => setPendingExclude([row.employee_id])}
-                onEditDays={editEmployeeDays}
+                onEditDays={(row) => openDaysEditor([row.employee_id])}
               />
             )}
           </div>
@@ -833,7 +901,7 @@ export default function AbsencesPage() {
                   onToggleRow={toggleRow}
                   onToggleAll={toggleAll}
                   onAction={(row) => void applyExclusion([row.employee_id], false)}
-                  onEditDays={editEmployeeDays}
+                  onEditDays={(row) => openDaysEditor([row.employee_id])}
                 />
               )}
             </div>
@@ -844,6 +912,12 @@ export default function AbsencesPage() {
       {canManage && selected.size > 0 && (
         <div className="sticky bottom-4 self-center flex items-center gap-3 bg-[#111518] text-white rounded-xl shadow-2xl px-5 py-3">
           <span className="text-sm">{selected.size} עובדים נבחרו</span>
+          <button
+            onClick={() => openDaysEditor([...selected])}
+            className="px-3 py-1.5 rounded-lg bg-white/10 text-sm font-semibold hover:bg-white/20"
+          >
+            ימים לעובדים
+          </button>
           <button
             onClick={() => setPendingExclude([...selected])}
             className="px-3 py-1.5 rounded-lg bg-primary text-sm font-semibold hover:bg-primary/90"
@@ -911,20 +985,40 @@ export default function AbsencesPage() {
 
       {canManage && (
         <IgnoredDaysModal
-          isOpen={employeeDaysTarget !== null}
+          isOpen={daysEditorIds !== null}
           month={selectedMonth}
-          title={`ימים לעובד — ${employeeDaysTarget?.full_name ?? ''}`}
+          title="ימים לעובדים"
           description={
             <>
-              ימים שלא ייספרו כימי עבודה עבור <strong>{employeeDaysTarget?.full_name}</strong> בלבד בחודש{' '}
-              {selectedMonth} — למשל לפני שהתחיל לעבוד או אחרי שסיים. ימים שהוחרגו בהגדרות החודש מסומנים ואינם
-              ניתנים לעריכה כאן.
+              ימים שלא ייספרו כימי עבודה עבור העובדים שנבחרו בלבד בחודש {selectedMonth} — למשל לפני שהתחילו לעבוד או
+              אחרי שסיימו. ימים שהוחרגו בהגדרות החודש מסומנים ואינם ניתנים לעריכה כאן.
             </>
           }
-          initialIgnored={employeeDaysTarget?.ignored_days ?? EMPTY_DAYS}
+          header={
+            <div className="flex flex-col gap-1.5">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">עובדים</label>
+              <SearchableMultiSelect
+                options={employeeOptions}
+                selected={daysEditorIds ?? []}
+                onChange={setDaysEditorIds}
+                searchPlaceholder={employees === null ? 'טוען עובדים...' : 'חיפוש לפי שם, מספר עובד או דרכון...'}
+                icon="person_search"
+                allLabel="בחרו עובדים"
+              />
+              {daysEditorReplacing > 0 && (
+                <div className="text-xs text-amber-700 dark:text-amber-400">
+                  {daysEditorIds?.length === 1
+                    ? 'לעובד כבר מוגדרים ימים אישיים — השמירה תחליף אותם.'
+                    : `ל־${daysEditorReplacing} מהעובדים שנבחרו כבר מוגדרים ימים אישיים אחרים — השמירה תחליף אותם.`}
+                </div>
+              )}
+            </div>
+          }
+          initialIgnored={daysEditorInitial}
           lockedDays={ignoredDays}
           showRangeHelpers
-          onClose={() => setEmployeeDaysTarget(null)}
+          saveDisabled={!daysEditorIds?.length}
+          onClose={() => setDaysEditorIds(null)}
           onSave={handleSaveEmployeeDays}
         />
       )}

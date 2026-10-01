@@ -75,16 +75,17 @@ export const saveAbsenceSettings = async (
   return response.data.data;
 };
 
+/** Give every listed employee exactly `ignoredDays` for the month (an empty list clears them). */
 export const saveEmployeeAbsenceDays = async (
   month: string,
-  employeeId: string,
+  employeeIds: string[],
   ignoredDays: number[],
-): Promise<{ employee_id: string; ignored_days: number[] }> => {
-  const response = await client.put<{ data: { employee_id: string; ignored_days: number[] } }>(
+): Promise<{ updated: number; ignored_days: number[] }> => {
+  const response = await client.put<{ data: { updated: number; ignored_days: number[] } }>(
     '/absences/employee-days',
     {
       processing_month: normalizeMonth(month),
-      employee_id: employeeId,
+      employee_ids: employeeIds,
       ignored_days: ignoredDays,
     },
   );

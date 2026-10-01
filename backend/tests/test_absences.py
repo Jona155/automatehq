@@ -183,6 +183,22 @@ class AbsencesDBTests(unittest.TestCase):
         self.assertIsNone(self._row(result, emp))
         self.assertEqual(result['employee_overrides'][0]['ignored_days'], list(range(21, 31)))
 
+    def test_employee_override_listed_without_card(self):
+        emp = self._employee('Starts later')
+        db.session.add(AbsenceEmployeeDaySettings(business_id=self.business.id, processing_month=MONTH,
+                                                  employee_id=emp.id, ignored_days=[1, 2]))
+        result = self._rows()
+        self.assertEqual(result['rows'], [])
+        self.assertEqual([o['employee_id'] for o in result['employee_overrides']], [str(emp.id)])
+
+    def test_employee_overrides_scoped_for_field_manager(self):
+        emp_b = self._employee('B', self.site_b)
+        db.session.add(AbsenceEmployeeDaySettings(business_id=self.business.id, processing_month=MONTH,
+                                                  employee_id=emp_b.id, ignored_days=[1]))
+        db.session.commit()
+        data = self.client.get(f'/api/absences?month={MONTH_PARAM}', headers=self.fm_headers).get_json()['data']
+        self.assertEqual(data['employee_overrides'], [])
+
     def test_employee_without_cards_is_hidden(self):
         self._employee('No card')
         self.assertEqual(self._rows()['rows'], [])
@@ -294,6 +310,24 @@ class AbsencesDBTests(unittest.TestCase):
         res = self.client.put(url, headers=self.admin_headers, json={
             'processing_month': MONTH_PARAM, 'employee_id': str(uuid.uuid4()), 'ignored_days': [1]})
         self.assertEqual(res.status_code, 404)
+        # Bulk: same days for several employees, replacing what they had.
+        emp2 = self._employee('Worker 2')
+        db.session.commit()
+        res = self.client.put(url, headers=self.admin_headers, json={
+            'processing_month': MONTH_PARAM, 'employee_ids': [str(emp.id), str(emp2.id)],
+            'ignored_days': [4, 5]})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json()['data']['updated'], 2)
+        rows = AbsenceEmployeeDaySettings.query.filter_by(business_id=self.business.id).all()
+        self.assertEqual(sorted(r.ignored_days for r in rows), [[4, 5], [4, 5]])
+        res = self.client.put(url, headers=self.admin_headers, json={
+            'processing_month': MONTH_PARAM, 'employee_ids': [str(emp.id), str(uuid.uuid4())],
+            'ignored_days': [1]})
+        self.assertEqual(res.status_code, 404)
+        res = self.client.put(url, headers=self.admin_headers, json={
+            'processing_month': MONTH_PARAM, 'employee_ids': [], 'ignored_days': [1]})
+        self.assertEqual(res.status_code, 400)
+
         res = self.client.put(url, headers=self.fm_headers, json={
             'processing_month': MONTH_PARAM, 'employee_id': str(emp.id), 'ignored_days': [1]})
         self.assertEqual(res.status_code, 403)
