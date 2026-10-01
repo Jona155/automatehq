@@ -106,20 +106,6 @@ def get_ignored_days(business_id: UUID, month: date) -> List[int]:
     return sorted(settings.ignored_days or []) if settings else []
 
 
-def get_employee_day_settings(
-    business_id: UUID, month: date, employee_id: UUID,
-) -> Optional[AbsenceEmployeeDaySettings]:
-    return (
-        db.session.query(AbsenceEmployeeDaySettings)
-        .filter(
-            AbsenceEmployeeDaySettings.business_id == business_id,
-            AbsenceEmployeeDaySettings.processing_month == month,
-            AbsenceEmployeeDaySettings.employee_id == employee_id,
-        )
-        .first()
-    )
-
-
 def get_employee_ignored_days(business_id: UUID, month: date) -> Dict[UUID, List[int]]:
     """employee_id -> that employee's own ignored days for ``month``."""
     return {
@@ -225,9 +211,6 @@ def compute_absences(
 
     rows: List[Dict[str, Any]] = []
     excluded_rows: List[Dict[str, Any]] = []
-    # Every in-scope employee with personal ignored days, including those who
-    # end up with no absences — so the UI can still show and undo them.
-    employee_overrides: List[Dict[str, Any]] = []
     skipped_no_day_data = 0
 
     for employee_id, emp_cards in cards_by_employee.items():
@@ -236,13 +219,6 @@ def compute_absences(
             continue
 
         own_ignored = employee_ignored.get(employee_id, [])
-        if own_ignored:
-            employee_overrides.append({
-                'employee_id': str(employee_id),
-                'full_name': emp.full_name,
-                'site_name': emp.site_name,
-                'ignored_days': own_ignored,
-            })
 
         merged: Dict[int, Dict[str, Any]] = {}
         for card in emp_cards:
@@ -305,7 +281,30 @@ def compute_absences(
     sort_key = lambda r: (-r['missed_total'], r['site_name'] or '', r['full_name'] or '')
     rows.sort(key=sort_key)
     excluded_rows.sort(key=sort_key)
-    employee_overrides.sort(key=lambda o: (o['site_name'] or '', o['full_name'] or ''))
+
+    # Every in-scope employee with personal ignored days — including those with
+    # no absences left or no card yet — so the UI can still show and undo them.
+    employee_overrides: List[Dict[str, Any]] = []
+    if employee_ignored:
+        override_query = (
+            db.session.query(Employee.id, Employee.full_name, Site.site_name)
+            .outerjoin(Site, Site.id == Employee.site_id)
+            .filter(Employee.business_id == business_id, Employee.id.in_(list(employee_ignored)))
+        )
+        if site_ids is not None:
+            override_query = override_query.filter(Employee.site_id.in_(site_ids))
+        employee_overrides = sorted(
+            (
+                {
+                    'employee_id': str(r.id),
+                    'full_name': r.full_name,
+                    'site_name': r.site_name,
+                    'ignored_days': employee_ignored[r.id],
+                }
+                for r in override_query
+            ),
+            key=lambda o: (o['site_name'] or '', o['full_name'] or ''),
+        )
 
     return {
         'month': month.isoformat(),

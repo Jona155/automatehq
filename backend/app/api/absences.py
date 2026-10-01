@@ -102,17 +102,24 @@ def save_settings():
 @token_required
 @role_required('ADMIN')
 def save_employee_days():
-    """Set one employee's own ignored days for a month (an empty list clears them).
+    """Set employees' own ignored days for a month. Every listed employee gets
+    exactly ``ignored_days`` (replacing what they had); an empty list clears them.
 
-    Body: {processing_month: YYYY-MM[-DD], employee_id: uuid, ignored_days: [int]}
+    Body: {processing_month: YYYY-MM[-DD], employee_ids: [uuid], ignored_days: [int]}
+    (a single ``employee_id`` is accepted too).
     """
     data = request.get_json() or {}
     month, err = _parse_month(data.get('processing_month') or data.get('month'))
     if err:
         return api_response(status_code=400, message=err, error="Bad Request")
 
+    raw_ids = data.get('employee_ids')
+    if raw_ids is None and data.get('employee_id') is not None:
+        raw_ids = [data.get('employee_id')]
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return api_response(status_code=400, message="employee_ids is required", error="Bad Request")
     try:
-        employee_id = UUID(str(data.get('employee_id')))
+        employee_ids = {UUID(str(i)) for i in raw_ids}
     except (ValueError, AttributeError, TypeError):
         return api_response(status_code=400, message="Invalid employee id", error="Bad Request")
 
@@ -124,21 +131,33 @@ def save_employee_days():
     except ValueError as e:
         return api_response(status_code=400, message=str(e), error="Bad Request")
 
-    exists = db.session.query(Employee.id).filter(
-        Employee.business_id == g.business_id, Employee.id == employee_id,
-    ).first()
-    if exists is None:
+    valid_ids = {
+        r[0] for r in db.session.query(Employee.id).filter(
+            Employee.business_id == g.business_id,
+            Employee.id.in_(employee_ids),
+        )
+    }
+    if valid_ids != employee_ids:
         return api_response(status_code=404, message="Employee not found", error="Not Found")
 
     try:
-        settings = svc.get_employee_day_settings(g.business_id, month, employee_id)
-        if not ignored_days:
-            if settings is not None:
-                db.session.delete(settings)
-        else:
+        existing = {
+            s.employee_id: s
+            for s in db.session.query(AbsenceEmployeeDaySettings).filter(
+                AbsenceEmployeeDaySettings.business_id == g.business_id,
+                AbsenceEmployeeDaySettings.processing_month == month,
+                AbsenceEmployeeDaySettings.employee_id.in_(employee_ids),
+            )
+        }
+        for emp_id in employee_ids:
+            settings = existing.get(emp_id)
+            if not ignored_days:
+                if settings is not None:
+                    db.session.delete(settings)
+                continue
             if settings is None:
                 settings = AbsenceEmployeeDaySettings(
-                    business_id=g.business_id, processing_month=month, employee_id=employee_id,
+                    business_id=g.business_id, processing_month=month, employee_id=emp_id,
                 )
                 db.session.add(settings)
             settings.ignored_days = ignored_days
@@ -147,11 +166,11 @@ def save_employee_days():
     except Exception as e:
         db.session.rollback()
         logger.exception("Failed to save employee absence days")
-        return api_response(status_code=500, message="שגיאה בשמירת ימי העובד", error=str(e))
+        return api_response(status_code=500, message="שגיאה בשמירת ימי העובדים", error=str(e))
 
     return api_response(
-        data={'month': month.isoformat(), 'employee_id': str(employee_id), 'ignored_days': ignored_days},
-        message="ימי העובד נשמרו",
+        data={'month': month.isoformat(), 'updated': len(employee_ids), 'ignored_days': ignored_days},
+        message="ימי העובדים נשמרו",
     )
 
 
