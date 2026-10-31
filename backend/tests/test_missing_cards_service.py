@@ -41,17 +41,17 @@ class EffectiveThresholdTests(unittest.TestCase):
     MONTH = date(2026, 6, 1)
 
     def test_within_open_month_requires_only_one_card(self):
-        # Any day on/before the last day of the reporting month -> threshold 1,
+        # Any day before the last day of the reporting month -> threshold 1,
         # so an employee with a single card is NOT a gap.
-        for today in (date(2026, 6, 1), date(2026, 6, 15), date(2026, 6, 30)):
+        for today in (date(2026, 6, 1), date(2026, 6, 15), date(2026, 6, 29)):
             self.assertEqual(mcs.effective_threshold(self.MONTH, 2, today), 1, today)
             self.assertEqual(mcs._classify(1, mcs.effective_threshold(self.MONTH, 2, today)),
                              mcs.STATUS_COMPLETE, today)
 
-    def test_after_month_ends_requires_full_expected(self):
-        # From the 1st of the following month onward -> full expected, so an
+    def test_from_last_day_requires_full_expected(self):
+        # From the last day of the month onward -> full expected, so an
         # employee with only the first card is flagged as PARTIAL.
-        for today in (date(2026, 7, 1), date(2026, 7, 10), date(2026, 7, 25)):
+        for today in (date(2026, 6, 30), date(2026, 7, 1), date(2026, 7, 10), date(2026, 7, 25)):
             self.assertEqual(mcs.effective_threshold(self.MONTH, 2, today), 2, today)
             self.assertEqual(mcs._classify(1, mcs.effective_threshold(self.MONTH, 2, today)),
                              mcs.STATUS_PARTIAL, today)
