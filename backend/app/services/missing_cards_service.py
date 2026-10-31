@@ -160,15 +160,19 @@ def effective_threshold(month: date, expected: int, today: Optional[date] = None
     """How many cards an employee must have *right now* to not count as missing.
 
     The bar rises over the month's lifecycle:
-      * While the reporting month is still open (today on/before its last day),
-        only a fully-missing employee (0 cards) is a gap — a single card is
-        enough, so the threshold is 1.
-      * Once the month has ended (the following month, including the typical
-        catch-up window up to the 10th and beyond), the full expected count is
-        required, so an employee with only the first card is flagged.
+      * Before the reporting month's last day, only a fully-missing employee
+        (0 cards) is a gap — a single card is enough, so the threshold is 1.
+      * From the last day onward (including the following month's catch-up
+        window up to the 10th and beyond), the full expected count is required,
+        so an employee whose only card arrived earlier in the month is flagged.
+        A single card uploaded on the last day itself is still settled by the
+        late-card exemption (Rule 1).
+
+    ``today`` defaults to the business-local (Israel) date, so the bar rises at
+    local midnight rather than at the server's UTC midnight.
     """
-    today = today or date.today()
-    if today <= _last_day_of_month(month):
+    today = today or datetime.now(_LOCAL_TZ).date()
+    if today < _last_day_of_month(month):
         return 1
     return expected
 

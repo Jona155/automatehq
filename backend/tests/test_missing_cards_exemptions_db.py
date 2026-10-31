@@ -92,10 +92,26 @@ class MissingCardsExemptionDBTests(unittest.TestCase):
         db.session.flush()
         return card
 
-    def _status(self, emp):
-        rows = mcs.compute_missing(self.business.id, MONTH, today=AFTER_MONTH_END)
+    def _status(self, emp, today=AFTER_MONTH_END):
+        rows = mcs.compute_missing(self.business.id, MONTH, today=today)
         row = next(r for r in rows if r['employee_id'] == str(emp.id))
         return row['status']
+
+    # ---- Bar rises on the month's last day ----
+    def test_on_last_day_single_earlier_card_is_partial(self):
+        # First card came in late in the month; on the last day the second card
+        # is already due, so the employee is flagged without waiting for the 1st.
+        emp = self._employee()
+        self._card(emp, _utc(2026, 6, 25))
+        db.session.commit()
+        self.assertEqual(self._status(emp, today=date(2026, 6, 29)), mcs.STATUS_COMPLETE)
+        self.assertEqual(self._status(emp, today=date(2026, 6, 30)), mcs.STATUS_PARTIAL)
+
+    def test_on_last_day_single_card_uploaded_that_day_is_complete(self):
+        emp = self._employee()
+        self._card(emp, _utc(2026, 6, 30))
+        db.session.commit()
+        self.assertEqual(self._status(emp, today=date(2026, 6, 30)), mcs.STATUS_COMPLETE)
 
     # ---- Rule 1: late single card ----
     def test_single_card_on_last_day_is_complete(self):
