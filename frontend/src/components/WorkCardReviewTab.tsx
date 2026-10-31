@@ -1672,21 +1672,38 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   };
 
   const handleReject = async () => {
-    if (!selectedCard) return;
+    // Reject the card whose image is in the viewer — not the group's primary
+    // card. In a multi-card group the primary (the one that owns the merged
+    // table) is usually thumbnail #1, so deleting selectedCard would always
+    // remove the first image regardless of which thumbnail the admin chose.
+    const cardToReject = activeCard;
+    if (!cardToReject) return;
     try {
-      const rejectedCardId = selectedCard.id;
+      const rejectedCardId = cardToReject.id;
       await deleteWorkCard(rejectedCardId);
       showToast('הכרטיס נדחה ונמחק בהצלחה', 'success');
-      
-      // Remove from list
+
+      const cachedUrl = imageUrlCacheRef.current.get(rejectedCardId);
+      if (cachedUrl) {
+        URL.revokeObjectURL(cachedUrl);
+        imageUrlCacheRef.current.delete(rejectedCardId);
+      }
+
       const nextCards = workCards.filter(c => c.id !== rejectedCardId);
       setWorkCards(nextCards);
+      setShowRejectModal(false);
+
+      // If the employee still has other cards this month, keep the group open:
+      // its key is stable, so the card-set change re-fetches the merged table
+      // and the image strip (which resets to the first remaining image).
+      const groupStillHasCards = (selectedGroup?.cards ?? []).some(c => c.id !== rejectedCardId);
+      if (groupStillHasCards) return;
+
       setSelectedGroupKey(null);
       setSelectedCard(null);
       setImageUrl(null);
       setGroupImages([]);
       setDayEntries([]);
-      setShowRejectModal(false);
     } catch (err) {
       console.error('Failed to reject card:', err);
       showToast('שגיאה בדחיית הכרטיס', 'error');
@@ -2944,6 +2961,11 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
           <p className="text-slate-600 dark:text-slate-300">
             האם אתה בטוח שברצונך לדחות את כרטיס העבודה? פעולה זו תמחק את הכרטיס ואת כל הנתונים הקשורים אליו מהמערכת.
           </p>
+          {groupImages.length > 1 && (
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              יימחק כרטיס {activeImageIndex + 1} מתוך {groupImages.length} (התמונה המוצגת כעת). שאר הכרטיסים של העובד יישארו.
+            </p>
+          )}
           <div className="flex justify-end gap-3 pt-4">
             <button
               onClick={() => setShowRejectModal(false)}
