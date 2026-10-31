@@ -232,7 +232,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [showRejectModal, setShowRejectModal] = useState(false);
+  // The card a pending reject will delete, captured when the confirm modal
+  // opens so keyboard navigation behind the modal can't retarget the delete.
+  const [rejectTarget, setRejectTarget] = useState<{ cardId: string; index: number; total: number } | null>(null);
+  const showRejectModal = rejectTarget !== null;
   const [showAssignModal, setShowAssignModal] = useState(false);
   // Suggest-comment modal: shown on approve when the employee's hours are split
   // across more than one site, prompting a comment on the relevant card image(s).
@@ -1672,21 +1675,38 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   };
 
   const handleReject = async () => {
-    if (!selectedCard) return;
+    // Reject the card whose image is in the viewer — not the group's primary
+    // card. In a multi-card group the primary (the one that owns the merged
+    // table) is usually thumbnail #1, so deleting selectedCard would always
+    // remove the first image regardless of which thumbnail the admin chose.
+    if (!rejectTarget) return;
     try {
-      const rejectedCardId = selectedCard.id;
+      const rejectedCardId = rejectTarget.cardId;
       await deleteWorkCard(rejectedCardId);
       showToast('הכרטיס נדחה ונמחק בהצלחה', 'success');
-      
-      // Remove from list
-      const nextCards = workCards.filter(c => c.id !== rejectedCardId);
-      setWorkCards(nextCards);
+
+      const cachedUrl = imageUrlCacheRef.current.get(rejectedCardId);
+      if (cachedUrl) {
+        URL.revokeObjectURL(cachedUrl);
+        imageUrlCacheRef.current.delete(rejectedCardId);
+      }
+
+      setWorkCards(prev => prev.filter(c => c.id !== rejectedCardId));
+      setRejectTarget(null);
+
+      // If the employee still has other cards this month, keep the group open:
+      // its key is stable, so the card-set change re-fetches the merged table
+      // and the image strip (which resets to the first remaining image).
+      const currentGroupCards = selectedGroup?.cards ?? [];
+      const wasInCurrentGroup = currentGroupCards.some(c => c.id === rejectedCardId);
+      const groupStillHasCards = currentGroupCards.some(c => c.id !== rejectedCardId);
+      if (!wasInCurrentGroup || groupStillHasCards) return;
+
       setSelectedGroupKey(null);
       setSelectedCard(null);
       setImageUrl(null);
       setGroupImages([]);
       setDayEntries([]);
-      setShowRejectModal(false);
     } catch (err) {
       console.error('Failed to reject card:', err);
       showToast('שגיאה בדחיית הכרטיס', 'error');
@@ -2200,7 +2220,10 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                           <span>{selectedCard.review_status === 'APPROVED' ? 'מאושר' : 'אשר'}</span>
                         </button>
                         <button
-                          onClick={() => setShowRejectModal(true)}
+                          onClick={() => {
+                            if (!activeCard) return;
+                            setRejectTarget({ cardId: activeCard.id, index: activeImageIndex, total: groupImages.length });
+                          }}
                           className="h-9 px-4 rounded-lg font-medium text-xs flex items-center gap-1.5 bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-colors dark:bg-transparent dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
                           title="דחה כרטיס (מחק)"
                         >
@@ -2932,7 +2955,7 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       )}
       <Modal
         isOpen={showRejectModal}
-        onClose={() => setShowRejectModal(false)}
+        onClose={() => setRejectTarget(null)}
         title="דחיית כרטיס עבודה"
         maxWidth="sm"
       >
@@ -2944,9 +2967,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
           <p className="text-slate-600 dark:text-slate-300">
             האם אתה בטוח שברצונך לדחות את כרטיס העבודה? פעולה זו תמחק את הכרטיס ואת כל הנתונים הקשורים אליו מהמערכת.
           </p>
+          {rejectTarget && rejectTarget.total > 1 && (
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              יימחק כרטיס {rejectTarget.index + 1} מתוך {rejectTarget.total} (התמונה המוצגת כעת). שאר הכרטיסים של העובד יישארו.
+            </p>
+          )}
           <div className="flex justify-end gap-3 pt-4">
             <button
-              onClick={() => setShowRejectModal(false)}
+              onClick={() => setRejectTarget(null)}
               className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors font-medium text-sm"
             >
               ביטול
