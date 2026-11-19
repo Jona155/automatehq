@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { getHoursMatrix } from '../api/workCards';
 import type { MatrixData } from '../types';
 import MonthPicker from './MonthPicker';
-import { DAY_STATUS_LABELS } from '../constants/dayStatus';
+import { DAY_STATUS_LABELS, OTHER_SITE_LABEL } from '../constants/dayStatus';
 import { getFirstName } from '../utils/nameUtils';
 
 interface MonthlySummaryTabProps {
@@ -245,13 +245,22 @@ export default function MonthlySummaryTab({ siteId, selectedMonth, onMonthChange
                   {matrixData.employees.map((employee) => {
                     const hours = matrixData.matrix[employee.id]?.[day];
                     const dayStatus = matrixData.status_matrix?.[employee.id]?.[day];
+                    const workedElsewhere = matrixData.other_site_days?.[employee.id]?.includes(day) ?? false;
+                    const hasLocalValue = Boolean(dayStatus) || (hours !== undefined && hours !== null);
                     const config = getCellStyle(employee.id);
                     return (
                       <td
                         key={employee.id}
-                        className={`px-2 py-2 text-center border-b border-l border-slate-200 dark:border-slate-700 ${config.bg}`}
+                        className={`px-2 py-2 text-center border-b border-l border-slate-200 dark:border-slate-700 ${
+                          workedElsewhere && !hasLocalValue ? 'bg-sky-50 dark:bg-sky-900/20' : config.bg
+                        }`}
+                        title={workedElsewhere ? OTHER_SITE_LABEL : undefined}
                       >
-                        {dayStatus ? (
+                        {workedElsewhere && !hasLocalValue ? (
+                          <span className="text-xs italic text-sky-700 dark:text-sky-300">
+                            {OTHER_SITE_LABEL}
+                          </span>
+                        ) : dayStatus ? (
                           <span className="text-xs italic text-slate-500 dark:text-slate-400">
                             {DAY_STATUS_LABELS[dayStatus] ?? dayStatus}
                           </span>

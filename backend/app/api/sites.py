@@ -91,6 +91,11 @@ STATUS_DAY_LABELS = {
 LONG_DAY_HOURS_THRESHOLD = 12
 LONG_DAY_FILL = PatternFill('solid', fgColor='D9D9D9')  # grey
 
+# Marker for days an employee worked at a different site. Contractors receive
+# these reports, so the label is deliberately generic and never names the site.
+OTHER_SITE_LABEL = 'עבד באתר אחר'
+OTHER_SITE_FILL = PatternFill('solid', fgColor='DDEBF7')  # light blue
+
 
 def _is_long_day(value):
     return isinstance(value, (int, float)) and float(value) > LONG_DAY_HOURS_THRESHOLD
@@ -466,6 +471,7 @@ def _populate_template_core_sheet(
     status_matrix=None,
     monthly_totals=None,
     comment_matrix=None,
+    other_site_days=None,
 ):
     """Populate a worksheet in the core template format (no fee summary rows).
 
@@ -476,6 +482,11 @@ def _populate_template_core_sheet(
 
     Per-day reviewer comments are attached as native Excel cell notes on the
     matching per-day hours cell.
+
+    other_site_days[employee_id] lists days the employee worked at a different
+    site. An otherwise-empty day shows OTHER_SITE_LABEL (text, so the SUM total
+    ignores it); a day that also has local hours/status keeps its value and gets
+    the label as a cell note instead.
     """
     if status_matrix is None:
         status_matrix = {}
@@ -483,6 +494,9 @@ def _populate_template_core_sheet(
         monthly_totals = {}
     if comment_matrix is None:
         comment_matrix = {}
+    other_site_sets = {
+        employee_id: set(days) for employee_id, days in (other_site_days or {}).items()
+    }
     days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
     employee_count = len(employees)
     last_data_col = max(2, employee_count + 1)
@@ -516,20 +530,33 @@ def _populate_template_core_sheet(
         for idx, employee in enumerate(employees, start=2):
             employee_id_str = str(employee.id)
             status = status_matrix.get(employee_id_str, {}).get(day)
+            worked_elsewhere = day in other_site_sets.get(employee_id_str, ())
+            marker_in_cell = False
             if status:
                 value = STATUS_DAY_LABELS[status]
             else:
                 employee_days = matrix.get(employee_id_str, {})
                 value = employee_days.get(day)
                 if value is None:
-                    value = _day_fallback_value(month_date.year, month_date.month, day, days_in_month)
+                    if worked_elsewhere:
+                        value = OTHER_SITE_LABEL
+                        marker_in_cell = True
+                    else:
+                        value = _day_fallback_value(month_date.year, month_date.month, day, days_in_month)
             cell = ws.cell(row=row, column=idx, value=value)
             cell._style = copy(style_body)
-            if not status and _is_long_day(value):
+            if marker_in_cell:
+                cell.fill = OTHER_SITE_FILL
+            elif not status and _is_long_day(value):
                 cell.fill = LONG_DAY_FILL
+            note_parts = []
+            if worked_elsewhere and not marker_in_cell:
+                note_parts.append(OTHER_SITE_LABEL)
             comment_text = comment_matrix.get(employee_id_str, {}).get(day)
             if comment_text:
-                cell.comment = Comment(comment_text, 'AutomateHQ')
+                note_parts.append(comment_text)
+            if note_parts:
+                cell.comment = Comment('\n'.join(note_parts), 'AutomateHQ')
 
     # Clear template styling for any excess rows (e.g. days 29-31 when month has 28 days)
     for excess_day in range(days_in_month + 1, 32):
@@ -642,8 +669,12 @@ def _load_hours_matrix(site_id, processing_month, approved_only, include_inactiv
         include_inactive=include_inactive,
         business_id=g.business_id,
     )
-    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}})
-    return site_data['employees'], site_data['matrix'], site_data['status_map'], month, site_data['status_matrix'], site_data['monthly_totals'], site_data['comment_matrix']
+    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}, 'other_site_days': {}})
+    return (
+        site_data['employees'], site_data['matrix'], site_data['status_map'], month,
+        site_data['status_matrix'], site_data['monthly_totals'], site_data['comment_matrix'],
+        site_data['other_site_days'],
+    )
 
 
 def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, include_inactive, business_id):
@@ -654,7 +685,7 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         return {}
 
     site_results = {
-        site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}}
+        site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}, 'other_site_days': {}}
         for site_id in unique_site_ids
     }
     target_site_ids = set(unique_site_ids)
@@ -781,6 +812,11 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
     # so a single card-level monthly_total can't be applied (see below).
     split_employee_ids = set()
 
+    # employee_id_str -> day -> effective sites with recorded hours that day.
+    # Collected for every site (in scope or not) to derive the generic
+    # "worked at another site" marker; site ids never leave this function.
+    worked_sites = {}
+
     for entry in day_entries:
         meta = work_card_meta.get(str(entry.work_card_id))
         if not meta:
@@ -791,6 +827,10 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         effective_site = entry.attributed_site_id or card_site_id
         if entry.attributed_site_id is not None and entry.attributed_site_id != card_site_id:
             split_employee_ids.add(employee_id_str)
+
+        # Only confirmed attendance counts: recorded positive hours, no status.
+        if not entry.day_status and entry.total_hours is not None and float(entry.total_hours) > 0:
+            worked_sites.setdefault(employee_id_str, {}).setdefault(entry.day_of_month, set()).add(effective_site)
 
         if effective_site not in target_site_ids:
             continue
@@ -826,6 +866,18 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
             if row.employee_id not in added_columns[row.site_id] and row.employee_id in employees_by_id:
                 site_results[row.site_id]['employees'].append(employees_by_id[row.employee_id])
                 added_columns[row.site_id].add(row.employee_id)
+
+    # For each employee column, mark days with hours recorded at any other site.
+    for site_id, site_data in site_results.items():
+        for emp in site_data['employees']:
+            employee_id_str = str(emp.id)
+            days = sorted(
+                day
+                for day, sites in worked_sites.get(employee_id_str, {}).items()
+                if sites - {site_id}
+            )
+            if days:
+                site_data['other_site_days'][employee_id_str] = days
 
     return _finalize()
 
@@ -1158,7 +1210,7 @@ def get_hours_matrix(site_id):
         include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
         try:
-            employees, matrix, status_map, _, status_matrix, monthly_totals, _ = _load_hours_matrix(
+            employees, matrix, status_map, _, status_matrix, monthly_totals, _, other_site_days = _load_hours_matrix(
                 site_id,
                 processing_month,
                 approved_only,
@@ -1171,6 +1223,7 @@ def get_hours_matrix(site_id):
                 'status_map': status_map,
                 'status_matrix': status_matrix,
                 'monthly_totals': monthly_totals,
+                'other_site_days': other_site_days,
             })
             return response
         except ValueError as e:
@@ -1192,7 +1245,7 @@ def get_hours_matrix(site_id):
                 }
             )
 
-def _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals=None, comment_matrix=None):
+def _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals=None, comment_matrix=None, other_site_days=None):
     """Generate a monthly summary XLSX workbook and return (BytesIO, filename)."""
     template_path = _resolve_summary_template_path()
     workbook = load_workbook(template_path)
@@ -1218,6 +1271,7 @@ def _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthl
         status_matrix=status_matrix,
         monthly_totals=monthly_totals,
         comment_matrix=comment_matrix,
+        other_site_days=other_site_days,
     )
 
     for extra_ws in workbook.worksheets[1:]:
@@ -1260,7 +1314,7 @@ def export_monthly_summary(site_id):
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
 
     try:
-        employees, matrix, status_map, month, status_matrix, monthly_totals, comment_matrix = _load_hours_matrix(
+        employees, matrix, status_map, month, status_matrix, monthly_totals, comment_matrix, other_site_days = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only,
@@ -1274,7 +1328,7 @@ def export_monthly_summary(site_id):
         return api_response(status_code=500, message="Failed to export summary", error=str(e))
 
     try:
-        output, download_name = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals, comment_matrix)
+        output, download_name = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals, comment_matrix, other_site_days)
     except Exception as e:
         logger.exception(f"Failed to generate summary XLSX for site {site_id}")
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
@@ -1309,7 +1363,7 @@ def send_summary_email(site_id):
         return api_response(status_code=400, message="processing_month is required", error="Bad Request")
 
     try:
-        employees, matrix, _, month, status_matrix, monthly_totals, comment_matrix = _load_hours_matrix(
+        employees, matrix, _, month, status_matrix, monthly_totals, comment_matrix, other_site_days = _load_hours_matrix(
             site_id, processing_month, approved_only=False, include_inactive=False
         )
     except ValueError as e:
@@ -1319,7 +1373,7 @@ def send_summary_email(site_id):
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
 
     try:
-        output, filename = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals, comment_matrix)
+        output, filename = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals, comment_matrix, other_site_days)
     except Exception as e:
         logger.exception(f"Failed to generate summary XLSX for email, site {site_id}")
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
@@ -1391,7 +1445,7 @@ def send_summary_whatsapp(site_id):
         )
 
     try:
-        employees, matrix, _, month, status_matrix, monthly_totals, comment_matrix = _load_hours_matrix(
+        employees, matrix, _, month, status_matrix, monthly_totals, comment_matrix, other_site_days = _load_hours_matrix(
             site_id, processing_month, approved_only=False, include_inactive=False
         )
     except ValueError as e:
@@ -1401,7 +1455,7 @@ def send_summary_whatsapp(site_id):
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
 
     try:
-        output, _ = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals, comment_matrix)
+        output, _ = _generate_summary_xlsx(site, employees, matrix, month, status_matrix, monthly_totals, comment_matrix, other_site_days)
     except Exception as e:
         logger.exception(f"Failed to generate summary XLSX for WhatsApp, site {site_id}")
         return api_response(status_code=500, message="Failed to generate summary", error=str(e))
@@ -1542,7 +1596,7 @@ def export_monthly_summary_batch():
 
         used_sheet_names = set()
         for site in sites:
-            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}})
+            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}, 'other_site_days': {}})
             total_employee_count += len(site_data['employees'])
 
             ws = workbook.copy_worksheet(template_ws)
@@ -1558,6 +1612,7 @@ def export_monthly_summary_batch():
                 status_matrix=site_data['status_matrix'],
                 monthly_totals=site_data.get('monthly_totals'),
                 comment_matrix=site_data.get('comment_matrix'),
+                other_site_days=site_data.get('other_site_days'),
             )
             _add_tariff_summary(
                 ws,
@@ -1631,7 +1686,7 @@ def export_salary_template_site(site_id):
         return api_response(status_code=400, message="Invalid date format. Use YYYY-MM-DD", error=str(e))
 
     try:
-        employees, matrix, _, _, status_matrix, __, comment_matrix = _load_hours_matrix(
+        employees, matrix, _, _, status_matrix, __, comment_matrix, ___ = _load_hours_matrix(
             site_id,
             processing_month,
             approved_only=False,
