@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { WorkCard, DayEntry, WorkCardExtraction, Employee, DayStatus, CardGroup, WorkCardMonthlyBreakdown, Site } from '../types';
+import type { MoveMonthSummary } from '../api/workCards';
 import { getWorkCards, getWorkCardFile, getDayEntries, updateDayEntries, approveWorkCard, deleteWorkCard, triggerExtraction, reextractHours, getExtraction, updateWorkCard, getMissingWorkCardEmployees, createManualWorkCard, getWorkCardMonthlyBreakdown, getEmployeeMonthGroup, sendWorkCardToWhatsApp } from '../api/workCards';
 import { getWhatsAppGroups, type WhatsAppGroup } from '../api/whatsapp';
 import { getEmployees } from '../api/employees';
@@ -11,6 +12,7 @@ import { useToast } from '../hooks/useToast';
 import { useAuth } from '../context/AuthContext';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import Modal from './Modal';
+import MoveMonthModal, { moveMonthToastMessage } from './MoveMonthModal';
 import BulkDayUpdatePanel from './BulkDayUpdatePanel';
 import MonthlyHoursPanel from './MonthlyHoursPanel';
 import SearchableSelect from './SearchableSelect';
@@ -236,6 +238,9 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
   // opens so keyboard navigation behind the modal can't retarget the delete.
   const [rejectTarget, setRejectTarget] = useState<{ cardId: string; index: number; total: number } | null>(null);
   const showRejectModal = rejectTarget !== null;
+  // Pinned when the dialog opens, like rejectTarget, so the move applies to the
+  // card that was in the viewer even if the active image changes meanwhile.
+  const [moveMonthTarget, setMoveMonthTarget] = useState<{ cardId: string; month: string; label: string | null } | null>(null);
   const [showAssignModal, setShowAssignModal] = useState(false);
   // Suggest-comment modal: shown on approve when the employee's hours are split
   // across more than one site, prompting a comment on the relevant card image(s).
@@ -1674,6 +1679,32 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
     await handleApprove();
   };
 
+  // Drop a card that no longer belongs to this month's view (rejected, or moved
+  // to another month) and tidy the selection.
+  const removeCardFromView = (removedCardId: string) => {
+    const cachedUrl = imageUrlCacheRef.current.get(removedCardId);
+    if (cachedUrl) {
+      URL.revokeObjectURL(cachedUrl);
+      imageUrlCacheRef.current.delete(removedCardId);
+    }
+
+    setWorkCards(prev => prev.filter(c => c.id !== removedCardId));
+
+    // If the employee still has other cards this month, keep the group open:
+    // its key is stable, so the card-set change re-fetches the merged table
+    // and the image strip (which resets to the first remaining image).
+    const currentGroupCards = selectedGroup?.cards ?? [];
+    const wasInCurrentGroup = currentGroupCards.some(c => c.id === removedCardId);
+    const groupStillHasCards = currentGroupCards.some(c => c.id !== removedCardId);
+    if (!wasInCurrentGroup || groupStillHasCards) return;
+
+    setSelectedGroupKey(null);
+    setSelectedCard(null);
+    setImageUrl(null);
+    setGroupImages([]);
+    setDayEntries([]);
+  };
+
   const handleReject = async () => {
     // Reject the card whose image is in the viewer — not the group's primary
     // card. In a multi-card group the primary (the one that owns the merged
@@ -1684,33 +1715,18 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
       const rejectedCardId = rejectTarget.cardId;
       await deleteWorkCard(rejectedCardId);
       showToast('הכרטיס נדחה ונמחק בהצלחה', 'success');
-
-      const cachedUrl = imageUrlCacheRef.current.get(rejectedCardId);
-      if (cachedUrl) {
-        URL.revokeObjectURL(cachedUrl);
-        imageUrlCacheRef.current.delete(rejectedCardId);
-      }
-
-      setWorkCards(prev => prev.filter(c => c.id !== rejectedCardId));
       setRejectTarget(null);
-
-      // If the employee still has other cards this month, keep the group open:
-      // its key is stable, so the card-set change re-fetches the merged table
-      // and the image strip (which resets to the first remaining image).
-      const currentGroupCards = selectedGroup?.cards ?? [];
-      const wasInCurrentGroup = currentGroupCards.some(c => c.id === rejectedCardId);
-      const groupStillHasCards = currentGroupCards.some(c => c.id !== rejectedCardId);
-      if (!wasInCurrentGroup || groupStillHasCards) return;
-
-      setSelectedGroupKey(null);
-      setSelectedCard(null);
-      setImageUrl(null);
-      setGroupImages([]);
-      setDayEntries([]);
+      removeCardFromView(rejectedCardId);
     } catch (err) {
       console.error('Failed to reject card:', err);
       showToast('שגיאה בדחיית הכרטיס', 'error');
     }
+  };
+
+  const handleMovedToMonth = (cardId: string, targetMonth: string, summary: MoveMonthSummary) => {
+    setMoveMonthTarget(null);
+    showToast(moveMonthToastMessage(targetMonth, summary), 'success');
+    removeCardFromView(cardId);
   };
 
   // Open the "Send to WhatsApp" modal for the active card image and load the
@@ -2229,6 +2245,22 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
                         >
                           <span className="material-symbols-outlined text-base">cancel</span>
                           <span>דחה</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!activeCard) return;
+                            setMoveMonthTarget({
+                              cardId: activeCard.id,
+                              month: activeCard.processing_month,
+                              label: selectedGroup?.employee?.full_name ?? null,
+                            });
+                          }}
+                          disabled={isSaving || activeCard?.review_status === 'APPROVED'}
+                          className="h-9 px-3 rounded-lg font-medium text-xs flex items-center gap-1.5 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:bg-transparent dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                          title={activeCard?.review_status === 'APPROVED' ? 'כרטיס מאושר לא ניתן להעברה' : 'העבר את הכרטיס לחודש אחר'}
+                        >
+                          <span className="material-symbols-outlined text-base">event_repeat</span>
+                          <span>העבר חודש</span>
                         </button>
                       </div>
                     )}
@@ -2953,6 +2985,14 @@ function WorkCardReviewTab({ siteId, selectedMonth, onMonthChange, monthStorageK
           onApproveWithoutComment={handleApproveWithoutComment}
         />
       )}
+      <MoveMonthModal
+        isOpen={moveMonthTarget !== null}
+        onClose={() => setMoveMonthTarget(null)}
+        cardId={moveMonthTarget?.cardId ?? null}
+        currentMonth={moveMonthTarget?.month ?? null}
+        cardLabel={moveMonthTarget?.label}
+        onMoved={handleMovedToMonth}
+      />
       <Modal
         isOpen={showRejectModal}
         onClose={() => setRejectTarget(null)}

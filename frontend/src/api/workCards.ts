@@ -369,6 +369,27 @@ export const resetWorkCardsForMonth = async (params: ResetWorkCardsParams): Prom
   return response.data.data;
 };
 
+export interface MoveMonthSummary {
+  from_month: string;
+  to_month: string;
+  days_written: number;
+  days_skipped_protected: number;
+  days_skipped_duplicate: number;
+  source_siblings_rebuilt: number;
+  source_days_restored: number;
+  source_month_has_approved_card: boolean;
+}
+
+// Move a work card to another processing month. The backend rebuilds the
+// extracted day entries that depend on the month.
+export const moveWorkCardMonth = async (cardId: string, targetMonth: string) => {
+  const response = await client.post<{ data: { work_card: WorkCard; move: MoveMonthSummary } }>(
+    `/work_cards/${cardId}/move-month`,
+    { processing_month: normalizeMonthFormat(targetMonth) },
+  );
+  return response.data.data;
+};
+
 // Get unassigned work cards (business-wide, no employee)
 export const getUnassignedWorkCards = async (params: { month?: string; page?: number; page_size?: number }) => {
   const queryParams: Record<string, string> = {};

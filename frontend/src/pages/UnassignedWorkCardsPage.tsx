@@ -7,6 +7,8 @@ import { getSites } from '../api/sites';
 import { useAuth } from '../context/AuthContext';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
+import MoveMonthModal, { moveMonthToastMessage } from '../components/MoveMonthModal';
+import { useToast } from '../hooks/useToast';
 import SearchableMultiSelect from '../components/SearchableMultiSelect';
 import { getDefaultMonth } from '../utils/monthUtils';
 import PageBanner from '../components/PageBanner';
@@ -298,6 +300,10 @@ export default function UnassignedWorkCardsPage() {
 
   // Delete confirmation state
   const [cardToDelete, setCardToDelete] = useState<UnassignedWorkCard | null>(null);
+
+  // Move-to-another-month state
+  const [cardToMove, setCardToMove] = useState<UnassignedWorkCard | null>(null);
+  const { showToast, ToastContainer } = useToast();
   const [isDeleting, setIsDeleting] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -693,6 +699,13 @@ export default function UnassignedWorkCardsPage() {
                             שייך עובד
                           </button>
                           <button
+                            onClick={() => setCardToMove(card)}
+                            className="p-1.5 text-slate-400 hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                            title="העבר לחודש אחר"
+                          >
+                            <span className="material-symbols-outlined text-[18px] leading-none">event_repeat</span>
+                          </button>
+                          <button
                             onClick={() => setCardToDelete(card)}
                             className="p-1.5 text-slate-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
                             title="מחק כרטיס"
@@ -1037,6 +1050,20 @@ export default function UnassignedWorkCardsPage() {
           </div> {/* end form panel */}
         </div> {/* end two-column flex */}
       </Modal>
+
+      <MoveMonthModal
+        isOpen={!!cardToMove}
+        onClose={() => setCardToMove(null)}
+        cardId={cardToMove?.id ?? null}
+        currentMonth={cardToMove?.processing_month ?? null}
+        cardLabel={cardToMove?.extraction?.extracted_employee_name ?? cardToMove?.original_filename ?? null}
+        onMoved={(_cardId, targetMonth, summary) => {
+          setCardToMove(null);
+          showToast(moveMonthToastMessage(targetMonth, summary), 'success');
+          fetchCards(currentPage);
+        }}
+      />
+      <ToastContainer />
 
       {/* Delete Confirmation Modal */}
       <Modal
