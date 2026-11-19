@@ -273,6 +273,7 @@ export interface MatrixData {
   status_matrix: Record<string, Record<number, string>>; // employee_id -> day -> day_status
   status_map: Record<string, string | null>; // employee_id -> review_status
   monthly_totals?: Record<string, number>; // employee_id -> manual monthly total (no per-day entries)
+  other_site_days?: Record<string, number[]>; // employee_id -> days worked at another (unnamed) site
 }
 
 export interface WorkCardExtraction {
