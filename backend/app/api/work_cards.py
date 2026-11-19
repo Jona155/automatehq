@@ -497,6 +497,9 @@ def update_work_card(card_id):
     # Prevent changing business_id
     if 'business_id' in data:
         del data['business_id']
+    # The month is changed only through /move-month, which also rebuilds the
+    # day entries that depend on it.
+    data.pop('processing_month', None)
 
     # Keep review status aligned with assignment state.
     # Manual assignment should move cards out of NEEDS_ASSIGNMENT to NEEDS_REVIEW.
@@ -524,6 +527,47 @@ def update_work_card(card_id):
         return api_response(data=model_to_dict(updated_card), message="Work card updated successfully")
     except Exception as e:
         return api_response(status_code=500, message="Failed to update work card", error=str(e))
+
+@work_cards_bp.route('/<uuid:card_id>/move-month', methods=['POST'])
+@token_required
+@role_required('ADMIN')
+def move_work_card_month_endpoint(card_id):
+    """Move a work card to another processing month (must belong to current business).
+
+    Body: {"processing_month": "YYYY-MM" | "YYYY-MM-DD"}
+    """
+    from ..services.work_card_month_move import (
+        MoveMonthError, move_work_card_month, parse_month,
+    )
+
+    card = repo.get_by_id(card_id)
+    if not card or card.business_id != g.business_id:
+        return api_response(status_code=404, message="Work card not found", error="Not Found")
+
+    data = request.get_json(silent=True) or {}
+    target_month = parse_month(data.get('processing_month'))
+    if not target_month:
+        return api_response(
+            status_code=400,
+            message="processing_month is required (YYYY-MM or YYYY-MM-DD)",
+            error="Bad Request",
+        )
+
+    try:
+        summary = move_work_card_month(card, target_month, actor_user_id=g.current_user.id)
+    except MoveMonthError as e:
+        return api_response(status_code=e.status_code, message=e.message, error=e.code)
+    except Exception as e:
+        logger.exception("Failed to move work card %s to %s", card_id, target_month)
+        return api_response(status_code=500, message="Failed to move work card", error=str(e))
+
+    from .dashboard import invalidate_business_cache
+    invalidate_business_cache(g.business_id)
+    return api_response(
+        data={'work_card': model_to_dict(card), 'move': summary},
+        message="Work card moved successfully",
+    )
+
 
 @work_cards_bp.route('/<uuid:card_id>/status', methods=['PUT'])
 @token_required
