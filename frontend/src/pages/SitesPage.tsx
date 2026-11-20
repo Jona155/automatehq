@@ -126,6 +126,7 @@ export default function SitesPage() {
   const [summaryExportOpen, setSummaryExportOpen] = useState(false);
   const [summaryExportMonth, setSummaryExportMonth] = useState(() => getDefaultMonth(user?.business?.default_month_cutoff_day));
   const [summaryExportSiteIds, setSummaryExportSiteIds] = useState<string[]>([]);
+  const [summaryShowOtherSiteNames, setSummaryShowOtherSiteNames] = useState(false);
   const [isSummaryExporting, setIsSummaryExporting] = useState(false);
   const [summaryExportError, setSummaryExportError] = useState<string | null>(null);
   const [salaryExportOpen, setSalaryExportOpen] = useState(false);
@@ -278,6 +279,7 @@ export default function SitesPage() {
     setSummaryExportError(null);
     setSummaryExportMonth(getDefaultMonth(user?.business?.default_month_cutoff_day));
     setSummaryExportSiteIds([]);
+    setSummaryShowOtherSiteNames(false);
     setSummaryExportOpen(true);
   };
 
@@ -294,6 +296,7 @@ export default function SitesPage() {
         include_inactive: false,
         include_inactive_sites: false,
         site_ids: summaryExportSiteIds,
+        show_other_site_names: summaryShowOtherSiteNames,
       });
       const scope = summaryExportSiteIds.length > 0 ? 'selected_sites' : 'all_sites';
       downloadBlobFile(blob, `monthly_summary_${scope}_${summaryExportMonth}.xlsx`);
@@ -867,6 +870,20 @@ export default function SitesPage() {
                   allLabel="כל האתרים"
                 />
               </div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={summaryShowOtherSiteNames}
+                  onChange={(e) => setSummaryShowOtherSiteNames(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary/50"
+                />
+                <span className="text-sm">
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">הצג את שם האתר האחר</span>
+                  <span className="block text-xs text-slate-500 dark:text-slate-400">
+                    בימים שבהם העובד עבד באתר אחר. כשהאפשרות כבויה יוצג {'"עבד באתר אחר"'} בלי שם.
+                  </span>
+                </span>
+              </label>
               <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                 <button
                   type="button"

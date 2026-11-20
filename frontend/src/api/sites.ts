@@ -113,6 +113,7 @@ export const downloadMonthlySummaryBatch = async (
     include_inactive?: boolean;
     include_inactive_sites?: boolean;
     site_ids?: string[];
+    show_other_site_names?: boolean;
   }
 ) => {
   const response = await client.get('/sites/summary/export-batch', {
@@ -122,6 +123,7 @@ export const downloadMonthlySummaryBatch = async (
       include_inactive: options?.include_inactive ? 'true' : 'false',
       include_inactive_sites: options?.include_inactive_sites ? 'true' : 'false',
       ...(options?.site_ids?.length ? { site_ids: options.site_ids.join(',') } : {}),
+      show_other_site_names: options?.show_other_site_names ? 'true' : 'false',
     },
     responseType: 'blob',
   });

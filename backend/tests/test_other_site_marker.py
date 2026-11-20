@@ -86,6 +86,8 @@ class OtherSiteDaysLoaderTests(unittest.TestCase):
         # Only X requested: days at Y and Z still count.
         results = _load([site_x], [employee], site_x, employee, entries, card_id)
         self.assertEqual(results[site_x]['other_site_days'][emp], [2, 3])
+        # Server-side detail for the named export option: which site, per day.
+        self.assertEqual(results[site_x]['other_site_ids'][emp], {2: [site_y], 3: [site_z]})
 
     def test_status_zero_and_missing_days_are_not_marked(self):
         site_x, site_y = uuid.uuid4(), uuid.uuid4()
@@ -111,7 +113,7 @@ class OtherSiteDaysLoaderTests(unittest.TestCase):
 
 
 class OtherSiteSheetTests(unittest.TestCase):
-    def _populate(self, matrix, other_site_days, comment_matrix=None):
+    def _populate(self, matrix, other_site_days, comment_matrix=None, other_site_labels=None):
         workbook = Workbook()
         ws = workbook.active
         base_style = copy(ws['A1']._style)
@@ -127,6 +129,7 @@ class OtherSiteSheetTests(unittest.TestCase):
             style_total=base_style,
             other_site_days={emp: other_site_days},
             comment_matrix={emp: comment_matrix or {}},
+            other_site_labels={emp: other_site_labels} if other_site_labels else None,
         )
         return ws
 
@@ -146,10 +149,91 @@ class OtherSiteSheetTests(unittest.TestCase):
         self.assertIn(OTHER_SITE_LABEL, cell.comment.text)
         self.assertIn('late start', cell.comment.text)
 
+    def test_named_label_replaces_generic_one(self):
+        ws = self._populate({1: 8.0}, [1, 2], other_site_labels={1: 'עבד באתר: Beta', 2: 'עבד באתר: Beta'})
+        self.assertEqual(ws.cell(row=4, column=2).value, 'עבד באתר: Beta')
+        self.assertIn('עבד באתר: Beta', ws.cell(row=3, column=2).comment.text)
+
     def test_marker_beats_saturday_fallback(self):
         # Feb 7 2026 is a Saturday (row 9).
         ws = self._populate({}, [7])
         self.assertEqual(ws.cell(row=9, column=2).value, OTHER_SITE_LABEL)
+
+
+class OtherSiteNamesExportTests(unittest.TestCase):
+    """The batch export's show_other_site_names option (DB-backed)."""
+
+    def setUp(self):
+        from dotenv import load_dotenv
+        load_dotenv()
+        from backend.app import create_app, db
+        from backend.app.auth_utils import encode_auth_token
+        from backend.app.models import Business, Employee, Site, User, WorkCard, WorkCardDayEntry
+
+        self.db = db
+        self.app = create_app()
+        self.client = self.app.test_client()
+        self.ctx = self.app.app_context()
+        self.ctx.push()
+
+        suffix = uuid.uuid4().hex[:8]
+        business = Business(name=f'Other Site {suffix}', code=f'other-site-{suffix}', is_active=True)
+        db.session.add(business)
+        db.session.flush()
+        admin = User(business_id=business.id, full_name='Admin', email=f'other-site-{suffix}@example.com',
+                     role='ADMIN', password_hash='n/a', is_active=True)
+        self.site_a = Site(business_id=business.id, site_name=f'Alpha {suffix}', is_active=True)
+        self.site_b = Site(business_id=business.id, site_name=f'Beta {suffix}', is_active=True)
+        db.session.add_all([admin, self.site_a, self.site_b])
+        db.session.flush()
+        employee = Employee(business_id=business.id, site_id=self.site_a.id, full_name='Dana Levi',
+                            passport_id=f'OS{suffix}', is_active=True, status='ACTIVE')
+        db.session.add(employee)
+        db.session.flush()
+        card = WorkCard(business_id=business.id, site_id=self.site_a.id, employee_id=employee.id,
+                        processing_month=date(2026, 2, 1), source='ADMIN_SINGLE', review_status='APPROVED')
+        db.session.add(card)
+        db.session.flush()
+        db.session.add_all([
+            WorkCardDayEntry(work_card_id=card.id, day_of_month=2, total_hours=8, source='MANUAL'),
+            WorkCardDayEntry(work_card_id=card.id, day_of_month=3, total_hours=8, source='MANUAL',
+                             attributed_site_id=self.site_b.id),
+        ])
+        db.session.commit()
+
+        self.business_id = business.id
+        self.headers = {'Authorization': f'Bearer {encode_auth_token(admin.id)}'}
+        # Export only site A: the other site (B) is outside the selection.
+        self.url = (f'/api/sites/summary/export-batch?processing_month=2026-02-01'
+                    f'&site_ids={self.site_a.id}')
+
+    def tearDown(self):
+        from backend.app.repositories.business_repository import BusinessRepository
+        try:
+            BusinessRepository().hard_delete(self.business_id)
+        except Exception:
+            self.db.session.rollback()
+        self.ctx.pop()
+
+    def _sheet(self, query=''):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        response = self.client.get(self.url + query, headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        return load_workbook(BytesIO(response.data)).worksheets[0]
+
+    def _all_text(self, ws):
+        return ' '.join(str(c.value) for row in ws.iter_rows() for c in row if c.value is not None)
+
+    def test_default_export_is_anonymous(self):
+        ws = self._sheet()
+        self.assertEqual(ws.cell(row=5, column=2).value, OTHER_SITE_LABEL)  # Feb 3
+        self.assertNotIn(self.site_b.site_name, self._all_text(ws))
+
+    def test_opt_in_names_the_other_site(self):
+        ws = self._sheet('&show_other_site_names=true')
+        self.assertEqual(ws.cell(row=5, column=2).value, f'עבד באתר: {self.site_b.site_name}')
+        self.assertEqual(ws.cell(row=4, column=2).value, 8)  # local hours untouched
 
 
 if __name__ == '__main__':
