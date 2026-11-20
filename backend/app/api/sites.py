@@ -35,7 +35,7 @@ from .dashboard import invalidate_business_cache
 from ..auth_utils import token_required, role_required
 from ..utils import normalize_phone
 from ..models.work_cards import WorkCard, WorkCardExtraction, WorkCardDayEntry
-from ..models.sites import Employee
+from ..models.sites import Employee, Site
 from ..extensions import db
 from ..observability import QueryCounter, sites_metrics
 from ..services.email_service import send_email_with_attachment
@@ -94,6 +94,8 @@ LONG_DAY_FILL = PatternFill('solid', fgColor='D9D9D9')  # grey
 # Marker for days an employee worked at a different site. Contractors receive
 # these reports, so the label is deliberately generic and never names the site.
 OTHER_SITE_LABEL = 'עבד באתר אחר'
+# Used instead when the exporter opts in to naming the other site(s).
+OTHER_SITE_NAMED_PREFIX = 'עבד באתר:'
 OTHER_SITE_FILL = PatternFill('solid', fgColor='DDEBF7')  # light blue
 
 
@@ -472,6 +474,7 @@ def _populate_template_core_sheet(
     monthly_totals=None,
     comment_matrix=None,
     other_site_days=None,
+    other_site_labels=None,
 ):
     """Populate a worksheet in the core template format (no fee summary rows).
 
@@ -487,6 +490,9 @@ def _populate_template_core_sheet(
     site. An otherwise-empty day shows OTHER_SITE_LABEL (text, so the SUM total
     ignores it); a day that also has local hours/status keeps its value and gets
     the label as a cell note instead.
+
+    other_site_labels[employee_id][day], when given, replaces the generic label
+    (e.g. to name the other site); it is only passed when the user opted in.
     """
     if status_matrix is None:
         status_matrix = {}
@@ -497,6 +503,7 @@ def _populate_template_core_sheet(
     other_site_sets = {
         employee_id: set(days) for employee_id, days in (other_site_days or {}).items()
     }
+    other_site_labels = other_site_labels or {}
     days_in_month = calendar.monthrange(month_date.year, month_date.month)[1]
     employee_count = len(employees)
     last_data_col = max(2, employee_count + 1)
@@ -531,6 +538,7 @@ def _populate_template_core_sheet(
             employee_id_str = str(employee.id)
             status = status_matrix.get(employee_id_str, {}).get(day)
             worked_elsewhere = day in other_site_sets.get(employee_id_str, ())
+            marker_label = other_site_labels.get(employee_id_str, {}).get(day) or OTHER_SITE_LABEL
             marker_in_cell = False
             if status:
                 value = STATUS_DAY_LABELS[status]
@@ -539,7 +547,7 @@ def _populate_template_core_sheet(
                 value = employee_days.get(day)
                 if value is None:
                     if worked_elsewhere:
-                        value = OTHER_SITE_LABEL
+                        value = marker_label
                         marker_in_cell = True
                     else:
                         value = _day_fallback_value(month_date.year, month_date.month, day, days_in_month)
@@ -551,7 +559,7 @@ def _populate_template_core_sheet(
                 cell.fill = LONG_DAY_FILL
             note_parts = []
             if worked_elsewhere and not marker_in_cell:
-                note_parts.append(OTHER_SITE_LABEL)
+                note_parts.append(marker_label)
             comment_text = comment_matrix.get(employee_id_str, {}).get(day)
             if comment_text:
                 note_parts.append(comment_text)
@@ -659,6 +667,42 @@ def _add_tariff_summary(ws, employee_count, hourly_tariff, style_body,
         ws.cell(row=vat_row, column=label_col, value='מחיר כולל מע"מ')._style = copy(style_tariff_label)
 
 
+def _other_site_named_label(names):
+    return f"{OTHER_SITE_NAMED_PREFIX} {', '.join(names)}"
+
+
+def _build_other_site_labels(site_matrices, business_id):
+    """Per site, map employee -> day -> label naming the other site(s).
+
+    Only used when the user explicitly asks to show site names. One query for
+    every referenced site, scoped to the business.
+    """
+    referenced = {
+        other_id
+        for site_data in site_matrices.values()
+        for per_day in site_data.get('other_site_ids', {}).values()
+        for other_ids in per_day.values()
+        for other_id in other_ids
+    }
+    if not referenced:
+        return {}
+    names = {
+        site.id: site.site_name
+        for site in Site.query.filter(Site.business_id == business_id, Site.id.in_(referenced)).all()
+    }
+    def label_for(other_ids):
+        known = [names[i] for i in other_ids if i in names]
+        return _other_site_named_label(known) if known else OTHER_SITE_LABEL
+
+    return {
+        site_id: {
+            employee_id_str: {day: label_for(other_ids) for day, other_ids in per_day.items()}
+            for employee_id_str, per_day in site_data.get('other_site_ids', {}).items()
+        }
+        for site_id, site_data in site_matrices.items()
+    }
+
+
 def _load_hours_matrix(site_id, processing_month, approved_only, include_inactive):
     started_at = time.perf_counter()
     month = datetime.strptime(processing_month, '%Y-%m-%d').date()
@@ -669,7 +713,7 @@ def _load_hours_matrix(site_id, processing_month, approved_only, include_inactiv
         include_inactive=include_inactive,
         business_id=g.business_id,
     )
-    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}, 'other_site_days': {}})
+    site_data = site_results.get(site_id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}, 'other_site_days': {}, 'other_site_ids': {}})
     return (
         site_data['employees'], site_data['matrix'], site_data['status_map'], month,
         site_data['status_matrix'], site_data['monthly_totals'], site_data['comment_matrix'],
@@ -685,7 +729,7 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
         return {}
 
     site_results = {
-        site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}, 'other_site_days': {}}
+        site_id: {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}, 'other_site_days': {}, 'other_site_ids': {}}
         for site_id in unique_site_ids
     }
     target_site_ids = set(unique_site_ids)
@@ -868,16 +912,19 @@ def load_hours_matrix_for_sites(site_ids, processing_month, approved_only, inclu
                 added_columns[row.site_id].add(row.employee_id)
 
     # For each employee column, mark days with hours recorded at any other site.
+    # other_site_days (day numbers only) is what the API and the anonymous
+    # export use; other_site_ids stays server-side for the named export option.
     for site_id, site_data in site_results.items():
         for emp in site_data['employees']:
             employee_id_str = str(emp.id)
-            days = sorted(
-                day
+            per_day = {
+                day: sorted(sites - {site_id}, key=str)
                 for day, sites in worked_sites.get(employee_id_str, {}).items()
                 if sites - {site_id}
-            )
-            if days:
-                site_data['other_site_days'][employee_id_str] = days
+            }
+            if per_day:
+                site_data['other_site_days'][employee_id_str] = sorted(per_day)
+                site_data['other_site_ids'][employee_id_str] = per_day
 
     return _finalize()
 
@@ -1527,6 +1574,9 @@ def export_monthly_summary_batch():
     approved_only = request.args.get('approved_only', 'false').lower() == 'true'
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
     include_inactive_sites = request.args.get('include_inactive_sites', 'false').lower() == 'true'
+    # Off by default: reports go to contractors, so other sites stay anonymous
+    # unless the exporter explicitly asks to name them.
+    show_other_site_names = request.args.get('show_other_site_names', 'false').lower() == 'true'
     site_ids_param = request.args.get('site_ids')
 
     selected_site_ids = None
@@ -1593,10 +1643,13 @@ def export_monthly_summary_batch():
             include_inactive=include_inactive,
             business_id=g.business_id,
         )
+        other_site_labels = (
+            _build_other_site_labels(site_matrices, g.business_id) if show_other_site_names else {}
+        )
 
         used_sheet_names = set()
         for site in sites:
-            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}, 'other_site_days': {}})
+            site_data = site_matrices.get(site.id, {'employees': [], 'matrix': {}, 'status_map': {}, 'status_matrix': {}, 'monthly_totals': {}, 'comment_matrix': {}, 'other_site_days': {}, 'other_site_ids': {}})
             total_employee_count += len(site_data['employees'])
 
             ws = workbook.copy_worksheet(template_ws)
@@ -1613,6 +1666,7 @@ def export_monthly_summary_batch():
                 monthly_totals=site_data.get('monthly_totals'),
                 comment_matrix=site_data.get('comment_matrix'),
                 other_site_days=site_data.get('other_site_days'),
+                other_site_labels=other_site_labels.get(site.id),
             )
             _add_tariff_summary(
                 ws,
