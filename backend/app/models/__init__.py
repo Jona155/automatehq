@@ -9,6 +9,7 @@ from .telegram import TelegramBotConfig, TelegramIngestedFile, TelegramPollingSt
 from .whatsapp import WhatsAppGroupConfig, WhatsAppIngestedMessage
 from .auth import AuthOtpChallenge
 from .absences import AbsenceMonthSettings, AbsenceEmployeeExclusion, AbsenceEmployeeDaySettings
+from .report_adjustments import ReportAdjustment, ReportNote, ReportRevision
 
 __all__ = [
     'Business',
@@ -32,4 +33,7 @@ __all__ = [
     'AbsenceMonthSettings',
     'AbsenceEmployeeExclusion',
     'AbsenceEmployeeDaySettings',
+    'ReportAdjustment',
+    'ReportNote',
+    'ReportRevision',
 ]

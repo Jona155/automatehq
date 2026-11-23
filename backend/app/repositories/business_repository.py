@@ -86,6 +86,7 @@ class BusinessRepository(BaseRepository[Business]):
         from ..models.absences import (
             AbsenceMonthSettings, AbsenceEmployeeExclusion, AbsenceEmployeeDaySettings,
         )
+        from ..models.report_adjustments import ReportAdjustment, ReportNote, ReportRevision
 
         business = self.get_by_id(business_id)
         if not business:
@@ -115,6 +116,9 @@ class BusinessRepository(BaseRepository[Business]):
         wipe(AbsenceEmployeeExclusion, AbsenceEmployeeExclusion.business_id == business_id)
         wipe(AbsenceEmployeeDaySettings, AbsenceEmployeeDaySettings.business_id == business_id)
         wipe(AbsenceMonthSettings, AbsenceMonthSettings.business_id == business_id)
+        wipe(ReportAdjustment, ReportAdjustment.business_id == business_id)
+        wipe(ReportNote, ReportNote.business_id == business_id)
+        wipe(ReportRevision, ReportRevision.business_id == business_id)
         wipe(WorkCard, WorkCard.business_id == business_id)
         wipe(WhatsAppGroupConfig, WhatsAppGroupConfig.business_id == business_id)
         wipe(WhatsAppNotificationSettings, WhatsAppNotificationSettings.business_id == business_id)

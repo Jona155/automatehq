@@ -2,6 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSidebar } from '../context/SidebarContext';
 import { usePermissions } from '../hooks/usePermissions';
+import { useReportEditorEnabled } from '../hooks/useReportEditorEnabled';
 import { useState, type ReactNode } from 'react';
 
 const SIDEBAR_WIDTH_EXPANDED = 'w-64';
@@ -58,8 +59,8 @@ function NavRow({ to, onClick, icon, iconSize = 20, label, collapsed, indent, tr
 
   if (to) {
     return (
-      <NavLink to={to} title={collapsed ? label : undefined} className={({ isActive: a }) => `relative ${rowClass(a)}`}>
-        {({ isActive: a }) => body(a)}
+      <NavLink to={to} title={collapsed ? label : undefined} className={({ isActive: a }) => `relative ${rowClass(isActive ?? a)}`}>
+        {({ isActive: a }) => body(isActive ?? a)}
       </NavLink>
     );
   }
@@ -113,6 +114,9 @@ export default function Sidebar() {
     location.pathname.includes('/missing-work-cards') ||
     location.pathname.includes('/unassigned-work-cards');
   const [cardsOpen, setCardsOpen] = useState<boolean>(true);
+  const reportEditorEnabled = useReportEditorEnabled();
+  // The editor lives under /sites/:id/reports, so it needs its own active check.
+  const onReportsRoute = /\/reports\/?$/.test(location.pathname);
 
   const toggleSection = (k: SectionKey) =>
     setSectionsOpen((s) => ({ ...s, [k]: !s[k] }));
@@ -223,7 +227,22 @@ export default function Sidebar() {
 
             <NavRow to={`${base}/absences`} icon="event_busy" label="היעדרויות" collapsed={collapsed} />
             <NavRow to={`${base}/employees`} icon="group" label="עובדים" collapsed={collapsed} />
-            <NavRow to={`${base}/sites`} icon="apartment" label="אתרים" collapsed={collapsed} />
+            <NavRow
+              to={`${base}/sites`}
+              icon="apartment"
+              label="אתרים"
+              collapsed={collapsed}
+              isActive={onReportsRoute ? false : undefined}
+            />
+            {isAdmin && reportEditorEnabled && (
+              <NavRow
+                to={`${base}/reports`}
+                icon="table_view"
+                label="דוחות חודשיים"
+                collapsed={collapsed}
+                isActive={onReportsRoute}
+              />
+            )}
             <NavRow to={`${base}/contractors`} icon="handshake" label="קבלנים" collapsed={collapsed} />
           </div>
         )}

@@ -10,6 +10,8 @@ import SitesPage from './pages/SitesPage';
 import ContractorsPage from './pages/ContractorsPage';
 import SiteDetailsPage from './pages/SiteDetailsPage';
 import SiteReviewPage from './pages/SiteReviewPage';
+import SiteReportEditorPage from './pages/SiteReportEditorPage';
+import ReportsLandingPage from './pages/ReportsLandingPage';
 import UsersPage from './pages/UsersPage';
 import EmployeeImportPage from './pages/EmployeeImportPage';
 import PublicPortalPage from './pages/PublicPortalPage';
@@ -57,6 +59,8 @@ function App() {
                 <Route path="/:businessCode/contractors" element={<ContractorsPage />} />
                 <Route path="/:businessCode/sites/:siteId" element={<SiteDetailsPage />} />
                 <Route path="/:businessCode/sites/:siteId/review" element={<SiteReviewPage />} />
+                <Route path="/:businessCode/sites/:siteId/reports" element={<SiteReportEditorPage />} />
+                <Route path="/:businessCode/reports" element={<ReportsLandingPage />} />
                 <Route path="/:businessCode/missing-work-cards" element={<MissingWorkCardsPage />} />
                 <Route path="/:businessCode/absences" element={<AbsencesPage />} />
                 <Route path="/:businessCode/unassigned-work-cards" element={<UnassignedWorkCardsPage />} />

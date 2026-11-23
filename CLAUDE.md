@@ -58,6 +58,7 @@ worker/     Background extraction worker (Python)
 | `/api/whatsapp` | `api/whatsapp_settings.py` | WhatsApp integration settings |
 | `/api/sites/tariff-import` | `api/site_tariff_import.py` | Site tariff bulk import |
 | `/api/sites` | `api/site_hours_import.py` | Site hours bulk import (shares the `sites` prefix) |
+| `/api/sites` | `api/site_reports.py` | Report preview & editing: `/<site_id>/reports/<summary\|salary>` (shares the `sites` prefix) |
 
 Prefixes above are read from the `Blueprint(...)` declarations in `backend/app/api/`.
 `work_cards` is the one that uses an underscore — assuming a hyphen there yields a 404.
@@ -122,6 +123,13 @@ Prefixes above are read from the `Blueprint(...)` declarations in `backend/app/a
 - Flask serves the React build (`frontend/dist/`) as static files in production
 - Dev: Vite on port 5173, Flask on 5000, Vite proxies `/api` to backend
 - Env vars: `DATABASE_URL`, `SECRET_KEY`, `OPENAI_API_KEY`, `TWILIO_*`, `CORS_ORIGINS`, `JWT_*`
+
+## Site reports (Summary / Salary)
+- Generation lives in `backend/app/services/sites/report_export.py` (matrix loader + XLSX writers); `api/sites.py` re-exports the names.
+- `backend/tests/golden/` pins the exact XLSX output. A failing `test_report_golden.py` means downloads changed — regenerate only on purpose (`UPDATE_REPORT_GOLDEN=1`).
+- **Report editor** (`REPORT_EDITOR_ENABLED=true`, off by default): edits are saved as *report adjustments* (`report_adjustments`, `report_notes`, `report_revisions`) layered over attendance data — work card day entries are never written. `report_adjustments_service.load_report_site_data` applies them for the preview and for every Summary/Salary export, email and WhatsApp path. `load_hours_matrix_for_sites` itself stays source-only (analytics, absences, the on-screen summary tab).
+- The preview model (`report_model.py`) is read off the generated workbook, so preview and download cannot diverge.
+- Days worked at another site show the generic `עבד באתר אחר` marker. `show_other_site_names=true` (editor preview, single-site summary export, all-sites export) names the site instead; it is off by default and the golden files pin the default.
 
 ## Local DB access (env gotcha)
 - The real `DATABASE_URL` lives in the **repo-root `.env`**. The Flask CLI auto-loads it, so `flask db upgrade` / `flask db current` etc. work as-is.

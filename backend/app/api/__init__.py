@@ -16,6 +16,7 @@ from .missing_cards import missing_cards_bp
 from .analytics import analytics_bp
 from .contractors import contractors_bp
 from .absences import absences_bp
+from .site_reports import site_reports_bp
 
 def register_blueprints(app: Flask):
     """Register all API blueprints."""
@@ -36,3 +37,4 @@ def register_blueprints(app: Flask):
     app.register_blueprint(analytics_bp)
     app.register_blueprint(contractors_bp)
     app.register_blueprint(absences_bp)
+    app.register_blueprint(site_reports_bp)

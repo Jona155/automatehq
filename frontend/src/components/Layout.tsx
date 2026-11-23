@@ -35,6 +35,8 @@ function ImpersonationBanner() {
 
 function LayoutContent() {
   const isReviewRoute = Boolean(useMatch('/:businessCode/sites/:siteId/review'));
+  const isReportEditorRoute = Boolean(useMatch('/:businessCode/sites/:siteId/reports'));
+  const isFullBleed = isReviewRoute || isReportEditorRoute;
 
   return (
     <div className="h-screen bg-background-light dark:bg-background-dark flex flex-col font-display text-slate-900 dark:text-white overflow-hidden">
@@ -42,7 +44,7 @@ function LayoutContent() {
       <div className="flex flex-1 min-h-0">
         <Sidebar />
         <main className="flex-1 min-w-0 min-h-0 overflow-auto transition-[margin] duration-200 ease-in-out">
-          <div className={isReviewRoute ? 'w-full h-full min-h-0 p-0' : 'max-w-7xl mx-auto p-4 sm:p-6 lg:p-8'}>
+          <div className={isFullBleed ? 'w-full h-full min-h-0 p-0' : 'max-w-7xl mx-auto p-4 sm:p-6 lg:p-8'}>
             <Outlet />
           </div>
         </main>

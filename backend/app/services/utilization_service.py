@@ -6,7 +6,7 @@ site.
 
 Card selection / cross-site attribution / monthly_total fallback are NOT
 re-implemented here: they are delegated to ``load_hours_matrix_for_sites`` in
-``app.api.sites`` (the single production source of that logic), so utilization
+``app.services.sites.report_export`` (the single production source of that logic), so utilization
 stays consistent with the hours matrix and payroll export. See the plan/PRD for
 the deviation note (the PRD-cited hours_matrix_service CTE is single-site and
 lacks the attributed_site_id + monthly_total_hours handling).
@@ -42,9 +42,7 @@ def compute_utilization(business_id, month):
         Employees with zero hours are included (seeded as home-site columns by
         the matrix loader) so downstream UI can decide how to display them.
     """
-    # Deferred import: load_hours_matrix_for_sites lives in an api module; keep
-    # the import local to avoid any import-time cycle with the blueprint layer.
-    from ..api.sites import load_hours_matrix_for_sites
+    from .sites.report_export import load_hours_matrix_for_sites
 
     # Every site in the business. Hours are already month-scoped, so including
     # inactive sites only ensures we don't drop hours attributed to a site that

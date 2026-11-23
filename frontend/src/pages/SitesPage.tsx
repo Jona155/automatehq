@@ -10,6 +10,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import { usePermissions } from '../hooks/usePermissions';
+import { useReportEditorEnabled } from '../hooks/useReportEditorEnabled';
 import MonthPicker from '../components/MonthPicker';
 import Modal from '../components/Modal';
 import LoadingIndicator from '../components/LoadingIndicator';
@@ -109,6 +110,7 @@ function CodeCell({ code }: { code?: string | null }) {
 export default function SitesPage() {
   const { isAuthenticated, user } = useAuth();
   const { isAdmin } = usePermissions();
+  const reportEditorEnabled = useReportEditorEnabled();
   const [sites, setSites] = useState<Site[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -751,6 +753,20 @@ export default function SitesPage() {
                           <StatusPill active={site.is_active} />
                         </td>
                         <td className="px-3 py-2 border-b border-slate-100 dark:border-slate-700/40 text-left">
+                          {isAdmin && reportEditorEnabled && (
+                            <button
+                              title="תצוגה מקדימה ועריכת דוחות"
+                              data-testid={`open-report-editor-${site.id}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/${user?.business?.code}/sites/${site.id}/reports`);
+                              }}
+                              className="inline-flex items-center gap-1 align-middle h-7 px-2 me-1 rounded-md border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-colors"
+                            >
+                              <span className="material-symbols-outlined text-base">table_view</span>
+                              <span>דוחות</span>
+                            </button>
+                          )}
                           <div className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex gap-0.5">
                             <button
                               title="צפייה"
