@@ -1243,7 +1243,7 @@ def update_day_entries(card_id):
                 errors['total_hours'] = 'total_hours must be numeric'
 
         # Validate day_status
-        VALID_DAY_STATUSES = {'VACATION', 'SICK', 'INTERNATIONAL_VISA', 'HOLIDAY'}
+        VALID_DAY_STATUSES = {'VACATION', 'SICK', 'INTERNATIONAL_VISA', 'HOLIDAY', 'WORK_ACCIDENT'}
         day_status = entry.get('day_status')
         if day_status is not None and day_status not in VALID_DAY_STATUSES:
             errors['day_status'] = f"Invalid day_status: {day_status}"
