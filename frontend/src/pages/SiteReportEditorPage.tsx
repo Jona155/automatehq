@@ -527,92 +527,104 @@ export default function SiteReportEditorPage() {
       <ToastContainer />
 
       {/* Header: context + report selection + save/download */}
-      <div className="shrink-0 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 flex flex-wrap items-center gap-3">
-        <button
-          onClick={goBack}
-          title="חזרה לאתר"
-          className="w-9 h-9 grid place-items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500"
-        >
-          <span className="material-symbols-outlined">arrow_forward</span>
-        </button>
-        <div className="min-w-0">
-          <div className="text-xs text-slate-500 dark:text-slate-400">תצוגה מקדימה ועריכת דוחות</div>
-          <select
-            aria-label="אתר"
-            value={siteId}
-            onChange={(event) => changeSite(event.target.value)}
-            className="max-w-[16rem] truncate bg-transparent text-lg font-bold text-slate-900 dark:text-white focus:outline-none cursor-pointer"
+      <div className="shrink-0 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+        {/* Context: back + site */}
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={goBack}
+            title="חזרה לאתר"
+            className="shrink-0 w-9 h-9 grid place-items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500"
           >
-            {!sites.some((s) => s.id === siteId) && <option value={siteId}>{payload?.site.name ?? '…'}</option>}
-            {sites.map((s) => <option key={s.id} value={s.id}>{s.site_name}</option>)}
-          </select>
+            <span className="material-symbols-outlined">arrow_forward</span>
+          </button>
+          <div className="min-w-0">
+            <div className="text-[11px] leading-4 text-slate-500 dark:text-slate-400">דוחות חודשיים</div>
+            {/* Visible label sized to the name; the native select sits invisibly on top */}
+            <label className="relative flex items-center gap-1 max-w-[18rem] rounded-md -mx-1 px-1 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">
+              <span className="truncate text-base font-bold leading-6 text-slate-900 dark:text-white">
+                {sites.find((s) => s.id === siteId)?.site_name ?? payload?.site.name ?? '…'}
+              </span>
+              <span className="material-symbols-outlined shrink-0 text-[18px] text-slate-400">expand_more</span>
+              <select
+                aria-label="אתר"
+                value={siteId}
+                onChange={(event) => changeSite(event.target.value)}
+                className="absolute inset-0 w-full opacity-0 cursor-pointer"
+              >
+                {!sites.some((s) => s.id === siteId) && <option value={siteId}>{payload?.site.name ?? '…'}</option>}
+                {sites.map((s) => <option key={s.id} value={s.id}>{s.site_name}</option>)}
+              </select>
+            </label>
+          </div>
         </div>
 
-        <div className="w-44">
-          <MonthPicker value={month} onChange={(value) => updateParams({ month: value })} />
+        <div className="hidden md:block w-px h-8 bg-slate-200 dark:bg-slate-700" />
+
+        {/* Report selection: month + type */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="shrink-0 whitespace-nowrap">
+            <MonthPicker value={month} onChange={(value) => updateParams({ month: value })} />
+          </div>
+          <div role="tablist" aria-label="סוג דוח" className="inline-flex h-11 items-center rounded-xl border border-slate-200 dark:border-slate-700 p-1 bg-slate-50 dark:bg-slate-900">
+            {(['salary', 'summary'] as ReportType[]).map((type) => (
+              <button
+                key={type}
+                role="tab"
+                aria-selected={reportType === type}
+                data-testid={`report-type-${type}`}
+                onClick={() => type !== reportType && updateParams({ type })}
+                className={`h-9 px-4 text-sm font-semibold rounded-lg transition-colors ${
+                  reportType === type
+                    ? 'bg-white dark:bg-slate-700 text-primary shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                {REPORT_LABELS[type]}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div role="tablist" aria-label="סוג דוח" className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 bg-slate-50 dark:bg-slate-900">
-          {(['salary', 'summary'] as ReportType[]).map((type) => (
-            <button
-              key={type}
-              role="tab"
-              aria-selected={reportType === type}
-              data-testid={`report-type-${type}`}
-              onClick={() => type !== reportType && updateParams({ type })}
-              className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${
-                reportType === type
-                  ? 'bg-white dark:bg-slate-700 text-primary shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              {REPORT_LABELS[type]}
+        {/* Actions (pushed to the far end; stays there when the header wraps) */}
+        <div className="ms-auto flex items-center gap-2 shrink-0">
+          <span
+            data-testid="save-status"
+            data-status={saveStatus}
+            className={`inline-flex items-center gap-1 px-2.5 h-7 rounded-full border text-xs font-semibold whitespace-nowrap ${statusChip.className}`}
+          >
+            <span className={`material-symbols-outlined text-[16px] ${saveStatus === 'saving' ? 'animate-spin' : ''}`}>{statusChip.icon}</span>
+            {statusChip.label}
+          </span>
+
+          <div className="inline-flex items-center">
+            <button onClick={undo} disabled={!history.past.length} title="בטל (Ctrl+Z)" className="w-9 h-9 grid place-items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent text-slate-600 dark:text-slate-300">
+              <span className="material-symbols-outlined text-[20px]">undo</span>
             </button>
-          ))}
-        </div>
+            <button onClick={redo} disabled={!history.future.length} title="בצע שוב (Ctrl+Y)" className="w-9 h-9 grid place-items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent text-slate-600 dark:text-slate-300">
+              <span className="material-symbols-outlined text-[20px]">redo</span>
+            </button>
+          </div>
 
-        <div className="flex-1" />
-
-        <span
-          data-testid="save-status"
-          data-status={saveStatus}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold ${statusChip.className}`}
-        >
-          <span className={`material-symbols-outlined text-base ${saveStatus === 'saving' ? 'animate-spin' : ''}`}>{statusChip.icon}</span>
-          {statusChip.label}
-        </span>
-
-        <div className="inline-flex items-center gap-1">
-          <button onClick={undo} disabled={!history.past.length} title="בטל (Ctrl+Z)" className="w-9 h-9 grid place-items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 text-slate-600 dark:text-slate-300">
-            <span className="material-symbols-outlined">undo</span>
-          </button>
-          <button onClick={redo} disabled={!history.future.length} title="בצע שוב (Ctrl+Y)" className="w-9 h-9 grid place-items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 text-slate-600 dark:text-slate-300">
-            <span className="material-symbols-outlined">redo</span>
-          </button>
-        </div>
-
-        <button
-          data-testid="save-button"
-          onClick={() => { void save(); }}
-          disabled={!isDirty || isSaving || loadState !== 'ready'}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-semibold text-sm hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <span className="material-symbols-outlined text-lg">save</span>
-          {saveStatus === 'failed' ? 'נסה לשמור שוב' : 'שמירת שינויים'}
-        </button>
-
-        <div className="inline-flex items-stretch rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <select aria-label="פורמט קובץ" defaultValue="xlsx" className="bg-white dark:bg-slate-800 text-xs px-2 text-slate-600 dark:text-slate-300 border-l border-slate-200 dark:border-slate-700 focus:outline-none">
-            <option value="xlsx">XLSX</option>
-          </select>
           <button
             data-testid="download-button"
             onClick={() => { void download(); }}
             disabled={isDownloading || isSaving || loadState !== 'ready'}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40"
+            title="הורדת הדוח כקובץ Excel"
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 whitespace-nowrap"
           >
-            <span className="material-symbols-outlined text-lg">{isDownloading ? 'progress_activity' : 'download'}</span>
+            <span className={`material-symbols-outlined text-[18px] ${isDownloading ? 'animate-spin' : ''}`}>{isDownloading ? 'progress_activity' : 'download'}</span>
             {isDirty ? 'שמירה והורדה' : 'הורדה'}
+            <span className="text-[10px] font-bold text-slate-400 border border-slate-200 dark:border-slate-600 rounded px-1 leading-4">XLSX</span>
+          </button>
+
+          <button
+            data-testid="save-button"
+            onClick={() => { void save(); }}
+            disabled={!isDirty || isSaving || loadState !== 'ready'}
+            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-sm font-semibold whitespace-nowrap bg-primary text-white hover:bg-primary/90 disabled:bg-slate-100 disabled:text-slate-400 dark:disabled:bg-slate-700 dark:disabled:text-slate-500 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined text-[18px]">save</span>
+            {saveStatus === 'failed' ? 'נסה לשמור שוב' : 'שמירה'}
           </button>
         </div>
       </div>
