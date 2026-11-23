@@ -28,6 +28,7 @@ STATUS_DAY_LABELS = {
     'SICK': 'מחלה',
     'INTERNATIONAL_VISA': 'ויזה בינלאומית',
     'HOLIDAY': 'חג',
+    'WORK_ACCIDENT': 'תאונת עבודה',
 }
 
 # Israeli labor law requires special notice for workdays exceeding 12 hours.

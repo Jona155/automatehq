@@ -13,7 +13,8 @@ the month (e.g. before they started or after they left).
 On a workday an employee is counted as missed when their merged day entry is:
     SICK   -> ``day_status == 'SICK'``
     EMPTY  -> no entry at all, or an entry with no hours, times or status
-Anything else (hours worked, VACATION, HOLIDAY, INTERNATIONAL_VISA) is fine.
+Anything else (hours worked, VACATION, HOLIDAY, INTERNATIONAL_VISA,
+WORK_ACCIDENT) is fine.
 
 Only employees with at least one work card for the month are considered —
 employees with no card at all are the Missing Cards report's concern.
