@@ -73,13 +73,14 @@ export const sendAccessLinksBatchToWhatsapp = async (data: { site_ids: string[];
 export const downloadMonthlySummary = async (
   siteId: string,
   processingMonth: string,
-  options?: { approved_only?: boolean; include_inactive?: boolean }
+  options?: { approved_only?: boolean; include_inactive?: boolean; show_other_site_names?: boolean }
 ) => {
   const response = await client.get(`/sites/${siteId}/summary/export`, {
     params: {
       processing_month: normalizeMonthFormat(processingMonth),
       approved_only: options?.approved_only ? 'true' : 'false',
       include_inactive: options?.include_inactive ? 'true' : 'false',
+      ...(options?.show_other_site_names ? { show_other_site_names: 'true' } : {}),
     },
     responseType: 'blob',
   });

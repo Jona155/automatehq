@@ -8,6 +8,7 @@ import { uploadSingleWorkCard } from '../api/workCards';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../hooks/useToast';
 import { usePermissions } from '../hooks/usePermissions';
+import { useReportEditorEnabled } from '../hooks/useReportEditorEnabled';
 import UploadWorkCardModal from '../components/UploadWorkCardModal';
 import BatchUploadModal from '../components/BatchUploadModal';
 import WorkCardExportModal from '../components/WorkCardExportModal';
@@ -29,6 +30,7 @@ export default function SiteDetailsPage() {
   const { siteId } = useParams<{ businessCode: string; siteId: string }>();
   const { isAuthenticated, user } = useAuth();
   const { isAdmin } = usePermissions();
+  const reportEditorEnabled = useReportEditorEnabled();
   const [searchParams, setSearchParams] = useSearchParams();
   const [site, setSite] = useState<Site | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -404,6 +406,16 @@ export default function SiteDetailsPage() {
             <span className="material-symbols-outlined text-lg">cloud_upload</span>
             <span>{"\u05d4\u05e2\u05dc\u05d0\u05d4 \u05de\u05e8\u05d5\u05d1\u05d4"}</span>
           </button>
+          {isAdmin && reportEditorEnabled && (
+            <button
+              data-testid="open-report-editor"
+              onClick={() => navigate(`/${user?.business?.code}/sites/${siteId}/reports?type=summary&month=${selectedMonth}`)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 border border-primary/40 text-primary bg-primary/5 rounded-lg hover:bg-primary/10 transition-colors font-semibold text-sm"
+            >
+              <span className="material-symbols-outlined text-lg">table_view</span>
+              <span>דוחות חודשיים</span>
+            </button>
+          )}
         {isAdmin && <div className="relative" ref={actionsRef} dir="rtl">
           <button
             onClick={() => setActionsOpen((prev) => !prev)}
