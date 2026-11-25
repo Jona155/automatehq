@@ -3,12 +3,13 @@ import { useAuth } from '../context/AuthContext';
 import { useSidebar } from '../context/SidebarContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { useReportEditorEnabled } from '../hooks/useReportEditorEnabled';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 const SIDEBAR_WIDTH_EXPANDED = 'w-64';
 const SIDEBAR_WIDTH_COLLAPSED = 'w-16';
 
 type SectionKey = 'ops' | 'integ' | 'admin';
+type GroupKey = 'cards' | 'people' | 'sites' | 'sync';
 
 const ROLE_LABEL: Record<string, string> = {
   ADMIN: 'מנהל',
@@ -72,6 +73,73 @@ function NavRow({ to, onClick, icon, iconSize = 20, label, collapsed, indent, tr
   );
 }
 
+interface GroupItem {
+  to: string;
+  icon: string;
+  label: string;
+  /** Overrides the default path-based active check. */
+  active?: boolean;
+}
+
+interface NavGroupProps {
+  id: string;
+  icon: string;
+  label: string;
+  items: GroupItem[];
+  collapsed: boolean;
+  open: boolean;
+  onToggle: () => void;
+  pathname: string;
+}
+
+const itemIsActive = (item: GroupItem, pathname: string) =>
+  item.active ?? (pathname === item.to || pathname.startsWith(`${item.to}/`));
+
+/** Parent row with indented children. Collapsed sidebar shows children flat; a lone child renders as a plain row. */
+function NavGroup({ icon, label, items, collapsed, open, onToggle, pathname }: NavGroupProps) {
+  if (items.length === 0) return null;
+  if (items.length === 1) {
+    const [only] = items;
+    return <NavRow to={only.to} icon={only.icon} label={only.label} collapsed={collapsed} isActive={only.active} />;
+  }
+  if (collapsed) {
+    return (
+      <>
+        {items.map((i) => (
+          <NavRow key={i.to} to={i.to} icon={i.icon} label={i.label} collapsed isActive={i.active} />
+        ))}
+      </>
+    );
+  }
+  const groupActive = items.some((i) => itemIsActive(i, pathname));
+  return (
+    <>
+      <NavRow
+        icon={icon}
+        label={label}
+        collapsed={collapsed}
+        onClick={onToggle}
+        isActive={groupActive && !open}
+        trailing={
+          <span
+            className={`material-symbols-outlined text-[16px] text-slate-400 transition-transform ${open ? 'rotate-0' : '-rotate-90'}`}
+            aria-hidden
+          >
+            expand_more
+          </span>
+        }
+      />
+      {open && (
+        <div className="ms-3 ps-1.5 border-s border-slate-200 dark:border-slate-800 space-y-0.5">
+          {items.map((i) => (
+            <NavRow key={i.to} to={i.to} icon={i.icon} iconSize={18} label={i.label} collapsed={false} indent isActive={i.active} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 interface SectionHeaderProps {
   title: string;
   open: boolean;
@@ -110,13 +178,71 @@ export default function Sidebar() {
     admin: true,
   });
 
-  const onWorkCardsRoute =
-    location.pathname.includes('/missing-work-cards') ||
-    location.pathname.includes('/unassigned-work-cards');
-  const [cardsOpen, setCardsOpen] = useState<boolean>(true);
   const reportEditorEnabled = useReportEditorEnabled();
   // The editor lives under /sites/:id/reports, so it needs its own active check.
   const onReportsRoute = /\/reports\/?$/.test(location.pathname);
+
+  const showAdminSection = isAdmin || isApplicationManager;
+  const showAnalytics = isAdmin || isOperatorManager || isFieldManager;
+
+  const groups: Record<GroupKey, { icon: string; label: string; items: GroupItem[] }> = {
+    cards: {
+      icon: 'content_paste',
+      label: 'כרטיסי עבודה',
+      items: [
+        { to: `${base}/missing-work-cards`, icon: 'assignment_late', label: 'חסרים' },
+        { to: `${base}/unassigned-work-cards`, icon: 'link_off', label: 'לא משויכים' },
+        { to: `${base}/absences`, icon: 'event_busy', label: 'היעדרויות' },
+      ],
+    },
+    people: {
+      icon: 'group',
+      label: 'עובדים וקבלנים',
+      items: [
+        { to: `${base}/employees`, icon: 'group', label: 'עובדים' },
+        { to: `${base}/contractors`, icon: 'handshake', label: 'קבלנים' },
+      ],
+    },
+    sites: {
+      icon: 'apartment',
+      label: 'אתרים ודוחות',
+      items: [
+        { to: `${base}/sites`, icon: 'apartment', label: 'אתרים', active: onReportsRoute ? false : undefined },
+        ...(isAdmin && reportEditorEnabled
+          ? [{ to: `${base}/reports`, icon: 'table_view', label: 'דוחות חודשיים', active: onReportsRoute }]
+          : []),
+      ],
+    },
+    sync: {
+      icon: 'sync',
+      label: 'סנכרון וקליטה',
+      items: [
+        { to: `${base}/employee-imports`, icon: 'sync', label: 'סנכרון עובדים ואתרים' },
+      ],
+    },
+  };
+
+  const activeGroup = (Object.keys(groups) as GroupKey[]).find((k) =>
+    groups[k].items.some((i) => itemIsActive(i, location.pathname)),
+  );
+  const [groupsOpen, setGroupsOpen] = useState<Record<GroupKey, boolean>>({
+    cards: false, people: false, sites: false, sync: false,
+  });
+  // Keep the group holding the current page expanded.
+  useEffect(() => {
+    if (activeGroup) setGroupsOpen((g) => (g[activeGroup] ? g : { ...g, [activeGroup]: true }));
+  }, [activeGroup]);
+  const toggleGroup = (k: GroupKey) => setGroupsOpen((g) => ({ ...g, [k]: !g[k] }));
+  const renderGroup = (k: GroupKey) => (
+    <NavGroup
+      id={k}
+      {...groups[k]}
+      collapsed={collapsed}
+      open={groupsOpen[k]}
+      onToggle={() => toggleGroup(k)}
+      pathname={location.pathname}
+    />
+  );
 
   const toggleSection = (k: SectionKey) =>
     setSectionsOpen((s) => ({ ...s, [k]: !s[k] }));
@@ -127,9 +253,6 @@ export default function Sidebar() {
     : nameParts[0]?.slice(0, 2) || 'יר';
   const userName = user?.full_name || 'משתמש';
   const userRole = ROLE_LABEL[user?.role || ''] || '';
-  const showAdminSection = isAdmin || isApplicationManager;
-  const showAnalytics = isAdmin || isOperatorManager || isFieldManager;
-
   return (
     <aside
       className={`${collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED} shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col h-screen sticky top-0 transition-[width] duration-200 ease-in-out overflow-x-hidden`}
@@ -179,71 +302,9 @@ export default function Sidebar() {
               <NavRow to={`${base}/analytics`} icon="monitoring" label="ביצועים" collapsed={collapsed} />
             )}
 
-            {/* Work cards parent + sub-items */}
-            {collapsed ? (
-              <>
-                <NavRow to={`${base}/missing-work-cards`} icon="assignment_late" label="כרטיסי עבודה חסרים" collapsed={collapsed} />
-                <NavRow to={`${base}/unassigned-work-cards`} icon="link_off" label="כרטיסים לא משויכים" collapsed={collapsed} />
-              </>
-            ) : (
-              <>
-                <NavRow
-                  icon="content_paste"
-                  label="כרטיסי עבודה"
-                  collapsed={collapsed}
-                  onClick={() => setCardsOpen((o) => !o)}
-                  isActive={onWorkCardsRoute}
-                  trailing={
-                    <span
-                      className={`material-symbols-outlined text-[16px] text-slate-400 transition-transform ${cardsOpen ? 'rotate-0' : '-rotate-90'}`}
-                      aria-hidden
-                    >
-                      expand_more
-                    </span>
-                  }
-                />
-                {cardsOpen && (
-                  <div className="ms-3 ps-1.5 border-s border-slate-200 dark:border-slate-800 space-y-0.5">
-                    <NavRow
-                      to={`${base}/missing-work-cards`}
-                      icon="assignment_late"
-                      iconSize={18}
-                      label="חסרים"
-                      collapsed={collapsed}
-                      indent
-                    />
-                    <NavRow
-                      to={`${base}/unassigned-work-cards`}
-                      icon="link_off"
-                      iconSize={18}
-                      label="לא משויכים"
-                      collapsed={collapsed}
-                      indent
-                    />
-                  </div>
-                )}
-              </>
-            )}
-
-            <NavRow to={`${base}/absences`} icon="event_busy" label="היעדרויות" collapsed={collapsed} />
-            <NavRow to={`${base}/employees`} icon="group" label="עובדים" collapsed={collapsed} />
-            <NavRow
-              to={`${base}/sites`}
-              icon="apartment"
-              label="אתרים"
-              collapsed={collapsed}
-              isActive={onReportsRoute ? false : undefined}
-            />
-            {isAdmin && reportEditorEnabled && (
-              <NavRow
-                to={`${base}/reports`}
-                icon="table_view"
-                label="דוחות חודשיים"
-                collapsed={collapsed}
-                isActive={onReportsRoute}
-              />
-            )}
-            <NavRow to={`${base}/contractors`} icon="handshake" label="קבלנים" collapsed={collapsed} />
+            {renderGroup('cards')}
+            {renderGroup('people')}
+            {renderGroup('sites')}
           </div>
         )}
 
@@ -267,7 +328,7 @@ export default function Sidebar() {
             {(collapsed || sectionsOpen.admin) && (
               <div className="space-y-0.5">
                 <NavRow to={`${base}/users`} icon="manage_accounts" label="משתמשים" collapsed={collapsed} />
-                <NavRow to={`${base}/employee-imports`} icon="sync" label="סנכרון עובדים ואתרים" collapsed={collapsed} />
+                {renderGroup('sync')}
               </div>
             )}
           </>
