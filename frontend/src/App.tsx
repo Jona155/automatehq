@@ -11,6 +11,7 @@ import ContractorsPage from './pages/ContractorsPage';
 import SiteDetailsPage from './pages/SiteDetailsPage';
 import SiteReviewPage from './pages/SiteReviewPage';
 import SiteReportEditorPage from './pages/SiteReportEditorPage';
+import ReportCardsViewerPage from './pages/ReportCardsViewerPage';
 import ReportsLandingPage from './pages/ReportsLandingPage';
 import UsersPage from './pages/UsersPage';
 import EmployeeImportPage from './pages/EmployeeImportPage';
@@ -49,6 +50,8 @@ function App() {
 
             {/* Business-scoped routes */}
             <Route element={<TenantGuard />}>
+              {/* Full-window work card viewer, opened in its own tab from the report editor */}
+              <Route path="/:businessCode/sites/:siteId/reports/cards" element={<ReportCardsViewerPage />} />
               <Route element={<Layout />}>
                 <Route path="/:businessCode/dashboard" element={<DashboardPage />} />
                 <Route path="/:businessCode/analytics" element={<AnalyticsScorecardPage />} />
