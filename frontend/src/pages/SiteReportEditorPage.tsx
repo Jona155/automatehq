@@ -12,6 +12,16 @@ import {
 } from '../api/siteReports';
 import { downloadMonthlySummary, downloadSalaryTemplate, getSites } from '../api/sites';
 import ReportGrid, { type GridCellView, type GridEdit, type GridSelection } from '../components/reports/ReportGrid';
+import ReportCardsPane, { CARDS_PANE_MIN_WIDTH } from '../components/reports/ReportCardsPane';
+import CellPopover from '../components/reports/CellPopover';
+import {
+  openCardsChannel,
+  useSiteMonthCards,
+  viewerUrl,
+  viewerWindowName,
+  type CardEmployee,
+  type CardsSyncMessage,
+} from '../components/reports/workCardViewer';
 import LoadingIndicator from '../components/LoadingIndicator';
 import Modal from '../components/Modal';
 import MonthPicker from '../components/MonthPicker';
@@ -40,12 +50,40 @@ const posKey = (row: number, col: number) => `${row}:${col}`;
 const isReset = (draft: CellDraft): draft is { reset: true } => 'reset' in draft;
 
 const OTHER_SITE_NAMES_KEY = 'report-editor-other-site-names';
+/** 'off' when the user chose not to have the edit popover open on every selection. */
+const AUTO_POPOVER_KEY = 'report-editor-auto-popover';
 function readOtherSiteNamesPreference(): boolean {
   try {
     return localStorage.getItem(OTHER_SITE_NAMES_KEY) === 'true';
   } catch {
     return false;
   }
+}
+
+/** Remembers only an explicit close: the pane is open unless the user hid it. */
+const CARDS_PANE_KEY = 'report-editor-cards-pane';
+const CARDS_WIDTH_KEY = 'report-editor-cards-width';
+const DEFAULT_CARDS_WIDTH = 420;
+
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // storage unavailable — the choice lasts for this visit
+  }
+}
+
+function readCardsWidth(): number {
+  const stored = Number(readStored(CARDS_WIDTH_KEY));
+  return Number.isFinite(stored) && stored >= CARDS_PANE_MIN_WIDTH ? stored : DEFAULT_CARDS_WIDTH;
 }
 
 function describeDayValue(value: ReportDayValue, statusLabels: Record<string, string>) {
@@ -86,6 +124,12 @@ export default function SiteReportEditorPage() {
   const showOtherSiteNamesRef = useRef(showOtherSiteNames);
   showOtherSiteNamesRef.current = showOtherSiteNames;
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [cardsOpen, setCardsOpen] = useState(() => readStored(CARDS_PANE_KEY) !== 'closed');
+  const [cardsWidth, setCardsWidth] = useState(readCardsWidth);
+  /** Viewer tabs currently open (they announce themselves on the sync channel). */
+  const [viewerIds, setViewerIds] = useState<string[]>([]);
+  /** The employee the card pane / viewer tab shows: the last one selected in the sheet. */
+  const [cardsEmployee, setCardsEmployee] = useState<CardEmployee | null>(null);
 
   const cellDraftsRef = useRef(cellDrafts);
   cellDraftsRef.current = cellDrafts;
@@ -331,14 +375,18 @@ export default function SiteReportEditorPage() {
     if (changes.length) setCellRaw(changes);
   }, [payload, setCellRaw]);
 
-  const resetCell = useCallback((key: string) => {
+  /** Back to the source value: saved adjustments are reset, unsaved drafts dropped (one undo step). */
+  const resetCells = useCallback((keys: string[]) => {
     applyCellDrafts((drafts) => {
       const next = { ...drafts };
-      if (lookups.adjustments.has(key)) next[key] = { reset: true };
-      else delete next[key];
+      for (const key of keys) {
+        if (lookups.adjustments.has(key)) next[key] = { reset: true };
+        else delete next[key];
+      }
       return next;
     });
   }, [applyCellDrafts, lookups]);
+  const resetCell = useCallback((key: string) => resetCells([key]), [resetCells]);
 
   const undo = useCallback(() => {
     setHistory((h) => {
@@ -522,6 +570,161 @@ export default function SiteReportEditorPage() {
     ? (Math.abs(selection.anchor.row - selection.focus.row) + 1) * (Math.abs(selection.anchor.col - selection.focus.col) + 1)
     : 0;
 
+  // --- cell popover (edits the selected cell, or every editable cell of a range) ---
+
+  const selectionRange = useMemo(() => (selection ? {
+    minRow: Math.min(selection.anchor.row, selection.focus.row),
+    maxRow: Math.max(selection.anchor.row, selection.focus.row),
+    minCol: Math.min(selection.anchor.col, selection.focus.col),
+    maxCol: Math.max(selection.anchor.col, selection.focus.col),
+  } : null), [selection]);
+
+  /** Day cells the popover acts on. In a range, Saturdays are passed over, as the fill does. */
+  const popoverTargets = useMemo(() => {
+    if (!payload || !selectionRange) return [] as string[];
+    const keys: string[] = [];
+    for (const cell of payload.model.cells) {
+      if (cell.kind !== 'input' || !cell.employee_id || !cell.day) continue;
+      if (cell.row < selectionRange.minRow || cell.row > selectionRange.maxRow) continue;
+      if (cell.col < selectionRange.minCol || cell.col > selectionRange.maxCol) continue;
+      keys.push(cellKey(cell.employee_id, cell.day));
+    }
+    if (keys.length <= 1) return keys;
+    return keys.filter((key) => {
+      const cell = lookups.inputCells.get(key);
+      return !cell || view.cells.get(posKey(cell.row, cell.col))?.text !== SATURDAY_LABEL;
+    });
+  }, [payload, selectionRange, lookups, view]);
+
+  const isMultiTarget = popoverTargets.length > 1;
+  const resettableTargets = popoverTargets.filter((key) => lookups.adjustments.has(key) || cellDrafts[key]);
+  const targetEmployeeNames = useMemo(() => {
+    const ids = new Set(popoverTargets.map((key) => key.slice(0, key.lastIndexOf(':'))));
+    return [...ids].map((id) => lookups.employees.get(id) ?? '');
+  }, [popoverTargets, lookups]);
+
+  const [popoverClosed, setPopoverClosed] = useState(false);
+  const [autoPopover, setAutoPopover] = useState(() => readStored(AUTO_POPOVER_KEY) !== 'off');
+  /** With the automatic popover off, the "עריכה" button opens it for the current selection. */
+  const [popoverRequested, setPopoverRequested] = useState(false);
+  const toggleAutoPopover = (next: boolean) => {
+    setAutoPopover(next);
+    writeStored(AUTO_POPOVER_KEY, next ? 'on' : 'off');
+  };
+  /**
+   * A mouse drag in the sheet (fill handle, selecting a range) must reach the
+   * cells under the pointer, and the popover sits right where the drag heads.
+   * So it steps aside until the button is released.
+   */
+  const [gridDragging, setGridDragging] = useState(false);
+  useEffect(() => {
+    if (!gridDragging) return undefined;
+    const stop = () => setGridDragging(false);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    window.addEventListener('blur', stop);
+    return () => {
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      window.removeEventListener('blur', stop);
+    };
+  }, [gridDragging]);
+  const [popoverValue, setPopoverValue] = useState('');
+  const [noteOpen, setNoteOpen] = useState(false);
+  const selectionSignature = selection
+    ? `${selection.anchor.row}:${selection.anchor.col}:${selection.focus.row}:${selection.focus.col}`
+    : '';
+  // Every new selection brings the popover back, empty.
+  useEffect(() => {
+    setPopoverClosed(false);
+    setPopoverValue('');
+    setNoteOpen(false);
+    setPopoverRequested(false);
+  }, [selectionSignature]);
+
+  const gridHostRef = useRef<HTMLDivElement | null>(null);
+  const gridElement = () => gridHostRef.current?.querySelector<HTMLElement>('[data-testid="report-grid"]') ?? null;
+  /** Hand the keyboard back to the sheet after a popover action. */
+  const refocusGrid = () => gridElement()?.focus();
+
+  const applyToTargets = (raw: ReportCellValue) => {
+    if (!popoverTargets.length) return;
+    setCellRaw(popoverTargets.map((key) => ({ key, raw })));
+    refocusGrid();
+  };
+
+  const applyPopoverValue = () => {
+    const text = popoverValue.trim();
+    if (!text) return;
+    applyToTargets(text);
+    setPopoverValue('');
+  };
+
+  const closePopover = () => {
+    setPopoverClosed(true);
+    refocusGrid();
+  };
+
+  const showPopover = loadState === 'ready' && Boolean(payload) && popoverTargets.length > 0 && (autoPopover || popoverRequested) && !popoverClosed && !gridDragging && !pendingLeave;
+
+  // --- work card images (side pane + viewer tab) ---
+
+  // Cells that belong to no employee (titles, totals row) keep the last employee in view.
+  useEffect(() => {
+    if (selectedEmployee && selectedEmployee.id !== cardsEmployee?.id) {
+      setCardsEmployee({ id: selectedEmployee.id, full_name: selectedEmployee.full_name, passport_id: selectedEmployee.passport_id });
+    }
+  }, [selectedEmployee, cardsEmployee?.id]);
+
+  // A different site or month starts with nobody in view.
+  useEffect(() => {
+    setCardsEmployee(null);
+  }, [siteId, month]);
+
+  const cards = useSiteMonthCards(siteId, month, cardsOpen);
+
+  const cardsFocusRef = useRef<CardsSyncMessage>({ type: 'focus', siteId, month, employee: null });
+  cardsFocusRef.current = { type: 'focus', siteId, month, employee: cardsEmployee };
+  const cardsChannelRef = useRef<BroadcastChannel | null>(null);
+
+  useEffect(() => {
+    const channel = openCardsChannel(businessCode);
+    cardsChannelRef.current = channel;
+    if (!channel) return undefined;
+    channel.onmessage = (event: MessageEvent<CardsSyncMessage>) => {
+      const message = event.data;
+      if (message.type === 'request-focus') channel.postMessage(cardsFocusRef.current);
+      else if (message.type === 'viewer-open') setViewerIds((ids) => (ids.includes(message.viewerId) ? ids : [...ids, message.viewerId]));
+      else if (message.type === 'viewer-closed') setViewerIds((ids) => ids.filter((id) => id !== message.viewerId));
+    };
+    channel.postMessage({ type: 'ping' } satisfies CardsSyncMessage);
+    return () => {
+      channel.close();
+      cardsChannelRef.current = null;
+    };
+  }, [businessCode]);
+
+  useEffect(() => {
+    cardsChannelRef.current?.postMessage(cardsFocusRef.current);
+  }, [siteId, month, cardsEmployee]);
+
+  const toggleCards = () => {
+    setCardsOpen((open) => {
+      writeStored(CARDS_PANE_KEY, open ? 'closed' : 'open');
+      return !open;
+    });
+  };
+
+
+  const handleCardsWidth = useCallback((width: number, done: boolean) => {
+    setCardsWidth(width);
+    if (done) writeStored(CARDS_WIDTH_KEY, String(width));
+  }, []);
+
+  const popOutHref = viewerUrl(businessCode, siteId, month, cardsEmployee?.id);
+  const popOutTarget = viewerWindowName(businessCode);
+  const viewerConnected = viewerIds.length > 0;
+
   return (
     <div className="h-full min-h-0 flex flex-col" dir="rtl" data-testid="report-editor">
       <ToastContainer />
@@ -603,6 +806,38 @@ export default function SiteReportEditorPage() {
             <button onClick={redo} disabled={!history.future.length} title="בצע שוב (Ctrl+Y)" className="w-9 h-9 grid place-items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent text-slate-600 dark:text-slate-300">
               <span className="material-symbols-outlined text-[20px]">redo</span>
             </button>
+          </div>
+
+          <div className="inline-flex items-center rounded-lg border border-slate-200 dark:border-slate-700">
+            <button
+              type="button"
+              data-testid="cards-toggle"
+              aria-pressed={cardsOpen}
+              onClick={toggleCards}
+              title={cardsOpen ? 'הסתרת כרטיסי העבודה' : 'הצגת כרטיס העבודה של העובד הנבחר לצד הדוח'}
+              className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-s-lg text-sm font-semibold whitespace-nowrap ${
+                cardsOpen
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px]">photo_library</span>
+              כרטיסי עבודה
+            </button>
+            <a
+              href={popOutHref}
+              target={popOutTarget}
+              data-testid="cards-popout"
+              title={viewerConnected
+                ? 'כרטיסי העבודה פתוחים בכרטיסייה נפרדת ועוקבים אחרי התא הנבחר'
+                : 'פתיחת כרטיסי העבודה בכרטיסייה נפרדת — אפשר לגרור אותה למסך אחר'}
+              className="relative w-9 h-9 grid place-items-center rounded-e-lg border-s border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+            >
+              <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+              {viewerConnected && (
+                <span data-testid="cards-viewer-connected" className="absolute top-1.5 left-1.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-800" />
+              )}
+            </a>
           </div>
 
           <button
@@ -705,9 +940,22 @@ export default function SiteReportEditorPage() {
                 <span className="inline-flex items-center gap-1"><i className="w-3 h-3 rounded-sm border border-slate-300 bg-amber-100" /> טרם נשמר</span>
                 <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-sky-500" /> תוקן בדוח</span>
                 <span className="inline-flex items-center gap-1"><i className="w-0 h-0 border-t-[7px] border-t-rose-500 border-r-[7px] border-r-transparent" /> הערה</span>
+                <label
+                  className="ms-auto inline-flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 font-medium cursor-pointer"
+                  title="כשהאפשרות כבויה, חלונית העריכה לא נפתחת בכל בחירה. אפשר לפתוח אותה בכפתור 'עריכה' שליד הערך."
+                >
+                  <input
+                    type="checkbox"
+                    data-testid="auto-popover-toggle"
+                    className="accent-sky-600"
+                    checked={autoPopover}
+                    onChange={(event) => toggleAutoPopover(event.target.checked)}
+                  />
+                  חלונית עריכה ליד התא
+                </label>
                 {reportType === 'summary' && (
                   <label
-                    className={`ms-auto inline-flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 font-medium ${payload.has_other_site_days ? 'cursor-pointer' : 'opacity-50'}`}
+                    className={`inline-flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 font-medium ${payload.has_other_site_days ? 'cursor-pointer' : 'opacity-50'}`}
                     title={payload.has_other_site_days
                       ? 'מציג את שם האתר האחר בתצוגה ובקובץ שיורד מכאן'
                       : 'אין בדוח זה עובדים שעבדו באתר אחר בחודש זה'}
@@ -747,10 +995,28 @@ export default function SiteReportEditorPage() {
                     {selectedRangeSize > 1 && (
                       <span className="shrink-0 text-xs text-slate-400 pt-0.5">{selectedRangeSize} תאים נבחרו</span>
                     )}
+                    {!autoPopover && popoverTargets.length > 0 && !showPopover && (
+                      <button
+                        type="button"
+                        data-testid="open-popover"
+                        onClick={() => { setPopoverClosed(false); setPopoverRequested(true); }}
+                        title="פתיחת חלונית העריכה לתאים שנבחרו (סטטוס, הערה לדוח, איפוס)"
+                        className="shrink-0 -my-0.5 inline-flex items-center gap-1 h-6 px-2 rounded-md border border-slate-200 dark:border-slate-600 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">edit_note</span>
+                        עריכה
+                      </button>
+                    )}
                   </>
                 )}
               </div>
-              <div className="flex-1 min-h-0">
+              <div
+                ref={gridHostRef}
+                className="flex-1 min-h-0"
+                // Esc on the sheet closes the popover (an Esc that cancels typing in a cell stops before here).
+                onKeyDown={(event) => { if (event.key === 'Escape') setPopoverClosed(true); }}
+                onPointerDownCapture={(event) => { if (event.button === 0) setGridDragging(true); }}
+              >
                 <ReportGrid
                   rowCount={payload.model.row_count}
                   colCount={payload.model.col_count}
@@ -773,65 +1039,116 @@ export default function SiteReportEditorPage() {
           )}
         </div>
 
-        {/* Cell & notes panel */}
-        {loadState === 'ready' && payload && payload.employee_count > 0 && (
-          <aside data-testid="notes-panel" className="w-80 shrink-0 min-h-0 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-4 text-sm">
-            {!selectedModelCell && !selection && (
-              <p className="text-slate-500 dark:text-slate-400">בחרו תא כדי לערוך ערך או להוסיף הערה לדוח.</p>
-            )}
-            {selection && !selectedKey && (
-              <div className="space-y-1">
-                <div className="font-semibold text-slate-900 dark:text-white">
-                  {selectedModelCell?.kind === 'calculated' ? 'תא מחושב' : 'תא מוגן'}
-                </div>
-                <p className="text-slate-500 dark:text-slate-400">
-                  {selectedModelCell?.kind === 'calculated'
-                    ? 'הערך מחושב מתוך תאי הימים ומתעדכן אוטומטית. לא ניתן לערוך אותו ישירות.'
-                    : 'מזהי עובדים, כותרות ומבנה הדוח אינם ניתנים לעריכה.'}
-                </p>
-              </div>
-            )}
-            {selectedKey && selectedModelCell && (
-              <>
-                <div>
-                  <div className="font-bold text-slate-900 dark:text-white">
+        {/* Work card of the selected employee */}
+        {cardsOpen && loadState === 'ready' && payload && payload.employee_count > 0 && (
+          <ReportCardsPane
+            key={`${siteId}|${month}`}
+            employee={cardsEmployee}
+            cards={cards}
+            width={cardsWidth}
+            onWidthChange={handleCardsWidth}
+            popOutHref={popOutHref}
+            popOutTarget={popOutTarget}
+            onClose={toggleCards}
+          />
+        )}
+
+      </div>
+
+
+      {showPopover && selectionRange && (
+        <CellPopover grid={gridElement()} anchor={selectionRange} onClose={closePopover}>
+          <div className="flex items-start gap-2 border-b border-slate-200 dark:border-slate-700 px-3 py-2">
+            <div className="flex-1 min-w-0">
+              {isMultiTarget ? (
+                <>
+                  <div data-testid="cell-popover-title" className="font-bold text-slate-900 dark:text-white">{popoverTargets.length} תאים</div>
+                  <div className="truncate text-xs text-slate-500 dark:text-slate-400">
+                    {targetEmployeeNames.length === 1 ? targetEmployeeNames[0] : `${targetEmployeeNames.length} עובדים`}
+                    {selectedRangeSize > popoverTargets.length ? ' · תאים מוגנים ושבתות לא ישתנו' : ''}
+                  </div>
+                </>
+              ) : selectedKey && selectedModelCell ? (
+                <>
+                  <div data-testid="cell-popover-title" className="truncate font-bold text-slate-900 dark:text-white">
                     {lookups.employees.get(selectedModelCell.employee_id as string)}
                   </div>
-                  <div className="text-slate-500 dark:text-slate-400">
-                    {selectedModelCell.day}.{monthNumber}.{year}
-                  </div>
-                </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">{selectedModelCell.day}.{monthNumber}.{year}</div>
+                </>
+              ) : (
+                <div data-testid="cell-popover-title" className="font-bold text-slate-900 dark:text-white">תא אחד</div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={closePopover}
+              title="סגירה (Esc) — תיפתח שוב בבחירה הבאה"
+              data-testid="cell-popover-close"
+              className="shrink-0 w-7 h-7 grid place-items-center rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              <span className="material-symbols-outlined text-[18px]">close</span>
+            </button>
+          </div>
 
-                {selectedError && (
-                  <div data-testid="cell-error" className="rounded-md bg-red-50 border border-red-200 text-red-800 px-3 py-2">{selectedError}</div>
-                )}
+          <div className="p-3 space-y-3">
+            {!isMultiTarget && selectedError && (
+              <div data-testid="cell-error" className="rounded-md bg-red-50 border border-red-200 text-red-800 px-2.5 py-1.5 text-xs">{selectedError}</div>
+            )}
 
-                <div className="space-y-2">
-                  <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">סטטוס יום</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {Object.entries(statusLabels).map(([code, label]) => (
-                      <button
-                        key={code}
-                        onClick={() => setCellRaw([{ key: selectedKey, raw: code }])}
-                        className="px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-600 text-xs hover:bg-slate-50 dark:hover:bg-slate-700"
-                      >
-                        {label}
-                      </button>
-                    ))}
-                    <button
-                      onClick={() => setCellRaw([{ key: selectedKey, raw: null }])}
-                      className="px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-600 text-xs hover:bg-slate-50 dark:hover:bg-slate-700"
-                    >
-                      ריק
-                    </button>
-                  </div>
-                </div>
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(event) => { event.preventDefault(); applyPopoverValue(); }}
+            >
+              <input
+                data-testid="cell-popover-value"
+                dir="auto"
+                value={popoverValue}
+                onChange={(event) => setPopoverValue(event.target.value)}
+                placeholder={isMultiTarget ? 'שעות לכל התאים, למשל 8.5' : `שעות${selectedView?.text ? ` (כעת: ${selectedView.text})` : ', למשל 8.5'}`}
+                className="flex-1 min-w-0 h-8 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <button
+                type="submit"
+                disabled={!popoverValue.trim()}
+                className="h-8 px-3 rounded-md bg-primary text-white text-xs font-semibold disabled:bg-slate-100 disabled:text-slate-400 dark:disabled:bg-slate-700"
+              >
+                {isMultiTarget ? 'החל על הכל' : 'החל'}
+              </button>
+            </form>
 
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(statusLabels).map(([code, label]) => (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => applyToTargets(code)}
+                  className="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-600 text-xs hover:bg-slate-50 dark:hover:bg-slate-700"
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => applyToTargets(null)}
+                className="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-600 text-xs hover:bg-slate-50 dark:hover:bg-slate-700"
+              >
+                ריק
+              </button>
+            </div>
+
+            {isMultiTarget && resettableTargets.length > 0 && (
+              <button type="button" onClick={() => { resetCells(resettableTargets); refocusGrid(); }} className="text-xs font-semibold text-slate-600 dark:text-slate-300 underline">
+                איפוס {resettableTargets.length} תאים לערך המקור
+              </button>
+            )}
+
+            {!isMultiTarget && selectedKey && (
+              <>
                 {selectedAdjustment && (
-                  <div className="rounded-md bg-sky-50 border border-sky-200 text-sky-900 px-3 py-2 space-y-1">
+                  <div className="rounded-md bg-sky-50 border border-sky-200 text-sky-900 px-2.5 py-1.5 text-xs space-y-0.5">
                     <div>תוקן בדוח. ערך המקור: <b>{describeDayValue(selectedAdjustment.source, statusLabels)}</b></div>
                     {selectedAdjustment.updated_by_name && (
-                      <div className="text-xs text-sky-800">
+                      <div className="text-sky-800">
                         עודכן על ידי {selectedAdjustment.updated_by_name}
                         {selectedAdjustment.updated_at ? ` · ${new Date(selectedAdjustment.updated_at).toLocaleString('he-IL')}` : ''}
                       </div>
@@ -840,16 +1157,17 @@ export default function SiteReportEditorPage() {
                 )}
 
                 {selectedAdjustment?.conflict && !selectedDraft && (
-                  <div className="rounded-md bg-orange-50 border border-orange-200 text-orange-900 px-3 py-2 space-y-2">
+                  <div className="rounded-md bg-orange-50 border border-orange-200 text-orange-900 px-2.5 py-1.5 text-xs space-y-1.5">
                     <div>נתוני המקור השתנו אחרי שנשמר התיקון.</div>
                     <div className="flex gap-2">
                       <button
+                        type="button"
                         onClick={() => setCellRaw([{ key: selectedKey, raw: dayValueToDisplay(selectedAdjustment.value, {}) ?? null, force: true }])}
-                        className="px-2.5 py-1 rounded-md bg-white border border-orange-300 text-xs font-semibold"
+                        className="px-2 py-1 rounded-md bg-white border border-orange-300 font-semibold"
                       >
                         השאר את התיקון
                       </button>
-                      <button onClick={() => resetCell(selectedKey)} className="px-2.5 py-1 rounded-md bg-white border border-orange-300 text-xs font-semibold">
+                      <button type="button" onClick={() => resetCell(selectedKey)} className="px-2 py-1 rounded-md bg-white border border-orange-300 font-semibold">
                         השתמש בערך המקור
                       </button>
                     </div>
@@ -857,7 +1175,7 @@ export default function SiteReportEditorPage() {
                 )}
 
                 {(selectedAdjustment || selectedDraft) && (
-                  <button onClick={() => resetCell(selectedKey)} className="text-xs font-semibold text-slate-600 dark:text-slate-300 underline">
+                  <button type="button" onClick={() => { resetCell(selectedKey); refocusGrid(); }} className="text-xs font-semibold text-slate-600 dark:text-slate-300 underline">
                     {selectedAdjustment ? 'איפוס לערך המקור' : 'ביטול השינוי בתא'}
                   </button>
                 )}
@@ -865,43 +1183,50 @@ export default function SiteReportEditorPage() {
                 {selectedComment && (
                   <div className="space-y-1">
                     <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">הערה מסקירת הכרטיס (מופיעה בשני הדוחות)</div>
-                    <div className="rounded-md bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-pre-wrap text-slate-700 dark:text-slate-200">
+                    <div className="rounded-md bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs whitespace-pre-wrap text-slate-700 dark:text-slate-200">
                       {selectedComment}
                     </div>
                   </div>
                 )}
 
-                <div className="space-y-1">
-                  <label htmlFor="report-note" className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    הערה לדוח {REPORT_LABELS[reportType]}
-                  </label>
-                  <textarea
-                    id="report-note"
-                    data-testid="report-note"
-                    value={selectedNote}
-                    onChange={(event) => setNote(selectedKey, event.target.value)}
-                    rows={4}
-                    maxLength={2000}
-                    placeholder="הערה שתופיע לנמען על התא הזה"
-                    className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  />
-                  <div className="flex items-center justify-between">
-                    <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
-                      <span className="material-symbols-outlined text-sm">visibility</span>
-                      נכלל בדוח המיוצא.
-                    </span>
+                {noteOpen || selectedNote ? (
+                  <div className="space-y-1">
+                    <label htmlFor="report-note" className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      הערה לדוח {REPORT_LABELS[reportType]} · נכללת בקובץ המיוצא
+                    </label>
+                    <textarea
+                      id="report-note"
+                      data-testid="report-note"
+                      autoFocus={noteOpen && !selectedNote}
+                      value={selectedNote}
+                      onChange={(event) => setNote(selectedKey, event.target.value)}
+                      rows={3}
+                      maxLength={2000}
+                      placeholder="הערה שתופיע לנמען על התא הזה"
+                      className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    />
                     {selectedNote && (
-                      <button onClick={() => setNote(selectedKey, '')} className="text-xs font-semibold text-red-600 underline">
+                      <button type="button" onClick={() => setNote(selectedKey, '')} className="text-xs font-semibold text-red-600 underline">
                         הסרת ההערה
                       </button>
                     )}
                   </div>
-                </div>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="add-report-note"
+                    onClick={() => setNoteOpen(true)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-primary"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add_comment</span>
+                    הוספת הערה לדוח
+                  </button>
+                )}
               </>
             )}
-          </aside>
-        )}
-      </div>
+          </div>
+        </CellPopover>
+      )}
 
       <Modal isOpen={Boolean(pendingLeave)} onClose={() => setPendingLeave(null)} title="יש שינויים שלא נשמרו">
         <div className="p-6 space-y-5" dir="rtl">
