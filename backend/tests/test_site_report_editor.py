@@ -143,7 +143,9 @@ class SiteReportEditorTests(unittest.TestCase):
         self.assertEqual(self._cell(payload, 6, 2)['value'], 'מחלה')
         self.assertEqual(self._cell(payload, 5, 2)['note'], 'review comment')
         self.assertEqual(self._cell(payload, 31, 2)['value'], 17.0)  # total row
-        self.assertEqual(payload['day_comments'], [{'employee_id': self.alice_id, 'day': 3, 'text': 'review comment'}])
+        # The card's day comment is the cell's (editable) note.
+        self.assertEqual(payload['notes'], [{'employee_id': self.alice_id, 'day': 3, 'text': 'review comment'}])
+        self.assertEqual(payload['day_comments'], [])
 
     def test_salary_preview_uses_rows_per_employee(self):
         payload = self._get('salary')
@@ -288,30 +290,101 @@ class SiteReportEditorTests(unittest.TestCase):
 
     # --- notes ---
 
-    def test_report_note_is_per_report_and_exported_with_the_review_comment(self):
+    def test_report_note_is_the_work_card_day_comment(self):
+        # Alice's day 3 already carries a comment from the review screen; the
+        # report shows it as the cell's note.
+        self.assertIn({'employee_id': self.alice_id, 'day': 3, 'text': 'review comment'}, self._get()['notes'])
+
         response = self._put(notes=[
             {'employee_id': self.alice_id, 'day': 3, 'text': 'note for recipient'},
-            {'employee_id': self.bob_id, 'day': 8, 'text': '  on a blank day '},
+            {'employee_id': self.alice_id, 'day': 8, 'text': '  on a blank day '},
         ])
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         payload = response.get_json()['data']
         self.assertIn({'employee_id': self.alice_id, 'day': 3, 'text': 'note for recipient'}, payload['notes'])
-        self.assertEqual(self._cell(payload, 5, 2)['note'], 'review comment\nnote for recipient')
+        self.assertEqual(payload['day_comments'], [])
+        self.assertEqual(self._cell(payload, 5, 2)['note'], 'note for recipient')
 
-        sheet = self._summary_sheet()
-        self.assertEqual(sheet['B5'].comment.text, 'review comment\nnote for recipient')
-        self.assertEqual(sheet['C10'].comment.text, 'on a blank day')
-        # The Salary report keeps only the shared review comment.
-        self.assertEqual(self._salary_sheet().cell(row=2, column=4).comment.text, 'review comment')
-        self.assertEqual(self._get('salary')['notes'], [])
-        # The review comment itself is not modified.
+        # It is the card's comment: the review screen reads the same field...
         entry = WorkCardDayEntry.query.filter_by(work_card_id=self.card.id, day_of_month=3).one()
-        self.assertEqual(entry.comment, 'review comment')
+        self.assertEqual(entry.comment, 'note for recipient')
+        # ...only the comment changed, not the value, its source or the approval.
+        self.assertEqual((float(entry.total_hours), entry.source), (9.0, 'EXTRACTED'))
+        self.assertEqual(db.session.get(WorkCard, self.card.id).review_status, 'APPROVED')
+        # A day with no entry gets an empty one to carry the note.
+        blank = WorkCardDayEntry.query.filter_by(work_card_id=self.card.id, day_of_month=8).one()
+        self.assertEqual((blank.comment, blank.total_hours, blank.day_status), ('on a blank day', None, None))
+        self.assertEqual(ReportNote.query.filter_by(site_id=self.site_id).count(), 0)
+
+        # Both reports export it, and the Salary editor shows it too.
+        self.assertEqual(self._summary_sheet()['B5'].comment.text, 'note for recipient')
+        self.assertEqual(self._summary_sheet()['B10'].comment.text, 'on a blank day')
+        self.assertIsNone(self._summary_sheet()['B10'].value)
+        self.assertEqual(self._salary_sheet().cell(row=2, column=4).comment.text, 'note for recipient')
+        self.assertIn({'employee_id': self.alice_id, 'day': 3, 'text': 'note for recipient'}, self._get('salary')['notes'])
 
         removed = self._put(notes=[{'employee_id': self.alice_id, 'day': 3, 'text': ''}], revision=1)
         self.assertEqual(removed.status_code, 200)
-        self.assertEqual(self._summary_sheet()['B5'].comment.text, 'review comment')
-        self.assertEqual(ReportNote.query.filter_by(site_id=self.site_id).count(), 1)
+        self.assertIsNone(self._summary_sheet()['B5'].comment)
+        db.session.expire_all()
+        self.assertIsNone(WorkCardDayEntry.query.filter_by(work_card_id=self.card.id, day_of_month=3).one().comment)
+
+    def test_note_for_an_employee_with_no_card_needs_a_value_first(self):
+        alone = self._put(notes=[{'employee_id': self.bob_id, 'day': 8, 'text': 'call the contractor'}])
+        self.assertEqual(alone.status_code, 422)
+        self.assertEqual(alone.get_json()['data']['errors'][0]['message'], svc.NOTE_WITHOUT_CARD_MESSAGE)
+        self.assertEqual(WorkCard.query.filter_by(employee_id=self.bob.id).count(), 0)
+
+        # Together with a value, the new manual card carries both.
+        both = self._put(cells=[{'employee_id': self.bob_id, 'day': 8, 'value': 7}],
+                         notes=[{'employee_id': self.bob_id, 'day': 8, 'text': 'call the contractor'}])
+        self.assertEqual(both.status_code, 200, both.get_data(as_text=True))
+        [card] = WorkCard.query.filter_by(employee_id=self.bob.id).all()
+        self.assertEqual([(e.day_of_month, float(e.total_hours), e.comment) for e in card.day_entries],
+                         [(8, 7.0, 'call the contractor')])
+
+    def _legacy_note(self, employee, day, text, report_type='summary'):
+        note = ReportNote(
+            business_id=self.business_id, site_id=self.site_id, processing_month=date(2026, 2, 1),
+            report_type=report_type, employee_id=employee.id, day_of_month=day, text=text,
+            updated_by_user_id=self.admin.id,
+        )
+        db.session.add(note)
+        db.session.commit()
+        return note
+
+    def test_legacy_report_notes_are_appended_until_migrated_then_replace_the_card_comment(self):
+        self._legacy_note(self.alice, 3, 'verify work accident')     # card says 'review comment'
+        self._legacy_note(self.alice, 4, 'verify work accident')     # card has no comment
+        self._legacy_note(self.bob, 5, 'no card yet')                # employee with no card
+
+        # Until migrated: appended in the report it was written in, exactly as before.
+        self.assertEqual(self._summary_sheet()['B5'].comment.text, 'review comment\nverify work accident')
+        self.assertEqual(self._salary_sheet().cell(row=2, column=4).comment.text, 'review comment')
+        self.assertIn({'employee_id': self.alice_id, 'day': 3, 'text': 'review comment\nverify work accident'},
+                      self._get()['notes'])
+
+        outcomes = svc.apply_pending_adjustments(self.business_id, db.session.get(Site, self.site_id), date(2026, 2, 1))
+        db.session.commit()
+        self.assertEqual({(o['kind'], o['employee_id'], o['day']): (o['outcome'], o['previous'], o['value']) for o in outcomes}, {
+            ('note', self.alice_id, 3): ('applied', 'review comment', 'verify work accident'),
+            ('note', self.alice_id, 4): ('applied', '', 'verify work accident'),
+            ('note', self.bob_id, 5): ('blocked', '', 'no card yet'),
+        })
+        # The report note replaced the card's comment, and now shows everywhere.
+        comments = {e.day_of_month: e.comment for e in WorkCardDayEntry.query.filter_by(work_card_id=self.card.id)}
+        self.assertEqual((comments[3], comments[4]), ('verify work accident', 'verify work accident'))
+        self.assertEqual(self._summary_sheet()['B5'].comment.text, 'verify work accident')
+        self.assertEqual(self._salary_sheet().cell(row=2, column=4).comment.text, 'verify work accident')
+        self.assertEqual(float(WorkCardDayEntry.query.filter_by(work_card_id=self.card.id, day_of_month=3).one().total_hours), 9.0)
+        # The note of the employee with no card stays on its report.
+        self.assertEqual(self._summary_sheet()['C7'].comment.text, 'no card yet')
+        self.assertEqual(ReportNote.query.filter_by(site_id=self.site_id, migrated_at=None).count(), 1)
+
+        runner = self.app.test_cli_runner()
+        again = runner.invoke(args=['report-edits', 'migrate', '--business', self.business.code])
+        self.assertEqual(again.exit_code, 0, again.output)
+        self.assertIn("note — -> 'no card yet'", again.output)
 
     # --- changes from other sources ---
 

@@ -54,8 +54,14 @@ class ReportAdjustment(db.Model):
 
 
 class ReportNote(db.Model):
-    """A recipient-facing note on one employee-day cell of one report type.
-    Exported as a native Excel cell note."""
+    """LEGACY: a note on one employee-day cell of one report type, saved by the
+    first version of the report editor.
+
+    A note written in the report is now the work card's day comment — the field
+    the review screen edits — so it shows in both places and in both reports.
+    The editor no longer creates these rows. An existing row keeps being
+    appended to its report until it is migrated into the day comment and
+    stamped with ``migrated_at``; migrated rows are kept only as a record."""
     __tablename__ = 'report_notes'
 
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -68,6 +74,8 @@ class ReportNote(db.Model):
     )
     day_of_month = db.Column(db.SmallInteger, nullable=False)
     text = db.Column(db.Text, nullable=False)
+    # Set once the text was written into the work card's day comment.
+    migrated_at = db.Column(db.DateTime(timezone=True), nullable=True)
     updated_by_user_id = db.Column(
         UUID(as_uuid=True), db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True
     )
