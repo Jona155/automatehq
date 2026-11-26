@@ -11,6 +11,9 @@ import {
   type SiteReportPayload,
 } from '../api/siteReports';
 import { downloadMonthlySummary, downloadSalaryTemplate, getSites } from '../api/sites';
+import { setExemptions } from '../api/missingCards';
+import { approveWorkCard } from '../api/workCards';
+import type { EmployeeCardActions } from '../components/reports/EmployeeCardsView';
 import ReportGrid, { type GridCellView, type GridEdit, type GridSelection } from '../components/reports/ReportGrid';
 import ReportCardsPane, { CARDS_PANE_MIN_WIDTH } from '../components/reports/ReportCardsPane';
 import CellPopover from '../components/reports/CellPopover';
@@ -429,8 +432,12 @@ export default function SiteReportEditorPage() {
       const index = key.lastIndexOf(':');
       return { employee_id: key.slice(0, index), day: Number(key.slice(index + 1)) };
     };
+    // Each edit carries the value the cell showed when the report was loaded, so
+    // the server can refuse to overwrite a change made elsewhere in the meantime.
     const cells: ReportCellChange[] = Object.entries(cellDrafts).map(([key, draft]) => (
-      isReset(draft) ? { ...split(key), reset: true } : { ...split(key), value: draft.raw }
+      isReset(draft)
+        ? { ...split(key), reset: true }
+        : { ...split(key), value: draft.raw, expected: lookups.inputCells.get(key)?.value ?? null }
     ));
     const notes = Object.entries(noteDrafts).map(([key, text]) => ({ ...split(key), text: text.trim() }));
 
@@ -440,6 +447,15 @@ export default function SiteReportEditorPage() {
       const next = await saveSiteReport(siteId, reportType, month, {
         base_revision: payload.revision, cells, notes, show_other_site_names: showOtherSiteNamesRef.current,
       });
+      const createdCards = next.created_manual_cards ?? 0;
+      if (createdCards > 0) {
+        showToast(
+          createdCards === 1
+            ? 'לעובד ללא כרטיס עבודה נוצר כרטיס ידני עם הימים שמולאו. אשרו אותו כדי שלא יופיע בדוח הכרטיסים החסרים.'
+            : `ל-${createdCards} עובדים ללא כרטיס עבודה נוצרו כרטיסים ידניים עם הימים שמולאו. אשרו אותם כדי שלא יופיעו בדוח הכרטיסים החסרים.`,
+          'info',
+        );
+      }
       setPayload(next);
       resetDraftState();
       return true;
@@ -463,7 +479,7 @@ export default function SiteReportEditorPage() {
     } finally {
       setIsSaving(false);
     }
-  }, [payload, isDirty, errorKeys.length, cellDrafts, noteDrafts, siteId, reportType, month, resetDraftState]);
+  }, [payload, isDirty, errorKeys.length, cellDrafts, noteDrafts, siteId, reportType, month, resetDraftState, lookups, showToast]);
 
   const download = useCallback(async () => {
     if (!payload) return;
@@ -681,7 +697,46 @@ export default function SiteReportEditorPage() {
     setCardsEmployee(null);
   }, [siteId, month]);
 
-  const cards = useSiteMonthCards(siteId, month, cardsOpen);
+  // Reloaded on every saved revision (a save can create a manual card) and
+  // after approving or marking a month complete from the pane.
+  const [cardsReload, setCardsReload] = useState(0);
+  const cards = useSiteMonthCards(siteId, month, cardsOpen, `${payload?.revision ?? 0}:${cardsReload}`);
+
+  const cardActionsFor = useCallback((employeeId: string): EmployeeCardActions => ({
+    // Approving merges the employee's cards into one month, which can change the
+    // report — so it needs a saved report, and reloads it afterwards.
+    approveBlockedReason: isDirty ? 'יש לשמור את השינויים בדוח לפני האישור' : null,
+    onApprove: async (card, fullMonth) => {
+      if (!user?.id) return;
+      try {
+        await approveWorkCard(card.id, user.id, { supersede_siblings: true, approve_full_month: fullMonth });
+        showToast(
+          fullMonth
+            ? 'הכרטיס הידני אושר כהגשה של כל החודש — העובד לא יופיע בדוח הכרטיסים החסרים'
+            : 'כרטיסי העבודה של העובד אושרו',
+          'success',
+        );
+        setCardsReload((n) => n + 1);
+        setReloadTick((t) => t + 1);
+      } catch (err: any) {
+        showToast(err?.response?.data?.message || 'שגיאה באישור הכרטיס', 'error');
+      }
+    },
+    onSetCompletesMonth: async (complete) => {
+      try {
+        await setExemptions(month, [employeeId], complete);
+        showToast(
+          complete
+            ? 'סומן שהדוח משלים את החודש — העובד לא יופיע בדוח הכרטיסים החסרים'
+            : 'הסימון בוטל — העובד יחזור לדוח הכרטיסים החסרים אם חסר לו כרטיס',
+          'success',
+        );
+        setCardsReload((n) => n + 1);
+      } catch (err: any) {
+        showToast(err?.response?.data?.message || 'שגיאה בעדכון', 'error');
+      }
+    },
+  }), [isDirty, user?.id, month, showToast]);
 
   const cardsFocusRef = useRef<CardsSyncMessage>({ type: 'focus', siteId, month, employee: null });
   cardsFocusRef.current = { type: 'focus', siteId, month, employee: cardsEmployee };
@@ -1050,6 +1105,7 @@ export default function SiteReportEditorPage() {
             popOutHref={popOutHref}
             popOutTarget={popOutTarget}
             onClose={toggleCards}
+            actionsFor={cardActionsFor}
           />
         )}
 

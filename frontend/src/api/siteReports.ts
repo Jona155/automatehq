@@ -77,6 +77,8 @@ export interface SiteReportPayload {
   status_labels: Record<string, string>;
   employee_count: number;
   has_unapproved_cards: boolean;
+  /** Save response only: manual cards created for employees who had no work card. */
+  created_manual_cards?: number;
   load_options: { approved_only: boolean; include_inactive: boolean };
   /** Whether any employee in this report worked at another site this month. */
   has_other_site_days: boolean;
@@ -88,6 +90,12 @@ export interface ReportCellChange {
   employee_id: string;
   day: number;
   value?: ReportCellValue;
+  /**
+   * What the cell showed when the report was loaded. The server rejects the
+   * edit if the data changed since, instead of overwriting someone else's edit.
+   */
+  expected?: ReportCellValue;
+  /** Drops a leftover legacy adjustment (an edit saved by the first editor). */
   reset?: boolean;
 }
 

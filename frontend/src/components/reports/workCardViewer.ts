@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getWorkCardFile, getWorkCards } from '../../api/workCards';
 import type { WorkCard } from '../../types';
 
@@ -45,14 +45,31 @@ export interface SiteMonthCards {
 
 const EMPTY: SiteMonthCards = { status: 'loading', byEmployee: new Map(), employees: [] };
 
-/** Every work card of a site for a month, grouped per employee in report order. */
-export function useSiteMonthCards(siteId: string, month: string, enabled = true): SiteMonthCards {
+/**
+ * Every work card of a site for a month, grouped per employee in report order.
+ * Change ``version`` to reload after something that may have created, approved
+ * or changed a card (a report save creates a manual card for an employee who
+ * had none).
+ */
+export function useSiteMonthCards(
+  siteId: string, month: string, enabled = true, version: string | number = 0,
+): SiteMonthCards {
   const [state, setState] = useState<SiteMonthCards>(EMPTY);
+  // A reload of the same sheet keeps showing the cards it has instead of
+  // flashing the spinner; another site, month or reopening starts clean.
+  const loadedKey = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!enabled || !siteId || !month) return undefined;
+    if (!enabled || !siteId || !month) {
+      loadedKey.current = null;
+      return undefined;
+    }
     let cancelled = false;
-    setState(EMPTY);
+    const key = `${siteId}|${month}`;
+    if (loadedKey.current !== key) {
+      loadedKey.current = key;
+      setState(EMPTY);
+    }
     getWorkCards({ site_id: siteId, processing_month: month, include_employee: true })
       .then((cards) => {
         if (cancelled) return;
@@ -82,7 +99,7 @@ export function useSiteMonthCards(siteId: string, month: string, enabled = true)
     return () => {
       cancelled = true;
     };
-  }, [siteId, month, enabled]);
+  }, [siteId, month, enabled, version]);
 
   return state;
 }

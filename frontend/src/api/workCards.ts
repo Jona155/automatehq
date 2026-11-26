@@ -104,6 +104,9 @@ export interface ApproveWorkCardOptions {
   // When approving from the employee-month view, mark the remaining sibling
   // cards for this employee/month as superseded so they no longer read pending.
   supersede_siblings?: boolean;
+  // A manual card approved as the employee's whole month: counts as the full
+  // submission on the missing-cards page whatever the last filled day is.
+  approve_full_month?: boolean;
 }
 
 export const approveWorkCard = async (cardId: string, userId: string, options?: ApproveWorkCardOptions) => {

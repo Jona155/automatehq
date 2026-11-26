@@ -1,11 +1,10 @@
 """Site report preview & editing API.
 
 Lets an admin open a site's Summary or Salary report for a month, correct
-per-day values, attach report notes and save. Saved changes are report
-adjustments layered over the attendance data (see
-``services/sites/report_adjustments_service.py``); the existing export, email
-and WhatsApp endpoints apply the same adjustments, so every way of getting a
-report out yields the saved version.
+per-day values, attach report notes and save. A saved value is written into the
+employee's work card day entries (see
+``services/sites/report_adjustments_service.py``), so the review screen,
+analytics, the missing-cards view and every report export show the same data.
 
 Shares the ``/api/sites`` prefix with the sites blueprint.
 """
@@ -90,7 +89,7 @@ def save_site_report(site_id, report_type):
         return api_response(status_code=400, message="base_revision is required", error="Bad Request")
 
     try:
-        svc.save_report_changes(
+        saved = svc.save_report_changes(
             business_id=g.business_id,
             site=site,
             month=month,
@@ -126,4 +125,6 @@ def save_site_report(site_id, report_type):
     except Exception as e:
         logger.exception("Saved, but failed to rebuild report preview for site %s", site_id)
         return api_response(status_code=500, message="השינויים נשמרו אך טעינת הדוח נכשלה", error=str(e))
+    # Employees with no work card whose days were just filled got a manual card.
+    payload['created_manual_cards'] = saved['created_manual_cards']
     return api_response(data=payload, message="השינויים נשמרו")

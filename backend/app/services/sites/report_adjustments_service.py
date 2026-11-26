@@ -1,12 +1,22 @@
-"""Saved report adjustments and notes: loading, overlaying and saving.
+"""The site report editor: preview payload, saving edits, and report notes.
 
-Adjustments are an overlay on the hours matrix. They are applied only on the
-report path (preview + Summary/Salary exports); the matrix loader itself, and
-everything else that reads it (analytics, absences, the on-screen summary tab),
-keeps seeing source attendance data.
+Edits made in the report are written straight into the attendance data — the
+work card day entries the rest of the system reads — exactly like an edit in
+the work card review screen. The report, the review screen, analytics, absences
+and the missing-cards view therefore always agree. Filling days for an employee
+who has no work card that month creates a manual card to hold them.
 
-The whole feature is gated by ``REPORT_EDITOR_ENABLED``. When it is off no
-adjustment query runs and reports are exactly the source data.
+Two things stay report-only:
+  * report notes — recipient-facing text exported as Excel cell notes;
+  * LEGACY adjustments — edits saved by the first version of the editor, which
+    layered them over the data instead of changing it. A legacy adjustment
+    keeps applying as an overlay on the report path (preview + Summary/Salary
+    exports) until it is migrated into the day entries and stamped
+    ``migrated_at``: by ``flask report-edits migrate``, or by the first save of
+    its site-month. No new adjustments are ever created.
+
+The editor is gated by ``REPORT_EDITOR_ENABLED``. When it is off no adjustment
+or note query runs.
 """
 import calendar
 import os
@@ -18,6 +28,8 @@ from ...extensions import db
 from ...models.audit import AuditEvent
 from ...models.report_adjustments import ReportAdjustment, ReportNote, ReportRevision
 from ...models.users import User
+from ...models.work_cards import WorkCard, WorkCardDayEntry, day_entry_has_data
+from ...utils import utc_now
 from .report_export import (
     OTHER_SITE_LABEL,
     OTHER_SITE_NAMED_PREFIX,
@@ -28,6 +40,10 @@ from .report_export import (
 from .report_model import REPORT_SALARY, REPORT_SUMMARY, REPORT_TYPES, build_report_model
 
 MAX_NOTE_LENGTH = 2000
+MANUAL_CARD_SOURCE = 'MANUAL'
+HUMAN_ENTRY_SOURCE = 'MANUAL'
+OTHER_SITE_DAY_MESSAGE = 'יום זה רשום לעובד באתר אחר. יש לערוך אותו בדוח של אותו אתר.'
+STALE_VALUE_MESSAGE = 'הערך בתא השתנה במקום אחר במערכת מאז שהדוח נפתח. יש לרענן את הדוח ולנסות שוב.'
 SATURDAY_LABEL = 'שבת'
 _STATUS_BY_LABEL = {label: code for code, label in STATUS_DAY_LABELS.items()}
 
@@ -45,6 +61,18 @@ class ReportConflict(Exception):
     def __init__(self, current_revision):
         super().__init__('Report was modified by another user')
         self.current_revision = current_revision
+
+
+class DayWriteBlocked(Exception):
+    """This employee-day cannot be changed from this site's report."""
+
+
+class MigrationMismatch(Exception):
+    """Migrating legacy adjustments would have changed what the report shows."""
+
+    def __init__(self, differences):
+        super().__init__('Report changed while migrating adjustments')
+        self.differences = differences
 
 
 class ReportValidationError(Exception):
@@ -132,9 +160,10 @@ def parse_cell_value(raw):
 
 # --- overlay ----------------------------------------------------------------
 
-def overlay_site_results(site_results, business_id, month, report_type=None):
-    """Apply saved adjustments (and, for ``report_type``, saved notes) onto the
-    loader's per-site results, in place.
+def overlay_site_results(site_results, business_id, month, report_type=None, force=False):
+    """Apply not-yet-migrated legacy adjustments (and, for ``report_type``, saved
+    notes) onto the loader's per-site results, in place. ``force`` applies them
+    even with the editor switched off (used by the migration itself).
 
     Adds to each site's data:
       ``report_adjustments`` {employee_key: {day: {value, source, conflict, ...}}}
@@ -152,7 +181,7 @@ def overlay_site_results(site_results, business_id, month, report_type=None):
         site_data['day_comments'] = {
             key: dict(days) for key, days in site_data.get('comment_matrix', {}).items()
         }
-    if not site_results or not is_enabled():
+    if not site_results or not (force or is_enabled()):
         return site_results
 
     site_ids = list(site_results.keys())
@@ -160,6 +189,7 @@ def overlay_site_results(site_results, business_id, month, report_type=None):
         ReportAdjustment.business_id == business_id,
         ReportAdjustment.processing_month == month,
         ReportAdjustment.site_id.in_(site_ids),
+        ReportAdjustment.migrated_at.is_(None),
     ).all()
 
     employee_keys = {
@@ -210,9 +240,10 @@ def overlay_site_results(site_results, business_id, month, report_type=None):
 
 
 def load_report_site_data(site_ids, processing_month, approved_only, include_inactive, business_id, report_type):
-    """The hours matrix for ``site_ids`` as the given report shows it: source
-    data plus saved adjustments and notes. Raises if adjustments cannot be
-    loaded — a report must never go out silently missing saved changes."""
+    """The hours matrix for ``site_ids`` as the given report shows it: the
+    attendance data plus report notes and any legacy adjustments still waiting
+    to be migrated. Raises if those cannot be loaded — a report must never go
+    out silently missing saved changes."""
     month = datetime.strptime(processing_month, '%Y-%m-%d').date()
     site_results = load_hours_matrix_for_sites(
         site_ids=site_ids,
@@ -294,6 +325,232 @@ def build_report_payload(site, month, report_type, business_id, show_other_site_
     }
 
 
+# --- writing into the attendance data ----------------------------------------
+
+def _audit(business_id, site_id, employee_id, user_id, event_type, metadata, work_card_id=None):
+    db.session.add(AuditEvent(
+        business_id=business_id,
+        actor_user_id=user_id,
+        event_type=event_type,
+        entity_type='SITE_REPORT',
+        entity_id=site_id,
+        site_id=site_id,
+        employee_id=employee_id,
+        work_card_id=work_card_id,
+        event_metadata=metadata,
+    ))
+
+
+def _report_rank(card):
+    """The order the report loader picks an employee's card in: approved first,
+    then the newest (see ``load_hours_matrix_for_sites``)."""
+    created = card.created_at.timestamp() if card.created_at else 0
+    return (0 if card.review_status == 'APPROVED' else 1, -created)
+
+
+class _DayWriter:
+    """Writes report values into work card day entries for one site-month.
+
+    A report cell shows one day entry of the card the report picks for that
+    employee, so that is the entry a new value goes into. An employee with no
+    card at all gets a manual card at this site.
+
+    The card's approval is deliberately left alone (the review screen un-approves
+    an edited card): the report prefers approved cards, so un-approving one here
+    could make the report fall back to an older card's data right after a save.
+    """
+
+    def __init__(self, business_id, site, month, employee_ids):
+        self.business_id = business_id
+        self.site = site
+        self.month = month
+        self.cards = {}
+        self.created_cards = []
+        cards = []
+        if employee_ids:
+            cards = WorkCard.query.filter(
+                WorkCard.business_id == business_id,
+                WorkCard.processing_month == month,
+                WorkCard.employee_id.in_(list(employee_ids)),
+            ).all()
+        for card in sorted(cards, key=_report_rank):
+            self.cards.setdefault(card.employee_id, card)
+
+    def write(self, employee_id, day, value, user_id):
+        """Make ``value`` the employee's day at this site. Returns the card.
+        Raises DayWriteBlocked, before changing anything, when the day holds
+        another site's data."""
+        card = self.cards.get(employee_id)
+        entry = None
+        if card is not None:
+            entry = WorkCardDayEntry.query.filter_by(work_card_id=card.id, day_of_month=day).first()
+            if entry is not None and day_entry_has_data(entry):
+                if (entry.attributed_site_id or card.site_id) != self.site.id:
+                    raise DayWriteBlocked(OTHER_SITE_DAY_MESSAGE)
+
+        has_value = value['status'] is not None or value['hours'] is not None
+        if entry is None and not has_value:
+            return card  # nothing recorded and nothing to record
+
+        if card is None:
+            card = WorkCard(
+                business_id=self.business_id, site_id=self.site.id, employee_id=employee_id,
+                processing_month=self.month, source=MANUAL_CARD_SOURCE,
+                uploaded_by_user_id=user_id, review_status='NEEDS_REVIEW',
+            )
+            db.session.add(card)
+            db.session.flush()
+            self.cards[employee_id] = card
+            self.created_cards.append(card)
+            _audit(self.business_id, self.site.id, employee_id, user_id, 'REPORT_MANUAL_CARD_CREATED', {
+                'processing_month': self.month.strftime('%Y-%m'),
+            }, work_card_id=card.id)
+
+        if entry is None:
+            entry = WorkCardDayEntry(work_card_id=card.id, day_of_month=day)
+            db.session.add(entry)
+        # The report holds a day total, not clock times: stale from/to times
+        # would contradict the new figure in the review screen.
+        entry.from_time = None
+        entry.to_time = None
+        entry.total_hours = value['hours']
+        entry.day_status = value['status']
+        # A human save is authoritative: later automatic extraction and
+        # approval consolidation never overwrite it (same as a review-screen save).
+        entry.source = HUMAN_ENTRY_SOURCE
+        entry.is_valid = True
+        entry.validation_errors = None
+        entry.updated_by_user_id = user_id
+        # NULL means "the card's own site"; only a genuine cross-site day is stored.
+        entry.attributed_site_id = None if card.site_id == self.site.id else self.site.id
+        if has_value and card.review_status == 'APPROVED':
+            # Keep the approved card's protected range covering every day it holds.
+            card.approved_through_day = max(card.approved_through_day or 0, day)
+        db.session.flush()
+        return card
+
+
+# --- legacy adjustments -> day entries ---------------------------------------
+
+def _load_source(business_id, site, month):
+    """Attendance data for the site-month with every employee any report shows."""
+    return load_hours_matrix_for_sites(
+        site_ids=[site.id], processing_month=month.strftime('%Y-%m-%d'),
+        approved_only=False, include_inactive=True, business_id=business_id,
+    )[site.id]
+
+
+def _shown_values(business_id, site, month):
+    """Every non-blank employee-day the reports show for the site-month, legacy
+    adjustments included: {(employee_id, day): value}."""
+    site_data = load_hours_matrix_for_sites(
+        site_ids=[site.id], processing_month=month.strftime('%Y-%m-%d'),
+        approved_only=False, include_inactive=True, business_id=business_id,
+    )
+    site_data = overlay_site_results(site_data, business_id, month, force=True)[site.id]
+    shown = {}
+    for employee_key, per_day in site_data['matrix'].items():
+        for day, hours in per_day.items():
+            shown[(employee_key, day)] = _normalise_value({'hours': hours})
+    for employee_key, per_day in site_data['status_matrix'].items():
+        for day, status in per_day.items():
+            shown[(employee_key, day)] = {'hours': None, 'status': status}
+    return shown
+
+
+def pending_adjustment_groups(business_id=None):
+    """(business_id, site_id, month) of every site-month with legacy adjustments
+    not yet migrated."""
+    query = db.session.query(
+        ReportAdjustment.business_id, ReportAdjustment.site_id, ReportAdjustment.processing_month,
+    ).filter(ReportAdjustment.migrated_at.is_(None))
+    if business_id is not None:
+        query = query.filter(ReportAdjustment.business_id == business_id)
+    return query.distinct().order_by(
+        ReportAdjustment.business_id, ReportAdjustment.processing_month, ReportAdjustment.site_id,
+    ).all()
+
+
+def apply_pending_adjustments(business_id, site, month):
+    """Write the site-month's not-yet-migrated legacy adjustments into the work
+    card day entries and stamp them migrated. Stages changes in the current
+    transaction; the caller commits or rolls back.
+
+    The reports must come out identical before and after: the values they show
+    are compared, and ``MigrationMismatch`` is raised if anything moved (the
+    caller must then roll back).
+
+    Returns one outcome dict per adjustment:
+      applied              written into the day entries
+      already_matches      the data already holds this value; just stamped
+      skipped_not_in_report  the employee is in no report of this site-month
+                           (not applied today either) — left as is
+      blocked              the day holds another site's data — left as an
+                           overlay, so the report keeps showing it
+    """
+    pending = ReportAdjustment.query.filter(
+        ReportAdjustment.site_id == site.id,
+        ReportAdjustment.processing_month == month,
+        ReportAdjustment.migrated_at.is_(None),
+    ).order_by(ReportAdjustment.employee_id, ReportAdjustment.day_of_month).all()
+    if not pending:
+        return []
+
+    before = _shown_values(business_id, site, month)
+    source = _load_source(business_id, site, month)
+    employees = {str(emp.id): emp for emp in source['employees']}
+    writer = _DayWriter(business_id, site, month, [emp.id for emp in employees.values()])
+    month_label = month.strftime('%Y-%m')
+    now = utc_now()
+
+    outcomes = []
+    for adjustment in pending:
+        employee_key = str(adjustment.employee_id)
+        employee = employees.get(employee_key)
+        value = _adjustment_value(adjustment)
+        outcome = {
+            'employee_id': employee_key,
+            'employee_name': employee.full_name if employee else None,
+            'day': adjustment.day_of_month,
+            'value': value,
+            'previous': None,
+            'created_manual_card': False,
+        }
+        outcomes.append(outcome)
+        if employee is None:
+            outcome['outcome'] = 'skipped_not_in_report'
+            continue
+        current = source_value(source, employee_key, adjustment.day_of_month)
+        outcome['previous'] = current
+        if current == value:
+            adjustment.migrated_at = now
+            outcome['outcome'] = 'already_matches'
+            continue
+        cards_before = len(writer.created_cards)
+        try:
+            card = writer.write(employee.id, adjustment.day_of_month, value, adjustment.updated_by_user_id)
+        except DayWriteBlocked:
+            outcome['outcome'] = 'blocked'
+            continue
+        adjustment.migrated_at = now
+        outcome['outcome'] = 'applied'
+        outcome['created_manual_card'] = len(writer.created_cards) > cards_before
+        _audit(business_id, site.id, employee.id, adjustment.updated_by_user_id, 'REPORT_ADJUSTMENT_MIGRATED', {
+            'processing_month': month_label, 'day': adjustment.day_of_month,
+            'previous_value': current, 'new_value': value,
+        }, work_card_id=card.id if card else None)
+
+    db.session.flush()
+    after = _shown_values(business_id, site, month)
+    if before != after:
+        raise MigrationMismatch([
+            {'employee_id': key[0], 'day': key[1], 'before': before.get(key), 'after': after.get(key)}
+            for key in sorted(set(before) | set(after), key=lambda k: (k[0], k[1]))
+            if before.get(key) != after.get(key)
+        ])
+    return outcomes
+
+
 # --- saving -----------------------------------------------------------------
 
 def _lock_revision(business_id, site_id, month):
@@ -312,28 +569,19 @@ def _lock_revision(business_id, site_id, month):
     )
 
 
-def _audit(business_id, site_id, employee_id, user_id, event_type, metadata):
-    db.session.add(AuditEvent(
-        business_id=business_id,
-        actor_user_id=user_id,
-        event_type=event_type,
-        entity_type='SITE_REPORT',
-        entity_id=site_id,
-        site_id=site_id,
-        employee_id=employee_id,
-        event_metadata=metadata,
-    ))
-
-
 def save_report_changes(*, business_id, site, month, report_type, base_revision, cells, notes, user_id):
     """Persist a batch of cell and note changes atomically.
 
-    ``cells``: [{employee_id, day, value}] to set a value, or {.., reset: true}
-    to drop the adjustment and fall back to source data.
+    ``cells``: [{employee_id, day, value, expected?}] writes the value into the
+    employee's work card day entry. ``expected`` is the value the editor was
+    showing; when given and the data has changed since, the cell is rejected
+    instead of overwriting someone else's edit. ``{.., reset: true}`` drops a
+    legacy adjustment that could not be migrated (there is no other "original"
+    to reset to any more).
     ``notes``: [{employee_id, day, text}]; empty text removes the note.
 
     All-or-nothing: on a validation error or a revision mismatch nothing is
-    written. Returns the new revision.
+    written. Returns ``{'revision', 'created_manual_cards'}``.
     """
     if report_type not in REPORT_TYPES:
         raise ValueError(f'Unknown report type: {report_type}')
@@ -345,6 +593,11 @@ def save_report_changes(*, business_id, site, month, report_type, base_revision,
         if revision.revision != base_revision:
             raise ReportConflict(revision.revision)
 
+        # Edits saved by the old editor become real data first, so everything
+        # below works against one source of truth.
+        migrated = apply_pending_adjustments(business_id, site, month)
+        changed = any(item['outcome'] in ('applied', 'already_matches') for item in migrated)
+
         options = REPORT_LOAD_OPTIONS[report_type]
         site_data = load_hours_matrix_for_sites(
             site_ids=[site.id],
@@ -355,6 +608,15 @@ def save_report_changes(*, business_id, site, month, report_type, base_revision,
         )[site.id]
         employees = {str(emp.id): emp for emp in site_data['employees']}
         days_in_month = calendar.monthrange(month.year, month.month)[1]
+        # Legacy adjustments that could not be migrated still overlay the report.
+        leftover = {
+            (str(adj.employee_id), adj.day_of_month): adj
+            for adj in ReportAdjustment.query.filter(
+                ReportAdjustment.site_id == site.id,
+                ReportAdjustment.processing_month == month,
+                ReportAdjustment.migrated_at.is_(None),
+            ).all()
+        }
 
         errors = []
 
@@ -378,7 +640,13 @@ def save_report_changes(*, business_id, site, month, report_type, base_revision,
                 parsed_cells[located] = None
                 continue
             try:
-                parsed_cells[located] = parse_cell_value(item.get('value'))
+                value = parse_cell_value(item.get('value'))
+                # A cell under a leftover legacy adjustment shows that value, not
+                # the data, so there is nothing meaningful to compare against.
+                if 'expected' in item and located not in leftover:
+                    if parse_cell_value(item.get('expected')) != source_value(site_data, *located):
+                        raise ValueError(STALE_VALUE_MESSAGE)
+                parsed_cells[located] = value
             except ValueError as exc:
                 errors.append({'employee_id': located[0], 'day': located[1], 'message': str(exc)})
 
@@ -400,48 +668,37 @@ def save_report_changes(*, business_id, site, month, report_type, base_revision,
         if errors:
             raise ReportValidationError(errors)
 
-        existing = {
-            (str(adj.employee_id), adj.day_of_month): adj
-            for adj in ReportAdjustment.query.filter_by(site_id=site.id, processing_month=month).all()
-        }
         month_label = month.strftime('%Y-%m')
-        changed = False
+        writer = _DayWriter(business_id, site, month, [emp.id for emp in employees.values()])
 
         for (employee_key, day), new_value in parsed_cells.items():
-            adjustment = existing.get((employee_key, day))
+            employee = employees[employee_key]
             source = source_value(site_data, employee_key, day)
-            old_value = _adjustment_value(adjustment) if adjustment else source
-            target = source if new_value is None else new_value
-
-            if target == source:
-                # Nothing to adjust: the report should simply show source data.
-                if adjustment is None:
-                    continue
+            adjustment = leftover.get((employee_key, day))
+            shown = _adjustment_value(adjustment) if adjustment else source
+            if adjustment is not None:
+                # The user's decision replaces the legacy adjustment either way.
                 db.session.delete(adjustment)
-            elif adjustment is None:
-                db.session.add(ReportAdjustment(
-                    business_id=business_id, site_id=site.id, processing_month=month,
-                    employee_id=employees[employee_key].id, day_of_month=day,
-                    hours=target['hours'], day_status=target['status'],
-                    base_value=source, updated_by_user_id=user_id,
-                ))
-            else:
-                same_value = old_value == target
-                same_base = _normalise_value(adjustment.base_value) == source
-                if same_value and same_base:
+                changed = True
+            target = source if new_value is None else new_value
+            if target != source:
+                try:
+                    card = writer.write(employee.id, day, target, user_id)
+                except DayWriteBlocked as exc:
+                    errors.append({'employee_id': employee_key, 'day': day, 'message': str(exc)})
                     continue
-                # Re-saving an unchanged value against changed source data is
-                # the user confirming the adjustment: it clears the conflict.
-                adjustment.hours = target['hours']
-                adjustment.day_status = target['status']
-                adjustment.base_value = source
-                adjustment.updated_by_user_id = user_id
-            changed = True
-            _audit(business_id, site.id, employees[employee_key].id, user_id, 'REPORT_ADJUSTMENT', {
+                changed = True
+            elif adjustment is None:
+                continue
+            else:
+                card = writer.cards.get(employee.id)
+            _audit(business_id, site.id, employee.id, user_id, 'REPORT_DAY_EDIT', {
                 'processing_month': month_label, 'day': day, 'report_type': report_type,
-                'previous_value': old_value, 'new_value': target, 'source_value': source,
-                'reverted_to_source': target == source,
-            })
+                'previous_value': shown, 'new_value': target,
+            }, work_card_id=card.id if card else None)
+
+        if errors:
+            raise ReportValidationError(errors)
 
         existing_notes = {
             (str(note.employee_id), note.day_of_month): note
@@ -474,9 +731,9 @@ def save_report_changes(*, business_id, site, month, report_type, base_revision,
         if changed:
             revision.revision += 1
             revision.updated_by_user_id = user_id
-        new_revision = revision.revision
+        result = {'revision': revision.revision, 'created_manual_cards': len(writer.created_cards)}
         db.session.commit()
-        return new_revision
+        return result
     except Exception:
         db.session.rollback()
         raise

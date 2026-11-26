@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import EmployeeCardsView from './EmployeeCardsView';
+import EmployeeCardsView, { type EmployeeCardActions } from './EmployeeCardsView';
 import type { CardEmployee, SiteMonthCards } from './workCardViewer';
 
 export const CARDS_PANE_MIN_WIDTH = 280;
@@ -16,6 +16,8 @@ interface ReportCardsPaneProps {
   popOutHref: string;
   popOutTarget: string;
   onClose: () => void;
+  /** Approve / "completes the month" actions for the shown employee. */
+  actionsFor?: (employeeId: string) => EmployeeCardActions;
 }
 
 /**
@@ -25,7 +27,7 @@ interface ReportCardsPaneProps {
  * site and month so a pin does not outlive the sheet it was made on.
  */
 export default function ReportCardsPane({
-  employee, cards, width, onWidthChange, popOutHref, popOutTarget, onClose,
+  employee, cards, width, onWidthChange, popOutHref, popOutTarget, onClose, actionsFor,
 }: ReportCardsPaneProps) {
   const [pinned, setPinned] = useState<CardEmployee | null>(null);
   const shown = pinned ?? employee;
@@ -130,6 +132,7 @@ export default function ReportCardsPane({
           loading={cards.status === 'loading'}
           error={cards.status === 'error'}
           className="flex-1 min-h-0"
+          actions={actionsFor?.(shown.id)}
         />
       ) : (
         <div className="flex-1 grid place-items-center p-6 text-center text-sm text-slate-500 dark:text-slate-400">
