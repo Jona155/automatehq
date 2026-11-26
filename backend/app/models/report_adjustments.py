@@ -8,16 +8,18 @@ from ..utils import utc_now
 
 
 class ReportAdjustment(db.Model):
-    """A saved correction to one employee-day value in a site's monthly reports.
+    """LEGACY: a correction to one employee-day value saved by the first version
+    of the report editor, which layered edits over the attendance data instead
+    of changing it.
 
-    Adjustments sit on top of the attendance data: the work card day entries
-    are never modified. The same adjustment feeds both the Summary and the
-    Salary report. ``hours`` and ``day_status`` both NULL means "show this day
-    as blank".
+    The editor now writes straight into work card day entries and no longer
+    creates these rows. An existing row keeps applying as an overlay on the
+    report path until it is migrated (written into the day entries) and stamped
+    with ``migrated_at`` — by ``flask report-edits migrate`` or by the first
+    save of its site-month. Migrated rows are kept only as a record.
 
-    ``base_value`` records the source value the adjustment was made against
-    (``{"hours": .., "status": ..}``), so a later change to the source data can
-    be detected and surfaced for review instead of silently winning or losing.
+    ``hours`` and ``day_status`` both NULL means "show this day as blank".
+    ``base_value`` is the source value the adjustment was made against.
     """
     __tablename__ = 'report_adjustments'
 
@@ -32,6 +34,9 @@ class ReportAdjustment(db.Model):
     hours = db.Column(db.Numeric(5, 2), nullable=True)
     day_status = db.Column(db.Text, nullable=True)
     base_value = db.Column(JSONB, nullable=False, default=dict, server_default='{}')
+    # Set once the value was written into the work card day entries; from then
+    # on the row no longer takes part in any report.
+    migrated_at = db.Column(db.DateTime(timezone=True), nullable=True)
     updated_by_user_id = db.Column(
         UUID(as_uuid=True), db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True
     )

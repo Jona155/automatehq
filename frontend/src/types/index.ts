@@ -176,6 +176,8 @@ export interface WorkCard {
   source_page_position?: 'TOP' | 'BOTTOM' | 'FULL' | null;
   telegram_caption?: string | null;
   monthly_total_hours?: number | string | null;
+  /** The received cards were marked as the month's full submission (missing-cards view). */
+  completes_month?: boolean;
   employee?: Employee;
   site?: Site;
 }

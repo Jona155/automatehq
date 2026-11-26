@@ -31,6 +31,9 @@ def create_app():
     
     # Register Blueprints
     register_blueprints(app)
+
+    from .cli import register_cli
+    register_cli(app)
     
     # CORS configuration - manual after_request handler for reliability
     allowed_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")]

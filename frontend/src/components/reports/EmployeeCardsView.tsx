@@ -11,6 +11,24 @@ interface EmployeeCardsViewProps {
   /** Shown when the employee has no card at this site this month. */
   emptyMessage?: string;
   className?: string;
+  /** Report-editor actions on the employee's cards; omitted in read-only viewers. */
+  actions?: EmployeeCardActions;
+}
+
+export interface EmployeeCardActions {
+  /**
+   * Approves the employee's month, like the review screen: ``card`` is the one
+   * still waiting for review. ``fullMonth`` is set when every card is a manual
+   * one — the approval then counts as the whole month's submission.
+   */
+  onApprove: (card: WorkCard, fullMonth: boolean) => Promise<void>;
+  /** Why approving is unavailable right now (e.g. unsaved changes), if it is. */
+  approveBlockedReason?: string | null;
+  /**
+   * Marks (or unmarks) the received cards as the month's full submission — for
+   * when the next card will not come and the report fills the rest of the month.
+   */
+  onSetCompletesMonth: (complete: boolean) => Promise<void>;
 }
 
 const STATUS_DOT: Record<WorkCard['review_status'], string> = {
@@ -32,9 +50,10 @@ function formatUploaded(iso: string | undefined) {
  * picks the one shown large below.
  */
 export default function EmployeeCardsView({
-  cards, loading, error, emptyMessage = 'אין כרטיס עבודה לעובד זה באתר בחודש זה.', className = '',
+  cards, loading, error, emptyMessage = 'אין כרטיס עבודה לעובד זה באתר בחודש זה.', className = '', actions,
 }: EmployeeCardsViewProps) {
   const [index, setIndex] = useState(0);
+  const [busy, setBusy] = useState<'approve' | 'complete' | null>(null);
   const cardIds = useMemo(() => cards.map((c) => c.id), [cards]);
   // A different employee (or a reloaded list) starts at the card the report uses.
   const signature = cardIds.join(',');
@@ -64,6 +83,11 @@ export default function EmployeeCardsView({
         <div className="space-y-2">
           <span className="material-symbols-outlined text-4xl text-slate-300">image_not_supported</span>
           <p>{emptyMessage}</p>
+          {actions && (
+            <p className="text-xs text-slate-400 dark:text-slate-500 max-w-xs mx-auto">
+              מילוי ימים בדוח ושמירה ייצרו לעובד כרטיס עבודה ידני עם הימים שמולאו.
+            </p>
+          )}
         </div>
       </div>
     );
@@ -74,6 +98,20 @@ export default function EmployeeCardsView({
   const image = images[card.id] ?? { status: 'loading' as const };
   const isManual = card.source === 'MANUAL';
   const multiple = cards.length > 1;
+
+  // Same choice as the review screen: the newest card still waiting for review.
+  const pendingCard = cards.find((c) => c.review_status === 'NEEDS_REVIEW') ?? null;
+  const allManual = cards.every((c) => c.source === 'MANUAL');
+  const monthCompleted = cards.some((c) => c.completes_month);
+  const run = async (kind: 'approve' | 'complete', action: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(kind);
+    try {
+      await action();
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
     <div className={`flex flex-col min-h-0 ${className}`}>
@@ -169,6 +207,53 @@ export default function EmployeeCardsView({
         {card.original_filename && <span className="truncate max-w-[14rem]" title={card.original_filename}>{card.original_filename}</span>}
         {formatUploaded(card.created_at) && <span>הועלה {formatUploaded(card.created_at)}</span>}
       </div>
+
+      {actions && (
+        <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 pb-1.5">
+          {pendingCard && (
+            <button
+              type="button"
+              data-testid="approve-employee-month"
+              disabled={busy !== null || Boolean(actions.approveBlockedReason)}
+              onClick={() => { void run('approve', () => actions.onApprove(pendingCard, allManual)); }}
+              title={
+                actions.approveBlockedReason
+                || (allManual
+                  ? 'אישור הכרטיס הידני כהגשה של כל החודש — העובד לא יופיע בדוח הכרטיסים החסרים'
+                  : 'אישור כרטיסי העבודה של העובד לחודש זה, כמו במסך סקירת הכרטיסים')
+              }
+              className="inline-flex items-center gap-1.5 px-2.5 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className="material-symbols-outlined text-[16px]">check_circle</span>
+              {busy === 'approve' ? 'מאשר…' : 'אשר'}
+            </button>
+          )}
+          {!allManual && (
+            <button
+              type="button"
+              data-testid="completes-month-toggle"
+              aria-pressed={monthCompleted}
+              disabled={busy !== null}
+              onClick={() => { void run('complete', () => actions.onSetCompletesMonth(!monthCompleted)); }}
+              title={
+                monthCompleted
+                  ? 'ביטול — העובד יחזור להופיע בדוח הכרטיסים החסרים אם חסר לו כרטיס'
+                  : 'כשהכרטיס הבא לא יגיע וימי החודש הנותרים מולאו בדוח: העובד לא יופיע בדוח הכרטיסים החסרים לחודש זה'
+              }
+              className={`inline-flex items-center gap-1.5 px-2.5 h-7 rounded-lg border text-xs font-semibold transition-colors disabled:opacity-50 ${
+                monthCompleted
+                  ? 'bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-900/30 dark:border-indigo-800 dark:text-indigo-200'
+                  : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">
+                {monthCompleted ? 'check_box' : 'check_box_outline_blank'}
+              </span>
+              {busy === 'complete' ? 'מעדכן…' : 'הדוח משלים את החודש'}
+            </button>
+          )}
+        </div>
+      )}
 
       {image.status === 'error' ? (
         <div className="flex-1 min-h-0 grid place-items-center p-6 text-center text-sm text-slate-500 dark:text-slate-400">

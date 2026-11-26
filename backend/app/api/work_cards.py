@@ -3,6 +3,7 @@ from datetime import datetime, time
 from werkzeug.utils import secure_filename
 from io import BytesIO
 import zipfile
+import calendar
 import unicodedata
 import logging
 from uuid import UUID
@@ -662,6 +663,13 @@ def approve_work_card(card_id):
             default=0,
         )
         card.approved_through_day = max(prior_boundary, max_day_with_data) or None
+        # A manual card approved as the employee's whole month (the report
+        # editor does this for an employee with no image card): the approval
+        # covers every day, so the month counts as fully submitted on the
+        # missing-cards view (its manual-card rule) whatever the last filled day.
+        if data.get('approve_full_month') and card.source == 'MANUAL':
+            card.approved_through_day = calendar.monthrange(
+                card.processing_month.year, card.processing_month.month)[1]
 
         approved_card = repo.approve_card(card_id, user_id, g.business_id)
         if not approved_card:
