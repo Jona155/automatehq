@@ -567,7 +567,6 @@ export default function SiteReportEditorPage() {
   const [year, monthNumber] = month.split('-');
   const selectedAdjustment = selectedKey ? lookups.adjustments.get(selectedKey) : undefined;
   const selectedDraft = selectedKey ? cellDrafts[selectedKey] : undefined;
-  const selectedComment = selectedKey ? lookups.comments.get(selectedKey) : undefined;
   const selectedNote = selectedKey ? noteDrafts[selectedKey] ?? lookups.notes.get(selectedKey) ?? '' : '';
   const selectedError = selectedKey ? view.errors[selectedKey] : undefined;
 
@@ -1057,7 +1056,7 @@ export default function SiteReportEditorPage() {
                         type="button"
                         data-testid="open-popover"
                         onClick={() => { setPopoverClosed(false); setPopoverRequested(true); }}
-                        title="פתיחת חלונית העריכה לתאים שנבחרו (סטטוס, הערה לדוח, איפוס)"
+                        title="פתיחת חלונית העריכה לתאים שנבחרו (סטטוס, הערה ליום, איפוס)"
                         className="shrink-0 -my-0.5 inline-flex items-center gap-1 h-6 px-2 rounded-md border border-slate-200 dark:border-slate-600 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
                       >
                         <span className="material-symbols-outlined text-[16px]">edit_note</span>
@@ -1238,19 +1237,10 @@ export default function SiteReportEditorPage() {
                   </button>
                 )}
 
-                {selectedComment && (
-                  <div className="space-y-1">
-                    <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">הערה מסקירת הכרטיס (מופיעה בשני הדוחות)</div>
-                    <div className="rounded-md bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs whitespace-pre-wrap text-slate-700 dark:text-slate-200">
-                      {selectedComment}
-                    </div>
-                  </div>
-                )}
-
                 {noteOpen || selectedNote ? (
                   <div className="space-y-1">
                     <label htmlFor="report-note" className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                      הערה לדוח {REPORT_LABELS[reportType]} · נכללת בקובץ המיוצא
+                      הערה ליום · נשמרת בכרטיס העבודה ומופיעה בשני הדוחות
                     </label>
                     <textarea
                       id="report-note"
@@ -1260,7 +1250,7 @@ export default function SiteReportEditorPage() {
                       onChange={(event) => setNote(selectedKey, event.target.value)}
                       rows={3}
                       maxLength={2000}
-                      placeholder="הערה שתופיע לנמען על התא הזה"
+                      placeholder="הערה ליום הזה. תופיע גם במסך סקירת הכרטיס ובקבצים המיוצאים"
                       className="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                     {selectedNote && (
@@ -1277,7 +1267,7 @@ export default function SiteReportEditorPage() {
                     className="inline-flex items-center gap-1 text-xs font-semibold text-primary"
                   >
                     <span className="material-symbols-outlined text-[16px]">add_comment</span>
-                    הוספת הערה לדוח
+                    הוספת הערה ליום
                   </button>
                 )}
               </>

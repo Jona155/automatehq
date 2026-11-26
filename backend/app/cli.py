@@ -5,6 +5,8 @@ from .extensions import db
 
 
 def _format_value(value):
+    if isinstance(value, str):
+        return repr(value) if value else '—'
     if not value:
         return '—'
     if value.get('status'):
@@ -16,7 +18,7 @@ _OUTCOME_LABELS = {
     'applied': 'APPLY',
     'already_matches': 'ALREADY IN DATA',
     'skipped_not_in_report': 'SKIP (employee not in this report)',
-    'blocked': "KEEP AS OVERLAY (day holds another site's data)",
+    'blocked': "KEEP AS OVERLAY (day holds another site's data, or a note for an employee with no card)",
 }
 
 
@@ -30,7 +32,7 @@ def register_cli(app):
                   help='Write the changes. Without it this is a dry run: nothing is saved.')
     @click.option('--business', 'business_code', default=None, help='Limit to one business code.')
     def migrate(apply_changes, business_code):
-        """Move edits saved by the old report editor into work card day entries.
+        """Move edits and notes saved by the old report editor into work card day entries.
 
         Dry run by default. Each site-month is verified: the values its reports
         show must be identical before and after, otherwise that site-month is
@@ -71,8 +73,9 @@ def register_cli(app):
             for item in outcomes:
                 totals[item['outcome']] = totals.get(item['outcome'], 0) + 1
                 extra = ' + new manual card' if item['created_manual_card'] else ''
+                label = 'note ' if item.get('kind') == 'note' else ''
                 click.echo(
-                    f"  {item['employee_name'] or item['employee_id']} · day {item['day']}: "
+                    f"  {item['employee_name'] or item['employee_id']} · day {item['day']}: {label}"
                     f"{_format_value(item['previous'])} -> {_format_value(item['value'])}"
                     f"  [{_OUTCOME_LABELS[item['outcome']]}{extra}]"
                 )

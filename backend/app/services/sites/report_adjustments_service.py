@@ -6,14 +6,16 @@ the work card review screen. The report, the review screen, analytics, absences
 and the missing-cards view therefore always agree. Filling days for an employee
 who has no work card that month creates a manual card to hold them.
 
-Two things stay report-only:
-  * report notes — recipient-facing text exported as Excel cell notes;
-  * LEGACY adjustments — edits saved by the first version of the editor, which
-    layered them over the data instead of changing it. A legacy adjustment
-    keeps applying as an overlay on the report path (preview + Summary/Salary
-    exports) until it is migrated into the day entries and stamped
-    ``migrated_at``: by ``flask report-edits migrate``, or by the first save of
-    its site-month. No new adjustments are ever created.
+A note written in the report is likewise the day entry's ``comment`` — the
+field the review screen edits — so it shows in both places and is exported as
+a cell note in both the Summary and the Salary report.
+
+LEGACY rows are the one thing that stays report-only: adjustments and notes
+saved by the first version of the editor, which layered them over the data
+instead of changing it. A legacy row keeps applying as an overlay on the report
+path (preview + Summary/Salary exports) until it is migrated into the day
+entries and stamped ``migrated_at``: by ``flask report-edits migrate``, or by
+the first save of its site-month. No new legacy rows are ever created.
 
 The editor is gated by ``REPORT_EDITOR_ENABLED``. When it is off no adjustment
 or note query runs.
@@ -43,6 +45,7 @@ MAX_NOTE_LENGTH = 2000
 MANUAL_CARD_SOURCE = 'MANUAL'
 HUMAN_ENTRY_SOURCE = 'MANUAL'
 OTHER_SITE_DAY_MESSAGE = 'יום זה רשום לעובד באתר אחר. יש לערוך אותו בדוח של אותו אתר.'
+NOTE_WITHOUT_CARD_MESSAGE = 'לעובד אין כרטיס עבודה בחודש זה. יש למלא קודם שעות או סטטוס, ואז ניתן להוסיף הערה.'
 STALE_VALUE_MESSAGE = 'הערך בתא השתנה במקום אחר במערכת מאז שהדוח נפתח. יש לרענן את הדוח ולנסות שוב.'
 SATURDAY_LABEL = 'שבת'
 _STATUS_BY_LABEL = {label: code for code, label in STATUS_DAY_LABELS.items()}
@@ -225,6 +228,7 @@ def overlay_site_results(site_results, business_id, month, report_type=None, for
             ReportNote.processing_month == month,
             ReportNote.report_type == report_type,
             ReportNote.site_id.in_(site_ids),
+            ReportNote.migrated_at.is_(None),
         ).all()
         for note in notes:
             site_data = site_results.get(note.site_id)
@@ -313,8 +317,10 @@ def build_report_payload(site, month, report_type, business_id, show_other_site_
         'has_other_site_days': has_other_site_days,
         'show_other_site_names': show_other_site_names,
         'adjustments': adjustments,
-        'notes': _flatten(site_data['report_notes'], 'text'),
-        'day_comments': _flatten(site_data['day_comments'], 'text'),
+        # The note of a cell is the work card's day comment (plus any legacy
+        # report note still waiting to be migrated, as the export shows it).
+        'notes': _flatten(site_data.get('comment_matrix', {}), 'text'),
+        'day_comments': [],
         'orphan_adjustments': site_data['orphan_adjustments'],
         'status_labels': STATUS_DAY_LABELS,
         'employee_count': len(employees),
@@ -432,6 +438,39 @@ class _DayWriter:
 
 # --- legacy adjustments -> day entries ---------------------------------------
 
+def _write_comment(writer, employee_id, day, text, user_id):
+    """Make ``text`` the comment of the employee's day at the writer's site
+    (empty text removes it). Returns the card. Raises DayWriteBlocked, before
+    changing anything, when the employee has no card or the day holds another
+    site's data.
+
+    Only the comment changes: the day's value, its source and the card's
+    approval are left alone. A day with no entry yet gets an empty one to carry
+    the comment.
+    """
+    card = writer.cards.get(employee_id)
+    if card is None:
+        # A card holding nothing but a note would make the employee look like
+        # they submitted one on the missing-cards view.
+        raise DayWriteBlocked(NOTE_WITHOUT_CARD_MESSAGE)
+    entry = WorkCardDayEntry.query.filter_by(work_card_id=card.id, day_of_month=day).first()
+    if entry is not None and day_entry_has_data(entry):
+        if (entry.attributed_site_id or card.site_id) != writer.site.id:
+            raise DayWriteBlocked(OTHER_SITE_DAY_MESSAGE)
+    if entry is None:
+        if not text:
+            return card
+        entry = WorkCardDayEntry(
+            work_card_id=card.id, day_of_month=day, source=HUMAN_ENTRY_SOURCE, is_valid=True,
+            attributed_site_id=None if card.site_id == writer.site.id else writer.site.id,
+        )
+        db.session.add(entry)
+    entry.comment = text or None
+    entry.updated_by_user_id = user_id
+    db.session.flush()
+    return card
+
+
 def _load_source(business_id, site, month):
     """Attendance data for the site-month with every employee any report shows."""
     return load_hours_matrix_for_sites(
@@ -461,31 +500,38 @@ def _shown_values(business_id, site, month):
 def pending_adjustment_groups(business_id=None):
     """(business_id, site_id, month) of every site-month with legacy adjustments
     not yet migrated."""
-    query = db.session.query(
-        ReportAdjustment.business_id, ReportAdjustment.site_id, ReportAdjustment.processing_month,
-    ).filter(ReportAdjustment.migrated_at.is_(None))
-    if business_id is not None:
-        query = query.filter(ReportAdjustment.business_id == business_id)
-    return query.distinct().order_by(
-        ReportAdjustment.business_id, ReportAdjustment.processing_month, ReportAdjustment.site_id,
-    ).all()
+    groups = set()
+    for model in (ReportAdjustment, ReportNote):
+        query = db.session.query(
+            model.business_id, model.site_id, model.processing_month,
+        ).filter(model.migrated_at.is_(None))
+        if business_id is not None:
+            query = query.filter(model.business_id == business_id)
+        groups.update(tuple(row) for row in query.distinct())
+    return sorted(groups, key=lambda g: (str(g[0]), g[2], str(g[1])))
 
 
 def apply_pending_adjustments(business_id, site, month):
-    """Write the site-month's not-yet-migrated legacy adjustments into the work
-    card day entries and stamp them migrated. Stages changes in the current
-    transaction; the caller commits or rolls back.
+    """Write the site-month's not-yet-migrated legacy adjustments and notes into
+    the work card day entries and stamp them migrated. Stages changes in the
+    current transaction; the caller commits or rolls back.
+
+    A legacy note replaces the day's comment on the card (it is what the user
+    last wrote about that day in the report). Notes of the same day from both
+    report types are joined.
 
     The reports must come out identical before and after: the values they show
     are compared, and ``MigrationMismatch`` is raised if anything moved (the
     caller must then roll back).
 
-    Returns one outcome dict per adjustment:
+    Returns one outcome dict per adjustment (``kind='value'``) and per noted
+    day (``kind='note'``, with ``value``/``previous`` holding the texts):
       applied              written into the day entries
       already_matches      the data already holds this value; just stamped
       skipped_not_in_report  the employee is in no report of this site-month
                            (not applied today either) — left as is
-      blocked              the day holds another site's data — left as an
+      blocked              the day holds another site's data (or, for a
+                           note, the employee has no card) — left as an
                            overlay, so the report keeps showing it
     """
     pending = ReportAdjustment.query.filter(
@@ -493,7 +539,12 @@ def apply_pending_adjustments(business_id, site, month):
         ReportAdjustment.processing_month == month,
         ReportAdjustment.migrated_at.is_(None),
     ).order_by(ReportAdjustment.employee_id, ReportAdjustment.day_of_month).all()
-    if not pending:
+    pending_notes = ReportNote.query.filter(
+        ReportNote.site_id == site.id,
+        ReportNote.processing_month == month,
+        ReportNote.migrated_at.is_(None),
+    ).order_by(ReportNote.employee_id, ReportNote.day_of_month, ReportNote.report_type.desc()).all()
+    if not pending and not pending_notes:
         return []
 
     before = _shown_values(business_id, site, month)
@@ -509,6 +560,7 @@ def apply_pending_adjustments(business_id, site, month):
         employee = employees.get(employee_key)
         value = _adjustment_value(adjustment)
         outcome = {
+            'kind': 'value',
             'employee_id': employee_key,
             'employee_name': employee.full_name if employee else None,
             'day': adjustment.day_of_month,
@@ -539,6 +591,37 @@ def apply_pending_adjustments(business_id, site, month):
             'processing_month': month_label, 'day': adjustment.day_of_month,
             'previous_value': current, 'new_value': value,
         }, work_card_id=card.id if card else None)
+
+    # Notes, after the values so a manual card created above can carry them.
+    notes_by_day = {}
+    for note in pending_notes:
+        notes_by_day.setdefault((note.employee_id, note.day_of_month), []).append(note)
+    for (employee_id, day), day_notes in notes_by_day.items():
+        employee = employees.get(str(employee_id))
+        text = '\n'.join(dict.fromkeys(note.text.strip() for note in day_notes if note.text.strip()))
+        outcome = {
+            'kind': 'note', 'employee_id': str(employee_id),
+            'employee_name': employee.full_name if employee else None,
+            'day': day, 'value': text, 'previous': None, 'created_manual_card': False,
+        }
+        outcomes.append(outcome)
+        if employee is None:
+            outcome['outcome'] = 'skipped_not_in_report'
+            continue
+        current = source.get('comment_matrix', {}).get(str(employee_id), {}).get(day) or ''
+        outcome['previous'] = current
+        if current != text:
+            try:
+                card = _write_comment(writer, employee.id, day, text, day_notes[0].updated_by_user_id)
+            except DayWriteBlocked:
+                outcome['outcome'] = 'blocked'
+                continue
+            _audit(business_id, site.id, employee.id, day_notes[0].updated_by_user_id, 'REPORT_NOTE_MIGRATED', {
+                'processing_month': month_label, 'day': day, 'previous_text': current, 'new_text': text,
+            }, work_card_id=card.id)
+        outcome['outcome'] = 'applied' if current != text else 'already_matches'
+        for note in day_notes:
+            note.migrated_at = now
 
     db.session.flush()
     after = _shown_values(business_id, site, month)
@@ -578,7 +661,8 @@ def save_report_changes(*, business_id, site, month, report_type, base_revision,
     instead of overwriting someone else's edit. ``{.., reset: true}`` drops a
     legacy adjustment that could not be migrated (there is no other "original"
     to reset to any more).
-    ``notes``: [{employee_id, day, text}]; empty text removes the note.
+    ``notes``: [{employee_id, day, text}] sets the day's comment on the work
+    card; empty text removes it.
 
     All-or-nothing: on a validation error or a revision mismatch nothing is
     written. Returns ``{'revision', 'created_manual_cards'}``.
@@ -700,33 +784,40 @@ def save_report_changes(*, business_id, site, month, report_type, base_revision,
         if errors:
             raise ReportValidationError(errors)
 
-        existing_notes = {
-            (str(note.employee_id), note.day_of_month): note
-            for note in ReportNote.query.filter_by(
-                site_id=site.id, processing_month=month, report_type=report_type,
-            ).all()
-        }
+        # A note is the work card's day comment. A legacy report note that could
+        # not be migrated is still shown appended to it; saving the cell's note
+        # replaces both with the text the user now sees.
+        leftover_notes = {}
+        for note in ReportNote.query.filter(
+            ReportNote.site_id == site.id, ReportNote.processing_month == month,
+            ReportNote.migrated_at.is_(None),
+        ).all():
+            leftover_notes.setdefault((str(note.employee_id), note.day_of_month), []).append(note)
+        card_comments = site_data.get('comment_matrix', {})
         for (employee_key, day), text in parsed_notes.items():
-            note = existing_notes.get((employee_key, day))
-            old_text = note.text if note else ''
-            if text == old_text:
+            employee = employees[employee_key]
+            old_notes = leftover_notes.get((employee_key, day), [])
+            card_comment = card_comments.get(employee_key, {}).get(day) or ''
+            shown_text = '\n'.join(part for part in (
+                card_comment, *(n.text for n in old_notes if n.report_type == report_type),
+            ) if part)
+            if text == shown_text:
                 continue
-            if not text:
-                db.session.delete(note)
-            elif note is None:
-                db.session.add(ReportNote(
-                    business_id=business_id, site_id=site.id, processing_month=month,
-                    report_type=report_type, employee_id=employees[employee_key].id,
-                    day_of_month=day, text=text, updated_by_user_id=user_id,
-                ))
-            else:
-                note.text = text
-                note.updated_by_user_id = user_id
+            try:
+                card = _write_comment(writer, employee.id, day, text, user_id)
+            except DayWriteBlocked as exc:
+                errors.append({'employee_id': employee_key, 'day': day, 'field': 'note', 'message': str(exc)})
+                continue
+            for note in old_notes:
+                note.migrated_at = utc_now()
             changed = True
-            _audit(business_id, site.id, employees[employee_key].id, user_id, 'REPORT_NOTE', {
+            _audit(business_id, site.id, employee.id, user_id, 'REPORT_NOTE', {
                 'processing_month': month_label, 'day': day, 'report_type': report_type,
-                'previous_text': old_text, 'new_text': text,
-            })
+                'previous_text': shown_text, 'new_text': text,
+            }, work_card_id=card.id)
+
+        if errors:
+            raise ReportValidationError(errors)
 
         if changed:
             revision.revision += 1
