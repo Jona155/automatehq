@@ -324,6 +324,8 @@ class SiteReportEditorTests(unittest.TestCase):
         stale = self._put(cells=[{'employee_id': self.alice_id, 'day': 2, 'value': 10, 'expected': 8}])
         self.assertEqual(stale.status_code, 422)
         self.assertEqual(stale.get_json()['data']['errors'][0]['message'], svc.STALE_VALUE_MESSAGE)
+        self.assertTrue(stale.get_json()['data']['stale'])
+        self.assertIn('שונו במקום אחר במערכת', stale.get_json()['message'])
         db.session.expire_all()
         self.assertEqual(float(WorkCardDayEntry.query.filter_by(
             work_card_id=self.card.id, day_of_month=2).one().total_hours), 6.0)
@@ -512,6 +514,8 @@ class SiteReportEditorTests(unittest.TestCase):
         })
         self.assertEqual(saved.status_code, 422)
         self.assertEqual(saved.get_json()['data']['errors'][0]['message'], svc.OTHER_SITE_DAY_MESSAGE)
+        self.assertFalse(saved.get_json()['data']['stale'])
+        self.assertIn('באתר אחר', saved.get_json()['message'])
         self.assertEqual(self._summary_sheet()['B12'].value, 'עבד באתר אחר')
 
     def test_salary_report_ignores_the_names_option(self):

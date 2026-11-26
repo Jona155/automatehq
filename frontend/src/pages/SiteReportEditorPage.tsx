@@ -471,6 +471,8 @@ export default function SiteReportEditorPage() {
           if (item.employee_id && item.day) mapped[cellKey(item.employee_id, item.day)] = item.message;
         }
         setServerErrors(mapped);
+        // The data changed under the editor: offer to load the current version.
+        if (data.data.stale) setIsStale(true);
         setSaveFailure(data?.message || 'חלק מהערכים אינם תקינים. דבר לא נשמר.');
       } else {
         setSaveFailure(data?.message || 'השמירה נכשלה. הטיוטה נשמרה במסך — אפשר לנסות שוב.');

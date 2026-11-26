@@ -107,11 +107,25 @@ def save_site_report(site_id, report_type):
             data={'current_revision': e.current_revision},
         )
     except svc.ReportValidationError as e:
+        # Say what actually went wrong: a value changed elsewhere and a day that
+        # belongs to another site are not "invalid values" the user mistyped.
+        reasons = {item.get('message') for item in e.errors}
+        stale = svc.STALE_VALUE_MESSAGE in reasons
+        if reasons == {svc.STALE_VALUE_MESSAGE}:
+            message = ("ערכים בדוח שונו במקום אחר במערכת מאז שהדוח נפתח. "
+                       "דבר לא נשמר — טענו את הגרסה העדכנית ונסו שוב.")
+        elif reasons == {svc.OTHER_SITE_DAY_MESSAGE}:
+            message = "חלק מהימים רשומים לעובד באתר אחר ולא ניתן לערוך אותם מדוח זה. דבר לא נשמר."
+        elif stale:
+            message = ("חלק מהערכים שונו במקום אחר במערכת מאז שהדוח נפתח, וחלק אינם תקינים. "
+                       "דבר לא נשמר.")
+        else:
+            message = "חלק מהערכים אינם תקינים. דבר לא נשמר."
         return api_response(
             status_code=422,
-            message="חלק מהערכים אינם תקינים. דבר לא נשמר.",
+            message=message,
             error="Validation Error",
-            data={'errors': e.errors},
+            data={'errors': e.errors, 'stale': stale},
         )
     except Exception as e:
         logger.exception("Failed to save report changes for site %s", site_id)
